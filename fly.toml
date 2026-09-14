@@ -1,0 +1,105 @@
+# fly.toml app configuration file generated for nogi-relay on 2026-09-03T10:00:00+08:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+
+app = "nogi-relay"
+primary_region = "nrt"  # Tokyo, Japan (closest to China)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  LOG_STORAGE_DIR = "/data/nogi-logs"
+  LOG_MAX_FILE_BYTES = "26214400"
+  LOG_RETENTION_DAYS = "30"
+  DB_RETRY_ATTEMPTS = "6"
+  DB_RETRY_BASE_DELAY_MS = "1000"
+  DB_RETRY_MAX_DELAY_MS = "15000"
+  DB_CONNECTION_TIMEOUT_MS = "10000"
+  DB_POOL_MIN = "1"
+  DB_POOL_MAX = "20"
+  PORT = "8080"
+  NOGI_WEB_URL = "https://message.nogizaka46.com"
+  NOGI_API_URL = "https://api.message.nogizaka46.com"
+  NOGI_APP_ID = "jp.co.sonymusic.communication.nogizaka 2.5"
+  NOGI_APP_PLATFORM = "web"
+  NOGI_ORGANIZATION_ID = "1"
+  NOGI_POLL_INTERVAL_SECONDS = "60"
+  NOGI_BACKFILL_ON_START = "true"
+  NOGI_BROWSER_STATE_FILE = "/data/nogi-browser-state.json"
+  NOGI_ACCESS_TOKEN_STATE_FILE = "/data/nogi-access-token.json"
+  NOGI_BROWSER_HEADLESS = "true"
+  NOGI_BROWSER_AUTH_WAIT_SECONDS = "30"
+  NOGI_BROWSER_SETTLE_SECONDS = "8"
+  NOGI_BROWSER_BLOCK_MEDIA = "true"
+  NOGI_MAX_TOKEN_REFRESH_FAILURES = "3"
+  # 0 = 关闭定时重启，仅保留 RSS 超过 850MB 时的重启
+  NOGI_BROWSER_RESTART_INTERVAL_SECONDS = "0"
+  NOGI_MEDIA_PORT = "8081"
+  MEDIA_STORAGE_DIR = "/data/nogi-media"
+  MEDIA_MAX_BYTES = "104857600"
+  PUBLIC_BASE_URL = "https://nogi-relay.fly.dev"
+  PUBLIC_MEDIA_BASE_URL = "https://nogi-relay.fly.dev:8081"
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[[mounts]]
+  source = "nogi_media"
+  destination = "/data"
+  initial_size = "3gb"
+
+# 主 API 服务 (端口 80/443 映射到内部 8080)
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "20s"
+    grace_period = "30s"
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "get"
+    path = "/health"
+    protocol = "http"
+
+# 媒体服务 (端口 8081)
+[[services]]
+  protocol = "tcp"
+  internal_port = 8081
+
+  [[services.ports]]
+    port = 8081
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    port = 8081
