@@ -193,6 +193,112 @@ async function pruneLogs(directory) {
     }));
 }
 
+function logFileOrder(filePath) {
+  const match = /^errors-(\d{4}-\d{2}-\d{2})\.jsonl(?:\.(\d+))?$/.exec(path.basename(filePath));
+  return match ? { date: match[1], rotation: Number.parseInt(match[2] || '0', 10) } : null;
+}
+
+async function persistedLogFiles(directories) {
+  const files = [];
+  for (const directory of directories) {
+    let entries;
+    try {
+      entries = await fs.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !logFileOrder(entry.name)) continue;
+      files.push(path.join(directory, entry.name));
+    }
+  }
+  return files.sort((left, right) => {
+    const a = logFileOrder(left);
+    const b = logFileOrder(right);
+    return b.date.localeCompare(a.date)
+      || a.rotation - b.rotation
+      || left.localeCompare(right);
+  });
+}
+
+async function* readJsonLinesNewestFirst(filePath, chunkSize = 64 * 1024) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const { size } = await handle.stat();
+    let position = size;
+    let carry = Buffer.alloc(0);
+    while (position > 0) {
+      const bytesToRead = Math.min(chunkSize, position);
+      position -= bytesToRead;
+      const chunk = Buffer.allocUnsafe(bytesToRead);
+      await handle.read(chunk, 0, bytesToRead, position);
+      const data = carry.length ? Buffer.concat([chunk, carry]) : chunk;
+      let lineEnd = data.length;
+      for (let index = data.length - 1; index >= 0; index--) {
+        if (data[index] !== 0x0a) continue;
+        const line = data.subarray(index + 1, lineEnd);
+        if (line.length) yield line.toString('utf8').replace(/\r$/, '');
+        lineEnd = index;
+      }
+      carry = Buffer.from(data.subarray(0, lineEnd));
+    }
+    if (carry.length) yield carry.toString('utf8').replace(/\r$/, '');
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Read the durable JSONL error log newest-first. This intentionally reads the
+ * volume copy rather than PostgreSQL so diagnostics still work during a
+ * database incident.
+ */
+export async function readPersistedErrorLogs({
+  limit = 100,
+  level = '',
+  scope = '',
+  query = '',
+  since = null,
+  before = null,
+  directories = null,
+} = {}) {
+  const normalizedLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 100, 1), 500);
+  const normalizedLevel = String(level || '').trim().toLowerCase();
+  const normalizedScope = String(scope || '').trim();
+  const normalizedQuery = String(query || '').trim().toLowerCase();
+  const sinceMs = since == null ? null : new Date(since).getTime();
+  const beforeMs = before == null ? null : new Date(before).getTime();
+  const logDirectories = directories || [...new Set([
+    path.resolve(DEFAULT_LOG_DIR),
+    path.resolve('./logs'),
+  ])];
+  const results = [];
+
+  for (const filePath of await persistedLogFiles(logDirectories)) {
+    for await (const line of readJsonLinesNewestFirst(filePath)) {
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const createdAtMs = new Date(entry.created_at).getTime();
+      if (sinceMs != null && (!Number.isFinite(createdAtMs) || createdAtMs < sinceMs)) continue;
+      if (beforeMs != null && (!Number.isFinite(createdAtMs) || createdAtMs >= beforeMs)) continue;
+      if (normalizedLevel && String(entry.level || '').toLowerCase() !== normalizedLevel) continue;
+      if (normalizedScope && String(entry.scope || '') !== normalizedScope) continue;
+      if (normalizedQuery) {
+        const haystack = `${entry.scope || ''}\n${entry.message || ''}`.toLowerCase();
+        if (!haystack.includes(normalizedQuery)) continue;
+      }
+      results.push(entry);
+      if (results.length >= normalizedLimit) return results;
+    }
+  }
+  return results;
+}
+
 function installPersistentConsoleLogging() {
   if (globalThis[CONSOLE_MARKER]) return;
   globalThis[CONSOLE_MARKER] = true;

@@ -173,6 +173,12 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 | `NOGI_POLL_INTERVAL_SECONDS` | `60` | 私有消息轮询周期（秒，最低 15s） |
 | `NOGI_BLOG_POLL_INTERVAL_SECONDS` | `60` | 公开 BLOG 轮询周期（秒） |
 | `NOGI_BACKFILL_ON_START` | `true` | 服务启动时是否沿游标自动回填历史过去消息 |
+| `NOGI_MACHINE_MEMORY_RESTART_MB` | `700` | 基于 Linux cgroup `memory.current` 的整机内存重启阈值（MB） |
+| `NOGI_BROWSER_SETTLE_SECONDS` | `8` | 官网更新 token 后，后台保存浏览器状态前的等待时间 |
+| `NOGI_BROWSER_STORAGE_STATE_TIMEOUT_SECONDS` | `10` | IndexedDB 浏览器状态抓取的最长等待时间 |
+| `NOGI_BROWSER_RESTART_INTERVAL_SECONDS` | `0` | 可选定时重启周期；`0` 表示仅使用内存阈值 |
+
+Monitor 的 access token 预刷新窗口固定为 9 秒。内存触发重启时，如果 token 距离到期不超过 3 分钟，Monitor 会等待续期完成，并确认新 token 与刷新后的浏览器状态均已保存后再重启。
 
 > [!NOTE]
 > 如果你在 `fly.toml` 中将顶部的 `app = "..."` 直接修改为了你的 `<YOUR_APP_NAME>`，则在执行 `fly deploy` 或 `fly secrets set` 时可省略 `--app <YOUR_APP_NAME>` 参数。
@@ -185,11 +191,19 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 # 查看云端实时日志
 fly logs --app <YOUR_APP_NAME>
 
-# 查看实例运行状态与内存用量
+# 查看实例运行状态与健康检查
 fly status --app <YOUR_APP_NAME>
+
+# 查看容器 cgroup 当前/最大内存字节数
+fly ssh console --app <YOUR_APP_NAME> -C "cat /sys/fs/cgroup/memory.current"
+fly ssh console --app <YOUR_APP_NAME> -C "cat /sys/fs/cgroup/memory.max"
 
 # 检查当前会话激活状态
 curl -X GET https://<YOUR_APP_NAME>.fly.dev/v1/admin/browser-session/status \
+  -H "Authorization: Bearer 自定义token"
+
+# 查询最近的持久化错误日志
+curl -X GET "https://<YOUR_APP_NAME>.fly.dev/v1/admin/error-logs?limit=100&level=error" \
   -H "Authorization: Bearer 自定义token"
 
 # 进入容器终端（如需排查文件）

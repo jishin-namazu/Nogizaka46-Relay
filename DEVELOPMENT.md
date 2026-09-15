@@ -188,12 +188,13 @@ npm run monitor
 ### 2.2 官网浏览器监控与会话状态机 (`nogi-browser.js`)
 
 #### 2.2.1 认证凭据捕获机制
-乃木坂46官网移动端 Web 版采用 SPA 架构。用户登录态由本地 Cookie 与 `localStorage` 中的 Refresh Token 维持，API 实际调用则依赖有效期极短（通常为几分钟至数小时）的 JWT Access Token。
+乃木坂46官网移动端 Web 版采用 SPA 架构。用户登录态由浏览器 Cookie、`localStorage` 和 IndexedDB 中的会话数据共同维持，API 实际调用依赖短期 JWT Access Token。
 
 `NogiBrowserMonitor` 不会直接在 Node.js 中逆向模拟 OAuth/AWS Cognito 签名算法，而是**直接运行一个无头 Chromium 实例托管官网前端**：
-- Chromium 加载并持久化保存的 `nogi-browser-state.json` 会话（Cookies + LocalStorage）。
+- Chromium 加载并持久化保存的 `nogi-browser-state.json` 会话（Cookies、LocalStorage 与 IndexedDB）。
 - 通过 `context.on('request')` 监听并拦截页面流出的网络请求，只要命中 `https://api.message.nogizaka46.com` 且携带 `Authorization: Bearer <token>`，即在内存中更新 `this.accessToken`。
-- 解密 JWT Payload 获得 `exp` 过期时间戳，并在本地保留 `ACCESS_TOKEN_REFRESH_SKEW_MS` (30秒) 缓冲期。
+- 解码 JWT Payload 获得 `exp` 过期时间戳，并使用 `ACCESS_TOKEN_REFRESH_SKEW_MS = 9秒`，确保进入官网约 10 秒的刷新窗口后才要求新 token。
+- `/v2/update_token` 成功后只安排一次后台浏览器状态保存；刷新主流程不等待状态序列化。状态抓取默认 10 秒超时，并禁止重叠执行。
 
 #### 2.2.2 状态机流转与容错隔离
 
@@ -231,19 +232,20 @@ stateDiagram-v2
    - 保持每 60 秒（`NOGI_POLL_INTERVAL_SECONDS`）轮询一次已订阅成员的时间轴。
 2. **401 故障单次重试**：
    - 若轮询时官方 API 突然返回 `401 Unauthorized`，立即触发 `refreshFrontendSession()`。
-   - 刷新后**仅允许针对当前失败的 API 重新发起单次重试**；若依旧 401，立即递增连续失败计数器 `consecutiveAuthFailures`。
+   - 刷新后**仅允许针对当前失败的 API 重新发起单次重试**；若依旧 401，则向轮询状态机抛出鉴权错误。`consecutiveAuthFailures` 由 `/v2/update_token` 的失败响应累计。
 3. **`signedOut`（登出态）**：
    - 若官方 `/v2/update_token` 接口明确响应 `400 Bad Request`，代表 Refresh Token 已被官方吊销或在其他设备登录被踢出。
    - **⚠️ 官方单会话限制机制**：乃木坂46 官方 Message Web 平台存在严格的**单会话互斥策略**。如果用户在外部设备（日常电脑或手机浏览器）再次登录官网网页版，官方后台会很快将前一个会话（服务端所在设备）的凭据注销。
    - **立即关闭 Chromium 实例并停止所有轮询**，阻止无意义的流量空耗；每 5 分钟在日志中输出一次标准提示：`[NOGI_SESSION_UPDATE_REQUIRED]`。
 4. **`authPaused`（鉴权冻结态）**：
    - 若网络超时或非 400 异常导致连续失败达到阈值（默认 3 次），挂起轮询。
-   - 无论处于 `signedOut` 还是 `authPaused`，**API 进程、健康检查及会话上传接口保持 100% 运行**。
+   - 进入 `signedOut` 或 `authPaused` 后会关闭 Chromium 并停止私信轮询，API 进程、健康检查和会话上传接口继续运行。由于 API 与 Monitor 仍共享同一 Fly Machine/cgroup，极端整机资源压力仍可能影响响应延迟。
 
 #### 2.2.3 内存守护与主动重启策略
-为防止 Headless Chromium 长期运行发生内存泄漏，Monitor 实行双重守护策略：
-- **内存水位阈值 (`MEMORY_RESTART_RSS_MB = 850MB`)**：每轮询 10 次采样当前 Node.js 与浏览器子进程的 RSS 内存。一旦突破 850MB，自动完成当前轮询后执行平滑重启（`restartBrowser()`）。
-- **定时重启（默认关闭）**：`NOGI_BROWSER_RESTART_INTERVAL_SECONDS` 支持配置定时重启周期（设为 `0` 时禁用定时重启，仅保留内存自愈）。
+为防止 Headless Chromium 长期运行造成整机内存压力，Monitor 实行双重守护策略：
+- **Linux cgroup 整机内存阈值**：每轮轮询读取 `/sys/fs/cgroup/memory.current` 与 `memory.max`，默认在 `NOGI_MACHINE_MEMORY_RESTART_MB=700` 时触发浏览器回收，不再使用 `process.memoryUsage().rss`。
+- **Token 安全门**：token 剩余有效期超过 3 分钟时允许直接重启；不超过 3 分钟时等待进入 9 秒续期窗口，并依次确认新 access token 已截获、刷新后的浏览器状态已保存，之后才执行重启。保存失败或超时会暂缓重启。
+- **定时重启（默认关闭）**：`NOGI_BROWSER_RESTART_INTERVAL_SECONDS` 支持配置定时重启周期（设为 `0` 时禁用定时重启，仅保留 cgroup 内存自愈）。
 
 ---
 
@@ -360,8 +362,9 @@ export function buildDataPayload(message, includePayload) {
 
 在 Fly.io 等无状态 PaaS 容器上，容器崩溃重启往往导致终端历史日志丢失，给复盘排查带来巨大困难。系统设计了双重持久化日志引擎：
 1. **数据库落盘 (`error_logs` 表)**：将每一次未捕获异常、认证失效、FCM 报错序列化后异步写入 PostgreSQL。
-2. **本地持久卷双写 (`/data/nogi-logs/error-YYYY-MM-DD.log`)**：即便数据库断连，也会记录到本地挂载卷。
+2. **本地持久卷双写 (`/data/nogi-logs/errors-YYYY-MM-DD.jsonl`)**：即便数据库断连，也会记录到本地挂载卷；单文件达到上限后使用 `.1` 至 `.3` 后缀轮转。
 3. **脱敏保护**：内置敏感字段过滤器，自动对 `authorization`、`cookie`、`token`、`password`、`private_key` 进行 `[REDACTED]` 脱敏。
+4. **只读运维接口**：`GET /v1/admin/error-logs` 直接读取持久卷副本，支持数量、级别、scope、关键字与时间范围筛选，因此数据库异常时仍可用于排障。
 
 ---
 
@@ -626,6 +629,9 @@ Authorization: Bearer <ACCESS_TOKEN>
 #### `GET /v1/admin/browser-session/status`
 查询服务端当前会话文件的状态、激活进度及最新报错。
 
+#### `GET /v1/admin/error-logs`
+读取最新的脱敏持久错误日志。支持 `limit`（1–500）、`level`、`scope`、`q`、`since` 和 `before` 查询参数；需要 Bearer Token 认证。
+
 ---
 
 ## 5. Android 客户端架构与技术细节 (app/)
@@ -826,6 +832,10 @@ LOG_STORAGE_DIR=./logs
 NOGI_BROWSER_STATE_FILE=./nogi-browser-state.json
 NOGI_ACCESS_TOKEN_STATE_FILE=./nogi-access-token.json
 NOGI_BROWSER_HEADLESS=true
+NOGI_BROWSER_SETTLE_SECONDS=8
+NOGI_BROWSER_STORAGE_STATE_TIMEOUT_SECONDS=10
+NOGI_MACHINE_MEMORY_RESTART_MB=700
+NOGI_BROWSER_RESTART_INTERVAL_SECONDS=0
 
 # Windows 本地可直接复用系统自带 Edge
 # NOGI_BROWSER_EXECUTABLE_PATH=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe

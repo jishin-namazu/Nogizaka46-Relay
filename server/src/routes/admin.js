@@ -1,7 +1,7 @@
 import express from 'express';
 import fs from 'fs/promises';
 import { randomUUID } from 'node:crypto';
-import { recordError } from '../services/error-log.js';
+import { readPersistedErrorLogs, recordError } from '../services/error-log.js';
 import {
   atomicWritePrivateFile,
   atomicWritePrivateJson,
@@ -12,6 +12,75 @@ import {
 
 const router = express.Router();
 let sessionWriteQueue = Promise.resolve();
+
+function parseTimestamp(value) {
+  if (value == null || value === '') return null;
+  const timestamp = new Date(String(value));
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp.toISOString();
+}
+
+/**
+ * GET /v1/admin/error-logs
+ * Read sanitized, durable error logs from the mounted volume.
+ */
+router.get('/error-logs', async (req, res) => {
+  const requestedLimit = req.query.limit == null ? 100 : Number(req.query.limit);
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 500) {
+    return res.status(400).json({
+      success: false,
+      error: 'limit must be an integer between 1 and 500',
+    });
+  }
+
+  const since = parseTimestamp(req.query.since);
+  const before = parseTimestamp(req.query.before);
+  if ((req.query.since && !since) || (req.query.before && !before)) {
+    return res.status(400).json({
+      success: false,
+      error: 'since and before must be valid timestamps',
+    });
+  }
+  if (since && before && Date.parse(since) >= Date.parse(before)) {
+    return res.status(400).json({
+      success: false,
+      error: 'since must be earlier than before',
+    });
+  }
+
+  const level = String(req.query.level || '').trim();
+  const scope = String(req.query.scope || '').trim();
+  const query = String(req.query.q || '').trim();
+  if (level.length > 20 || scope.length > 255 || query.length > 200) {
+    return res.status(400).json({
+      success: false,
+      error: 'one or more filters are too long',
+    });
+  }
+
+  try {
+    const logs = await readPersistedErrorLogs({
+      limit: requestedLimit,
+      level,
+      scope,
+      query,
+      since,
+      before,
+    });
+    res.json({
+      success: true,
+      source: 'persistent-file',
+      count: logs.length,
+      logs,
+      nextBefore: logs.length === requestedLimit ? logs.at(-1)?.created_at || null : null,
+    });
+  } catch (error) {
+    await recordError('server.admin.read_error_logs', error);
+    res.status(500).json({
+      success: false,
+      error: 'Unable to read persistent error logs',
+    });
+  }
+});
 
 /**
  * POST /v1/admin/browser-session

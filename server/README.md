@@ -110,6 +110,30 @@ curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/admin/browser-session/stat
 }
 ```
 
+### 2.5 查询持久化错误日志
+
+错误日志接口读取挂载卷中的脱敏 JSONL 记录，因此数据库异常时仍可使用：
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$SERVER/v1/admin/error-logs?limit=100&level=error" | jq .
+```
+
+支持 `limit`（1–500）、`level`、`scope`、`q`、`since` 和 `before` 参数。响应中的
+`nextBefore` 可用于读取下一页：
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$SERVER/v1/admin/error-logs?limit=100&before=<nextBefore>" | jq .
+```
+
+### 2.6 浏览器内存重启与 Token 保护
+
+Monitor 从 Linux cgroup 的 `memory.current` / `memory.max` 读取整台实例的内存，
+默认在超过 `NOGI_MACHINE_MEMORY_RESTART_MB=700` 时回收浏览器。若 access token
+距离到期不超过 3 分钟，重启会暂缓到官网进入 9 秒续期窗口；只有截获新 token 且
+刷新后的浏览器状态成功保存后，才会执行重启。
+
 ---
 
 ## 3. 消息记录查询与统计
@@ -406,9 +430,10 @@ curl -X POST "$SERVER/init-db" \
 | :--- | :--- |
 | `npm run bootstrap:browser` | 交互式唤起本地浏览器登录官网并提取会话文件 |
 | `node upload-session.js <path> <url> <token>` | 将会话文件热上传到云端并等待激活 |
-| `npm run audit:blog` | 审计官方博客 API 完整性与可用性（执行 `scripts/audit-blog-api.js`） |
+| `npm run audit:blogs` | 审计官方博客 API 完整性与可用性（执行 `scripts/audit-blog-api.js`） |
 | `npm test` | 执行本地端到端与核心逻辑单元测试 |
-| `npm run start:all` | 同时拉起 API 服务、Monitor 进程与媒体服务（开发测试用） |
+| `sh start-all.sh` | 按生产启动顺序拉起 API、Monitor 与媒体服务（需要可用的 POSIX shell） |
+| `npm start` / `npm run monitor` | 分别在两个终端启动 API，以及 Monitor/媒体服务 |
 
 ---
 
