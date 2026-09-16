@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
+        android:name=".NogiRelayApplication"
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -26,7 +27,7 @@
         <activity
             android:name=".ui.MediaViewerActivity"
             android:exported="false"
-            android:theme="@style/Theme.NogiRelay" />
+            android:theme="@style/Theme.NogiRelay.MediaViewer" />
 
         <activity
             android:name=".blog.BlogImageDownloadActivity"

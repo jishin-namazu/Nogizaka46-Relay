@@ -21,11 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.painterResource
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
@@ -33,22 +33,42 @@ import kotlinx.coroutines.withContext
  * costs tens of milliseconds and is evicted from the small LRU immediately, so every scroll pass
  * decodes again. Sampling down to a screen-sized bitmap keeps decode time and memory sane.
  */
-private const val MAX_DECODE_DIMENSION = 2048
+private const val FALLBACK_DECODE_DIMENSION = 1024
+private const val SIZE_BUCKET_PX = 64
 
-private object RemoteImageMemoryCache {
-    // Sampled covers are a few megabytes each, so the previous 16 MB held barely one image and every
-    // scroll pass decoded again. 48 MB keeps a screenful of covers ready.
-    private val cache = object : LruCache<String, Bitmap>(48 * 1024) {
+object ImageAspectRatioCache {
+    private val cache = LruCache<String, Float>(500)
+
+    fun get(url: String?): Float? = if (url.isNullOrBlank()) null else cache.get(url)
+
+    fun put(url: String?, ratio: Float) {
+        if (!url.isNullOrBlank() && ratio > 0f) {
+            cache.put(url, ratio)
+        }
+    }
+}
+
+object RemoteImageMemoryCache {
+    private val limitKb = (Runtime.getRuntime().maxMemory() / 8 / 1024)
+        .coerceIn(24L * 1024L, 64L * 1024L)
+        .toInt()
+    private val cache = object : LruCache<String, Bitmap>(limitKb) {
         override fun sizeOf(key: String, value: Bitmap): Int =
             (value.allocationByteCount / 1024).coerceAtLeast(1)
     }
+    // Fast-path fallback using URL: retains recent bitmaps so transitions never show blank frames
+    private val urlFallback = LruCache<String, Bitmap>(64)
 
     @Synchronized
     fun get(key: String): Bitmap? = cache.get(key)
 
     @Synchronized
-    fun put(key: String, bitmap: Bitmap) {
+    fun getForUrl(url: String): Bitmap? = urlFallback.get(url)
+
+    @Synchronized
+    fun put(key: String, url: String, bitmap: Bitmap) {
         cache.put(key, bitmap)
+        urlFallback.put(url, bitmap)
     }
 }
 
@@ -63,50 +83,63 @@ fun RemoteImage(
     messageType: MessageType = MessageType.IMAGE,
     message: RelayMessage? = null,
     placeholderResId: Int? = null,
-    maxDecodeDimension: Int = MAX_DECODE_DIMENSION,
+    placeholderColor: Color = Color(0xFFE7E2EA),
+    maxDecodeDimension: Int? = null,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val cacheKey = "$maxDecodeDimension@$url"
-    var bitmap by remember(cacheKey) {
-        mutableStateOf(
-            url?.let {
-                RemoteImageMemoryCache.get(cacheKey)
-                    ?: if (loadCachedImmediately) {
-                        loadCachedBitmap(context, it, messageType, message, maxDecodeDimension)
-                    } else {
-                        null
-                    }
-            },
-        )
+    val displayMetrics = context.resources.displayMetrics
+    val screenMaxDimension = maxOf(displayMetrics.widthPixels, displayMetrics.heightPixels)
+    val decodeDimension = maxDecodeDimension ?: screenMaxDimension
+    val bucketedDimension = ((decodeDimension + SIZE_BUCKET_PX - 1) / SIZE_BUCKET_PX) * SIZE_BUCKET_PX
+    val cacheKey = "$bucketedDimension@$contentScale@$url"
+
+    var knownAspectRatio by remember(url) {
+        mutableStateOf(ImageAspectRatioCache.get(url))
     }
-    LaunchedEffect(cacheKey) {
-        if (bitmap == null) {
-            bitmap = url?.let { value ->
-                loadBitmap(context, value, messageType, message, maxDecodeDimension)
-                    ?.also { loaded -> RemoteImageMemoryCache.put(cacheKey, loaded) }
+    var bitmap by remember(cacheKey) {
+        mutableStateOf(url?.let { RemoteImageMemoryCache.get(cacheKey) ?: RemoteImageMemoryCache.getForUrl(it) })
+    }
+
+    LaunchedEffect(cacheKey, loadCachedImmediately) {
+        val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
+        if (exactCached != null) {
+            bitmap = exactCached
+            val ratio = exactCached.width.toFloat() / exactCached.height.toFloat()
+            ImageAspectRatioCache.put(url, ratio)
+            knownAspectRatio = ratio
+        } else {
+            url?.let { value ->
+                val loaded = loadBitmap(context, value, messageType, message, bucketedDimension)
+                if (loaded != null) {
+                    RemoteImageMemoryCache.put(cacheKey, value, loaded)
+                    val ratio = loaded.width.toFloat() / loaded.height.toFloat()
+                    ImageAspectRatioCache.put(value, ratio)
+                    knownAspectRatio = ratio
+                    bitmap = loaded
+                }
             }
         }
     }
 
+    val currentRatio = bitmap?.let { it.width.toFloat() / it.height.toFloat() } ?: knownAspectRatio
+    val boxModifier = if (preserveAspectRatio && currentRatio != null && currentRatio > 0f) {
+        modifier.fillMaxWidth().aspectRatio(currentRatio)
+    } else {
+        modifier
+    }
+
     Box(
-        modifier.background(
-            if (bitmap == null && placeholderResId != null) Color.Transparent else Color(0xFFE7E2EA),
+        boxModifier.background(
+            if (bitmap != null || placeholderResId != null) Color.Transparent else placeholderColor,
         ),
     ) {
         val image = bitmap
         if (image != null) {
-            val imageModifier = if (preserveAspectRatio && image.height > 0) {
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(image.width.toFloat() / image.height.toFloat())
-            } else {
-                Modifier.fillMaxSize()
-            }
             Image(
                 bitmap = image.asImageBitmap(),
                 contentDescription = contentDescription,
                 contentScale = contentScale,
-                modifier = imageModifier,
+                modifier = Modifier.fillMaxSize(),
             )
         } else if (placeholderResId != null) {
             Image(
@@ -119,46 +152,29 @@ fun RemoteImage(
     }
 }
 
-private fun loadCachedBitmap(
-    context: Context,
-    url: String,
-    messageType: MessageType = MessageType.IMAGE,
-    message: RelayMessage? = null,
-    maxDecodeDimension: Int = MAX_DECODE_DIMENSION,
-): Bitmap? = runCatching {
-    val cacheKey = "$maxDecodeDimension@$url"
-    if (messageType == MessageType.VIDEO && message != null) {
-        MediaDownloader.cachedVideoThumbnail(context, message)
-            ?.let { BitmapFactory.decodeFile(it.absolutePath) }
-            ?.also { RemoteImageMemoryCache.put(cacheKey, it); return@runCatching it }
-    }
-
-    val uri = Uri.parse(url)
-    val bitmap = if (uri.scheme in setOf("android.resource", "content", "file")) {
-        context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
-    } else if (uri.scheme == "https") {
-        MediaDownloader.cachedFileForUrl(context, url, messageType)
-            ?.let { decodeSampled(it, maxDecodeDimension) }
-    } else {
-        null
-    }
-    bitmap?.also { RemoteImageMemoryCache.put(cacheKey, it) }
-}.getOrNull()
-
 private suspend fun loadBitmap(
     context: Context,
     url: String,
     messageType: MessageType = MessageType.IMAGE,
     message: RelayMessage? = null,
-    maxDecodeDimension: Int = MAX_DECODE_DIMENSION,
-): Bitmap? = withContext(Dispatchers.IO) {
+    maxDecodeDimension: Int = FALLBACK_DECODE_DIMENSION,
+): Bitmap? = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
     runCatching {
         if (messageType == MessageType.VIDEO && message != null) {
-            MediaDownloader.cachedVideoThumbnail(context, message)
-                ?.let { BitmapFactory.decodeFile(it.absolutePath) }
-                ?.let { return@withContext it }
+            val thumbFile = MediaDownloader.cachedVideoThumbnail(context, message)
+                ?: MediaDownloader.generateVideoThumbnail(context, message)
+            if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
+                return@withContext decodeSampled(thumbFile, maxDecodeDimension)
+            }
+            val explicitThumb = message.thumbnailUrl?.takeIf { it.isNotBlank() }
+            if (explicitThumb != null) {
+                val cached = MediaDownloader.cachedFileForUrl(context, explicitThumb, MessageType.IMAGE)
+                val file = cached ?: MediaDownloader.downloadUrl(context, explicitThumb, MessageType.IMAGE)
+                return@withContext decodeSampled(file, maxDecodeDimension)
+            }
+            return@withContext null
         }
-        
+
         val uri = Uri.parse(url)
         if (uri.scheme in setOf("android.resource", "content", "file")) {
             context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)

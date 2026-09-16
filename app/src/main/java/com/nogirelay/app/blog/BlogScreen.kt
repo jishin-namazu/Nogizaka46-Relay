@@ -61,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
+import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.BlogSummary
 import com.nogirelay.app.translation.BlogTranslationLayout
@@ -97,10 +99,11 @@ private const val BLOG_PAGE_SIZE = 20
 
 @Composable
 fun BlogScreen(
-    refreshKey: Int,
+    dataVersion: Long,
     initialBlogId: String?,
     onInitialBlogHandled: (String) -> Unit,
     onUnreadChanged: () -> Unit,
+    isActive: Boolean = true,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var selectedBlogId by remember { mutableStateOf<String?>(null) }
@@ -113,17 +116,22 @@ fun BlogScreen(
     var pageInput by remember { mutableStateOf("1") }
     var showPageDialog by remember { mutableStateOf(false) }
     val blogListState = rememberLazyListState()
-    // Turning 翻译 off hides every stored translation in the BLOG list and detail, matching the
-    // message screen, and also stops new BLOG translations from being enqueued below.
-    val translationEnabled = remember(refreshKey) { AppGraph.settings.read().translationEnabled }
+    var translationEnabled by remember { mutableStateOf(AppGraph.settings.read().translationEnabled) }
+    var members by remember { mutableStateOf(BlogPrewarmer.cachedMembers ?: emptyList()) }
+
+    LaunchedEffect(dataVersion) {
+        withContext(AppGraph.dispatchers.databaseRead) {
+            translationEnabled = AppGraph.settings.read().translationEnabled
+            members = AppGraph.database.blogMembers()
+        }
+    }
 
     LaunchedEffect(initialBlogId) {
         initialBlogId?.let { selectedBlogId = it }
     }
 
     val selected = selectedBlogId
-    BackHandler(enabled = selected != null) { selectedBlogId = null }
-    val members = remember(refreshKey) { AppGraph.database.blogMembers() }
+    BackHandler(enabled = isActive && selected != null) { selectedBlogId = null }
     LaunchedEffect(members) {
         selectedMemberIds?.let { selectedIds ->
             val availableIds = members.mapTo(mutableSetOf(), BlogMember::id)
@@ -136,18 +144,18 @@ fun BlogScreen(
         }
     }
 
-    // All list work runs on IO: a search count alone measured ~70ms on a desktop CPU because it
+    // All list work runs on databaseRead: a search count alone measured ~70ms on a desktop CPU because it
     // scans every row's body_html (45MB in total), so doing it during composition blocked frames
     // while the user was scrolling. The page and its excerpts are produced as one state so a card
     // renders once at its final height instead of growing in a second pass.
-    var pageData by remember { mutableStateOf(BlogPageData()) }
-    LaunchedEffect(refreshKey, translationEnabled, selectedMemberIds, searchQuery, oldestFirst, timeFilter, currentPage) {
+    var pageData by remember { mutableStateOf(BlogPrewarmer.cachedInitialData ?: BlogPageData()) }
+    LaunchedEffect(dataVersion, translationEnabled, selectedMemberIds, searchQuery, oldestFirst, timeFilter, currentPage) {
         val query = searchQuery
         val memberIds = selectedMemberIds
         val requestedPage = currentPage
         val oldest = oldestFirst
         val bounds = timeFilter
-        pageData = withContext(Dispatchers.IO) {
+        pageData = withContext(AppGraph.dispatchers.databaseRead) {
             val total = AppGraph.database.countBlogs()
             val matching = AppGraph.database.countBlogs(
                 memberIds = memberIds,
@@ -188,7 +196,11 @@ fun BlogScreen(
                     }
                     .toMap()
             }
-            BlogPageData(total, matching, totalPages, page, posts, previews, loaded = true)
+            val result = BlogPageData(total, matching, totalPages, page, posts, previews, loaded = true)
+            if (query.isBlank() && memberIds == null && !oldest && !bounds.isActive && requestedPage == 0) {
+                BlogPrewarmer.cachedInitialData = result
+            }
+            result
         }
     }
     val matchingCount = pageData.matchingCount
@@ -200,7 +212,7 @@ fun BlogScreen(
 
     // Warm the current page's covers in the background (bounded to <= page size, cached files are
     // skipped) so scrolling decodes from disk instead of waiting for a first-time download.
-    LaunchedEffect(refreshKey, blogs) {
+    LaunchedEffect(dataVersion, blogs) {
         BlogMediaDownloader.prefetchImages(
             context,
             blogs.mapNotNull { it.imageUrl?.takeIf(String::isNotBlank) },
@@ -263,7 +275,8 @@ fun BlogScreen(
         if (selectedId != null) {
             BlogDetail(
                 blogId = selectedId,
-                refreshKey = refreshKey,
+                isActive = isActive,
+                dataVersion = dataVersion,
                 onBack = { selectedBlogId = null },
                 onUnreadChanged = onUnreadChanged,
             )
@@ -354,7 +367,7 @@ fun BlogScreen(
                         )
                     }
                 }
-            } else if (pageData.loaded) {
+            } else if (blogs.isNotEmpty()) {
                 items(blogs, key = BlogSummary::id) { blog ->
                     BlogSummaryCard(
                         blog = blog,
@@ -708,48 +721,82 @@ private fun BlogSummaryCard(
     }
 }
 
+private data class ParsedBlogDetail(
+    val blog: BlogPost,
+    val translationEnabled: Boolean,
+    val titleTranslation: String?,
+    val displayBlocks: List<DisplayBlock>,
+)
+
 @Composable
-private fun BlogDetail(blogId: String, refreshKey: Int, onBack: () -> Unit, onUnreadChanged: () -> Unit) {
+private fun BlogDetail(
+    blogId: String,
+    isActive: Boolean = true,
+    dataVersion: Long,
+    onBack: () -> Unit,
+    onUnreadChanged: () -> Unit,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var localRefresh by remember { mutableIntStateOf(0) }
-    val blog = remember(blogId, refreshKey, localRefresh) { AppGraph.database.findBlog(blogId) }
-    val settings = remember(refreshKey) { AppGraph.settings.read() }
 
-    DisposableEffect(blogId) {
-        BlogReadTracker.openBlog(blogId)
+    val detailState by produceState<ParsedBlogDetail?>(
+        initialValue = null,
+        key1 = blogId,
+        key2 = dataVersion,
+        key3 = localRefresh,
+    ) {
+        value = withContext(AppGraph.dispatchers.databaseRead) {
+            val blog = AppGraph.database.findBlog(blogId) ?: return@withContext null
+            val settings = AppGraph.settings.read()
+            val contentBlocks = BlogContentParser.blocks(blog.bodyHtml)
+            val bodyText = BlogContentParser.plainText(contentBlocks)
+            val source = listOf(blog.title.trim(), bodyText).filter(String::isNotBlank).joinToString("\n\n\n")
+            val layout = BlogTranslationLayout.from(source)
+            val translations = if (settings.translationEnabled) layout.decode(blog.translation) else emptyList()
+            val titleTranslation = if (blog.title.isNotBlank()) translations.firstOrNull() else null
+            val bodyTranslations = if (blog.title.isNotBlank()) translations.drop(1) else translations
+            val displayList = displayBlocks(contentBlocks, bodyTranslations)
+            ParsedBlogDetail(
+                blog = blog,
+                translationEnabled = settings.translationEnabled,
+                titleTranslation = titleTranslation,
+                displayBlocks = displayList,
+            )
+        }
+    }
+
+    DisposableEffect(blogId, isActive) {
+        if (isActive) {
+            BlogReadTracker.openBlog(blogId)
+        }
         onDispose { BlogReadTracker.closeBlog(blogId) }
     }
     LaunchedEffect(blogId) {
-        if (AppGraph.database.markBlogRead(blogId) > 0) {
+        val updated = withContext(AppGraph.dispatchers.databaseRead) {
+            AppGraph.database.markBlogRead(blogId)
+        }
+        if (updated > 0) {
             localRefresh++
             onUnreadChanged()
         }
     }
-    LaunchedEffect(blog?.bodyHtml, settings.translationEnabled, settings.aiModel) {
-        val current = blog ?: return@LaunchedEffect
-        if (current.bodyHtml.isNotBlank() && settings.translationEnabled && !current.translationDone) {
+    LaunchedEffect(detailState?.blog?.bodyHtml, dataVersion) {
+        val current = detailState?.blog ?: return@LaunchedEffect
+        val isTranslationEnabled = detailState?.translationEnabled ?: false
+        if (current.bodyHtml.isNotBlank() && isTranslationEnabled && !current.translationDone) {
             BlogTranslationManager.enqueue(context, current.id)
         }
     }
 
-    if (blog == null) {
+    val detail = detailState
+    if (detail == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("正在同步博客…") }
         return
     }
-    val contentBlocks = remember(blog.bodyHtml) { BlogContentParser.blocks(blog.bodyHtml) }
-    val bodyText = remember(contentBlocks) { BlogContentParser.plainText(contentBlocks) }
-    val source = remember(blog.title, bodyText) {
-        listOf(blog.title.trim(), bodyText).filter(String::isNotBlank).joinToString("\n\n\n")
-    }
-    val layout = remember(source) { BlogTranslationLayout.from(source) }
-    // Stored translations stay in the database; 翻译 simply hides them, exactly like the message
-    // screen, so switching the setting back on restores them without re-requesting the model.
-    val translations = remember(blog.translation, source, settings.translationEnabled) {
-        if (settings.translationEnabled) layout.decode(blog.translation) else emptyList()
-    }
-    val titleTranslation = if (blog.title.isNotBlank()) translations.firstOrNull() else null
-    val bodyTranslations = if (blog.title.isNotBlank()) translations.drop(1) else translations
-    val displayBlocks = remember(contentBlocks, bodyTranslations) { displayBlocks(contentBlocks, bodyTranslations) }
+    val blog = detail.blog
+    val translationEnabled = detail.translationEnabled
+    val titleTranslation = detail.titleTranslation
+    val displayBlocks = detail.displayBlocks
     val openImage: (String) -> Unit = { url ->
         context.startActivity(
             MediaViewerActivity.imageIntent(
@@ -793,7 +840,7 @@ private fun BlogDetail(blogId: String, refreshKey: Int, onBack: () -> Unit, onUn
                         }
                     }
                     Spacer(Modifier.weight(1f))
-                    if (settings.translationEnabled && blog.bodyHtml.isNotBlank()) {
+                    if (translationEnabled && blog.bodyHtml.isNotBlank()) {
                         IconButton(onClick = {
                             BlogTranslationManager.enqueue(context, blog.id, force = true)
                         }) {
@@ -878,13 +925,13 @@ private fun displayBlocks(blocks: List<BlogContentBlock>, translations: List<Str
 }
 
 /** One search excerpt plus the source it came from, so the label always matches the text. */
-private data class BlogSearchPreview(val label: String, val text: String)
+internal data class BlogSearchPreview(val label: String, val text: String)
 
 /**
  * One loaded BLOG list page: the counts, the summaries and their search excerpts. All of it is
  * produced together off the main thread so the cards are composed once with their final content.
  */
-private data class BlogPageData(
+internal data class BlogPageData(
     val totalCount: Int = 0,
     val matchingCount: Int = 0,
     val totalPages: Int = 1,
@@ -893,6 +940,30 @@ private data class BlogPageData(
     val previews: Map<String, List<BlogSearchPreview>> = emptyMap(),
     val loaded: Boolean = false,
 )
+
+object BlogPrewarmer {
+    @Volatile
+    internal var cachedInitialData: BlogPageData? = null
+    @Volatile
+    internal var cachedMembers: List<BlogMember>? = null
+
+    fun prewarm() {
+        if (cachedInitialData != null && cachedMembers != null) return
+        val members = AppGraph.database.blogMembers()
+        val total = AppGraph.database.countBlogs()
+        val posts = AppGraph.database.blogSummaries(limit = BLOG_PAGE_SIZE, offset = 0)
+        cachedMembers = members
+        cachedInitialData = BlogPageData(
+            totalCount = total,
+            matchingCount = total,
+            totalPages = ((total + BLOG_PAGE_SIZE - 1) / BLOG_PAGE_SIZE).coerceAtLeast(1),
+            page = 0,
+            posts = posts,
+            previews = emptyMap(),
+            loaded = true,
+        )
+    }
+}
 
 /** Plain text of a stored BLOG translation (JSON array of paragraphs) for search summaries. */
 private fun translatedBlogText(serialized: String?): String {

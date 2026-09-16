@@ -15,7 +15,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.asStateFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -202,6 +213,9 @@ class MainActivity : ComponentActivity() {
         Log.d("MainActivity", "Calling TranslationManager.enqueue from onCreate")
         TranslationManager.enqueue(this)
         BlogTranslationManager.enqueuePending(this)
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { com.nogirelay.app.blog.BlogPrewarmer.prewarm() }
+        }
         
         proximityControl = com.nogirelay.app.call.OfficialProximityScreenControl(this)
         audioManager = getSystemService(android.media.AudioManager::class.java)
@@ -234,6 +248,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         MessageReadTracker.setAppVisible(true)
         BlogReadTracker.setAppVisible(true)
+        AppGraph.notifyDataChanged()
         syncRequests.update { it + 1 }
     }
 
@@ -465,11 +480,35 @@ private fun RelayApp(
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     var fullScreenGranted by remember { mutableStateOf(FullScreenPermission.canUse(context)) }
     var overlayGranted by remember { mutableStateOf(OverlayPermission.canUse(context)) }
-    var refreshKey by remember { mutableIntStateOf(0) }
+    val dataVersion by AppGraph.dataVersion.collectAsState()
     var syncing by remember { mutableStateOf(false) }
     var syncLabel by remember { mutableStateOf("") }
-    val unreadMessageCount = remember(refreshKey) { AppGraph.database.countUnreadMessages() }
-    val unreadBlogCount = remember(refreshKey) { AppGraph.database.countUnreadBlogs() }
+    var unreadMessageCount by remember { mutableIntStateOf(0) }
+    var unreadBlogCount by remember { mutableIntStateOf(0) }
+
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                notificationGranted = hasNotificationPermission(context)
+                fullScreenGranted = FullScreenPermission.canUse(context)
+                overlayGranted = OverlayPermission.canUse(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(dataVersion) {
+        withContext(AppGraph.dispatchers.databaseRead) {
+            val msgCount = AppGraph.database.countUnreadMessages()
+            val blogCount = AppGraph.database.countUnreadBlogs()
+            unreadMessageCount = msgCount
+            unreadBlogCount = blogCount
+        }
+    }
 
     LaunchedEffect(initialMessageId) {
         if (initialMessageId != null) tab = AppTab.MESSAGES
@@ -481,16 +520,6 @@ private fun RelayApp(
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> notificationGranted = granted }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(2_000)
-            refreshKey++
-            fullScreenGranted = FullScreenPermission.canUse(context)
-            overlayGranted = OverlayPermission.canUse(context)
-            notificationGranted = hasNotificationPermission(context)
-        }
-    }
 
     LaunchedEffect(syncRequests) {
         syncRequests.collectLatest {
@@ -510,30 +539,19 @@ private fun RelayApp(
                     error.message ?: "历史消息同步失败"
                 },
             )
-            refreshKey++
+            AppGraph.notifyDataChanged()
         }
     }
 
-    LaunchedEffect(refreshKey) {
-        TranslationManager.enqueue(context)
-        BlogTranslationManager.enqueuePending(context)
+    LaunchedEffect(dataVersion) {
+        withContext(Dispatchers.IO) {
+            TranslationManager.enqueue(context)
+            BlogTranslationManager.enqueuePending(context)
+        }
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            if (tab == AppTab.HOME) {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("Nogi Relay", fontWeight = FontWeight.SemiBold)
-                            Text(tab.label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
-                )
-            }
-        },
         bottomBar = {
             NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
                 AppTab.entries.forEach { item ->
@@ -557,46 +575,74 @@ private fun RelayApp(
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            when (tab) {
-                AppTab.HOME -> HomeScreen(
-                    notificationGranted = notificationGranted,
-                    fullScreenGranted = fullScreenGranted,
-                    overlayGranted = overlayGranted,
-                    refreshKey = refreshKey,
-                    onRequestNotifications = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            AppTab.entries.forEach { item ->
+                val isSelected = (tab == item)
+                val alpha by animateFloatAsState(
+                    targetValue = if (isSelected) 1f else 0f,
+                    animationSpec = tween(durationMillis = 180),
+                    label = "tab_fade_${item.name}",
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(if (isSelected) 1f else 0f)
+                        .graphicsLayer {
+                            this.alpha = alpha
                         }
-                    },
-                    onOpenFullScreenSettings = {
-                        FullScreenPermission.settingsIntent(context)?.let(context::startActivity)
-                    },
-                    onOpenOverlaySettings = {
-                        context.startActivity(OverlayPermission.settingsIntent(context))
-                    },
-                    onTestCall = onTestCall,
-                    isSyncing = syncing,
-                    syncLabel = syncLabel,
-                    onSyncHistory = onManualSync,
-                    onSettingsChanged = { refreshKey++ },
-                )
+                        .background(MaterialTheme.colorScheme.background)
+                        .then(
+                            if (!isSelected && alpha == 0f) {
+                                Modifier.clearAndSetSemantics { }
+                            } else {
+                                Modifier
+                            }
+                        ),
+                ) {
+                    when (item) {
+                        AppTab.HOME -> HomeScreen(
+                            notificationGranted = notificationGranted,
+                            fullScreenGranted = fullScreenGranted,
+                            overlayGranted = overlayGranted,
+                            dataVersion = dataVersion,
+                            onRequestNotifications = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            },
+                            onOpenFullScreenSettings = {
+                                FullScreenPermission.settingsIntent(context)?.let(context::startActivity)
+                            },
+                            onOpenOverlaySettings = {
+                                context.startActivity(OverlayPermission.settingsIntent(context))
+                            },
+                            onTestCall = onTestCall,
+                            isSyncing = syncing,
+                            syncLabel = syncLabel,
+                            onSyncHistory = onManualSync,
+                            onSettingsChanged = { AppGraph.notifyDataChanged() },
+                        )
 
-                AppTab.MESSAGES -> MessagesScreen(
-                    refreshKey = refreshKey,
-                    initialMessageId = initialMessageId,
-                    onInitialMessageHandled = onNotificationMessageHandled,
-                    onUnreadChanged = { refreshKey++ },
-                    onOpenMedia = onOpenMedia,
-                    onPlayVoice = onPlayVoice,
-                    onUpdateProximity = onUpdateProximity,
-                )
+                        AppTab.MESSAGES -> MessagesScreen(
+                            isActive = isSelected,
+                            dataVersion = dataVersion,
+                            initialMessageId = initialMessageId,
+                            onInitialMessageHandled = onNotificationMessageHandled,
+                            onUnreadChanged = { AppGraph.notifyDataChanged() },
+                            onOpenMedia = onOpenMedia,
+                            onPlayVoice = onPlayVoice,
+                            onUpdateProximity = onUpdateProximity,
+                        )
 
-                AppTab.BLOG -> BlogScreen(
-                    refreshKey = refreshKey,
-                    initialBlogId = initialBlogId,
-                    onInitialBlogHandled = onNotificationBlogHandled,
-                    onUnreadChanged = { refreshKey++ },
-                )
+                        AppTab.BLOG -> BlogScreen(
+                            isActive = isSelected,
+                            dataVersion = dataVersion,
+                            initialBlogId = initialBlogId,
+                            onInitialBlogHandled = onNotificationBlogHandled,
+                            onUnreadChanged = { AppGraph.notifyDataChanged() },
+                        )
+                    }
+                }
             }
         }
     }
@@ -847,13 +893,13 @@ private fun formatMessageDateTime(value: String): String {
     return local?.format(messageDateFormatter) ?: input
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeScreen(
     notificationGranted: Boolean,
     fullScreenGranted: Boolean,
     overlayGranted: Boolean,
-    refreshKey: Int,
+    dataVersion: Long,
     onRequestNotifications: () -> Unit,
     onOpenFullScreenSettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
@@ -863,10 +909,10 @@ private fun HomeScreen(
     onSyncHistory: () -> Unit,
     onSettingsChanged: () -> Unit,
 ) {
-    val settings = remember(refreshKey) { AppGraph.settings.read() }
+    val settings = remember(dataVersion) { AppGraph.settings.read() }
     val context = androidx.compose.ui.platform.LocalContext.current
-    val firebaseConfigured = remember(refreshKey) { PushRegistrar.isConfigured(context) }
-    val tokenRegistered = remember(refreshKey) { AppGraph.settings.pushToken().isNotBlank() }
+    val firebaseConfigured = remember(dataVersion) { PushRegistrar.isConfigured(context) }
+    val tokenRegistered = remember(dataVersion) { AppGraph.settings.pushToken().isNotBlank() }
     val pushReady = firebaseConfigured && tokenRegistered && settings.relayUrl.isNotBlank() && settings.accessToken.isNotBlank()
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
@@ -875,15 +921,25 @@ private fun HomeScreen(
     fun scrollToSettings() {
         scope.launch { settingsRequester.bringIntoView() }
     }
-    Column(
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(horizontal = 16.dp)
-            .padding(top = 12.dp, bottom = 24.dp),
-    ) {
-        StatusBand(pushReady = pushReady)
+    Column(Modifier.fillMaxSize()) {
+        TopAppBar(
+            title = {
+                Column {
+                    Text("Nogi Relay", fontWeight = FontWeight.SemiBold)
+                    Text("主页", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+        )
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 16.dp)
+                .padding(top = 12.dp, bottom = 24.dp),
+        ) {
+            StatusBand(pushReady = pushReady)
 
         Column {
             Text("系统能力", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -984,6 +1040,7 @@ private fun HomeScreen(
             SettingsSection(onSettingsChanged = onSettingsChanged)
         }
     }
+    }
 }
 
 @Composable
@@ -1066,23 +1123,81 @@ private fun PermissionCard(
     }
 }
 
+data class MessagesUiState(
+    val loading: Boolean = true,
+    val messages: List<RelayMessage> = emptyList(),
+    val threads: List<MemberThread> = emptyList(),
+    val unreadCounts: Map<String, Int> = emptyMap(),
+    val translationEnabled: Boolean = false,
+    val userNickname: String = "",
+)
+
+class MessagesViewModel : ViewModel() {
+    private val _uiState = MutableStateFlow(MessagesUiState())
+    val uiState: StateFlow<MessagesUiState> = _uiState.asStateFlow()
+    private var loadJob: Job? = null
+
+    init {
+        load()
+    }
+
+    fun load() {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch(AppGraph.dispatchers.databaseRead) {
+            val settings = AppGraph.settings.read()
+            val messages = AppGraph.database.latest()
+            val unreadCounts = AppGraph.database.unreadCountsByMember()
+            val threads = messages
+                .groupBy { it.memberKey }
+                .map { (memberId, memberMessages) ->
+                    MemberThread(
+                        id = memberId,
+                        name = memberMessages.first().memberName,
+                        avatarUrl = memberMessages.firstNotNullOfOrNull { it.memberAvatarUrl },
+                        latest = memberMessages.first(),
+                        unreadCount = unreadCounts[memberId] ?: 0,
+                    )
+                }
+                .sortedByDescending { it.latest.sentAt }
+            _uiState.update { current ->
+                current.copy(
+                    loading = false,
+                    messages = messages,
+                    threads = threads,
+                    unreadCounts = unreadCounts,
+                    translationEnabled = settings.translationEnabled,
+                    userNickname = settings.userNickname,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun MessagesScreen(
-    refreshKey: Int,
+    dataVersion: Long,
     initialMessageId: String?,
     onInitialMessageHandled: (String) -> Unit,
     onUnreadChanged: () -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onUpdateProximity: (VoicePlaybackState) -> Unit,
+    isActive: Boolean = true,
+    viewModel: MessagesViewModel = viewModel(),
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadScope = rememberCoroutineScope()
     val retranslateScope = rememberCoroutineScope()
-    val messages = remember(refreshKey) { AppGraph.database.latest() }
-    val unreadCounts = remember(refreshKey) { AppGraph.database.unreadCountsByMember() }
-    val translationEnabled = remember(refreshKey) { AppGraph.settings.read().translationEnabled }
-    val userNickname = remember(refreshKey) { AppGraph.settings.read().userNickname }
+    val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(dataVersion) {
+        viewModel.load()
+    }
+
+    val messages = uiState.messages
+    val threads = uiState.threads
+    val translationEnabled = uiState.translationEnabled
+    val userNickname = uiState.userNickname
     val playbackState by VoicePlaybackService.playbackState.collectAsState()
     var selectedMemberId by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
@@ -1092,9 +1207,9 @@ private fun MessagesScreen(
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
     var notificationScrollMessageId by remember { mutableStateOf<String?>(null) }
 
-    DisposableEffect(selectedMemberId) {
+    DisposableEffect(selectedMemberId, isActive) {
         val memberKey = selectedMemberId
-        if (memberKey != null) MessageReadTracker.openMember(memberKey)
+        if (isActive && memberKey != null) MessageReadTracker.openMember(memberKey)
         onDispose {
             if (memberKey != null) MessageReadTracker.closeMember(memberKey)
         }
@@ -1160,6 +1275,10 @@ private fun MessagesScreen(
             Toast.makeText(context, "需要存储权限才能保存到 Download 文件夹", Toast.LENGTH_SHORT).show()
         }
     }
+    if (uiState.loading && messages.isEmpty()) {
+        Box(Modifier.fillMaxSize())
+        return
+    }
     if (messages.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1172,18 +1291,7 @@ private fun MessagesScreen(
         return
     }
 
-    val threads = messages
-        .groupBy { it.memberKey }
-        .map { (memberId, memberMessages) ->
-            MemberThread(
-                id = memberId,
-                name = memberMessages.first().memberName,
-                avatarUrl = memberMessages.firstNotNullOfOrNull { it.memberAvatarUrl },
-                latest = memberMessages.first(),
-                unreadCount = unreadCounts[memberId] ?: 0,
-            )
-        }
-        .sortedByDescending { it.latest.sentAt }
+    // threads are precomputed in MessagesViewModel on databaseRead dispatcher
 
     fun download(message: RelayMessage) {
         if (MediaDownloader.needsLegacyWritePermission(context)) {
@@ -1195,7 +1303,7 @@ private fun MessagesScreen(
     }
 
     val selected = selectedMemberId
-    BackHandler(enabled = selected != null) {
+    BackHandler(enabled = isActive && selected != null) {
         selectedMemberId = null
     }
     Crossfade(
@@ -1244,13 +1352,23 @@ private fun MessagesScreen(
             )
         } else {
             val thread = threads.firstOrNull { it.id == selectedMember }
-            val matchingMessageCount = remember(refreshKey, selectedMember, searchQuery, timeFilter) {
-                AppGraph.database.countMessagesForMember(
-                    memberKey = selectedMember,
-                    searchQuery = searchQuery,
-                    startMillis = timeFilter.startMillis,
-                    endMillisExclusive = timeFilter.endMillisExclusive,
-                )
+            val initialForMember = remember(selectedMember) {
+                uiState.messages.filter { it.memberKey == selectedMember }.take(MEMBER_MESSAGES_PAGE_SIZE)
+            }
+            val matchingMessageCount by produceState(
+                initialValue = if (searchQuery.isBlank() && !timeFilter.isActive) initialForMember.size else 0,
+                key1 = selectedMember,
+                key2 = searchQuery,
+                key3 = Pair(timeFilter, dataVersion),
+            ) {
+                value = withContext(AppGraph.dispatchers.databaseRead) {
+                    AppGraph.database.countMessagesForMember(
+                        memberKey = selectedMember,
+                        searchQuery = searchQuery,
+                        startMillis = timeFilter.startMillis,
+                        endMillisExclusive = timeFilter.endMillisExclusive,
+                    )
+                }
             }
             val totalPages = ((matchingMessageCount + MEMBER_MESSAGES_PAGE_SIZE - 1) / MEMBER_MESSAGES_PAGE_SIZE)
                 .coerceAtLeast(1)
@@ -1258,15 +1376,22 @@ private fun MessagesScreen(
             val messageListState = rememberLazyListState()
             var showPageDialog by remember(selectedMember, searchQuery, timeFilter) { mutableStateOf(false) }
             var showTimeFilterDialog by remember(selectedMember) { mutableStateOf(false) }
-            val memberMessages = remember(refreshKey, selectedMember, searchQuery, timeFilter, page) {
-                AppGraph.database.messagesForMember(
-                    memberKey = selectedMember,
-                    searchQuery = searchQuery,
-                    startMillis = timeFilter.startMillis,
-                    endMillisExclusive = timeFilter.endMillisExclusive,
-                    limit = MEMBER_MESSAGES_PAGE_SIZE,
-                    offset = page * MEMBER_MESSAGES_PAGE_SIZE,
-                )
+            val memberMessages by produceState<List<RelayMessage>>(
+                initialValue = if (searchQuery.isBlank() && !timeFilter.isActive && page == 0) initialForMember else emptyList(),
+                key1 = selectedMember,
+                key2 = Pair(searchQuery, timeFilter),
+                key3 = Pair(page, dataVersion),
+            ) {
+                value = withContext(AppGraph.dispatchers.databaseRead) {
+                    AppGraph.database.messagesForMember(
+                        memberKey = selectedMember,
+                        searchQuery = searchQuery,
+                        startMillis = timeFilter.startMillis,
+                        endMillisExclusive = timeFilter.endMillisExclusive,
+                        limit = MEMBER_MESSAGES_PAGE_SIZE,
+                        offset = page * MEMBER_MESSAGES_PAGE_SIZE,
+                    )
+                }
             }
             
             fun goToPage(targetPage: Int) {
@@ -1500,7 +1625,7 @@ private fun MessagesScreen(
 
 private const val MEMBER_MESSAGES_PAGE_SIZE = 20
 
-private data class MemberThread(
+data class MemberThread(
     val id: String,
     val name: String,
     val avatarUrl: String?,
@@ -1725,8 +1850,9 @@ private fun MessageCard(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 220.dp)
+                            .heightIn(min = 180.dp)
                             .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
                             .clickable(onClick = onOpenMedia),
                     ) {
                         RemoteImage(
@@ -1741,6 +1867,7 @@ private fun MessageCard(
                             preserveAspectRatio = true,
                             messageType = message.type,
                             message = message,
+                            placeholderColor = Color.Transparent,
                         )
                         if (message.type == MessageType.VIDEO) {
                             Box(

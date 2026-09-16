@@ -43,6 +43,7 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
             if (AppGraph.database.upsertBlog(previewBlog, isUnread = !BlogReadTracker.isViewing(previewBlog.id))) {
                 BlogNotifier.show(this, previewBlog)
             }
+            AppGraph.notifyDataChanged()
             fetchAndPrepareBlogInBackground(previewBlog)
             return
         }
@@ -53,6 +54,7 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
             isUnread = !MessageReadTracker.isViewing(message.memberKey),
         )
         if (!isNew) return
+        AppGraph.notifyDataChanged()
 
         if (message.shouldRing) {
             startCallPreparation(message)

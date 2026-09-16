@@ -1,0 +1,8 @@
+HSPLcom/nogirelay/app/NogiRelayApplication;
+HSPLcom/nogirelay/app/MainActivity;
+HSPLcom/nogirelay/app/MainActivityKt;
+HSPLcom/nogirelay/app/blog/**;
+HSPLcom/nogirelay/app/data/BlogRepository;
+HSPLcom/nogirelay/app/data/MessageDatabase;
+HSPLcom/nogirelay/app/performance/**;
+HSPLcom/nogirelay/app/ui/RemoteImageKt;

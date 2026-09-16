@@ -20,6 +20,11 @@ object TranslationManager {
     private val requestSlots = Semaphore(3)
 
     fun enqueue(context: Context) {
+        val appContext = context.applicationContext
+        scope.launch { enqueueInternal(appContext) }
+    }
+
+    private fun enqueueInternal(context: Context) {
         AppGraph.initialize(context)
         val settings = AppGraph.settings.read()
         Log.d(TAG, "Translation enqueue called: enabled=${settings.translationEnabled}, hasApiKey=${settings.aiApiKey.isNotBlank()}, hasModel=${settings.aiModel.isNotBlank()}")

@@ -7,6 +7,9 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
+    init {
+        setWriteAheadLoggingEnabled(true)
+    }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -61,6 +64,13 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             // v7 restores every translated BLOG line break from the source layout.
             db.execSQL("UPDATE blog_posts SET translation = NULL, translation_done = 0")
         }
+        if (oldVersion < 8) {
+            db.execSQL("ALTER TABLE blog_members ADD COLUMN latest_post_at TEXT")
+            db.execSQL(
+                "UPDATE blog_members SET latest_post_at = " +
+                    "(SELECT MAX(published_at) FROM blog_posts WHERE blog_posts.member_id = blog_members.id)",
+            )
+        }
     }
 
     private fun createBlogTables(db: SQLiteDatabase) {
@@ -105,7 +115,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                 name TEXT NOT NULL,
                 category TEXT NOT NULL,
                 avatar_url TEXT,
-                display_order INTEGER NOT NULL
+                display_order INTEGER NOT NULL,
+                latest_post_at TEXT
             )
             """.trimIndent(),
         )
@@ -380,6 +391,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             values,
             SQLiteDatabase.CONFLICT_IGNORE,
         ) != -1L
+        updateMemberLatestPost(post.memberId, post.publishedAt)
         if (inserted) return true
 
         val existingBody = readableDatabase.query(
@@ -410,6 +422,35 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         }
         writableDatabase.update("blog_posts", update, "id = ?", arrayOf(post.id))
         return false
+    }
+
+    fun upsertBlogs(posts: List<BlogPost>): Int {
+        if (posts.isEmpty()) return 0
+        val db = writableDatabase
+        var inserted = 0
+        db.beginTransaction()
+        try {
+            posts.forEach { post -> if (upsertBlog(post)) inserted += 1 }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return inserted
+    }
+
+    private fun updateMemberLatestPost(memberId: String, publishedAt: String) {
+        if (memberId.isBlank() || publishedAt.isBlank()) return
+        writableDatabase.execSQL(
+            """
+            UPDATE blog_members
+            SET latest_post_at = CASE
+                WHEN latest_post_at IS NULL OR latest_post_at < ? THEN ?
+                ELSE latest_post_at
+            END
+            WHERE id = ?
+            """.trimIndent(),
+            arrayOf(publishedAt, publishedAt, memberId),
+        )
     }
 
     fun hasBlog(id: String): Boolean = readableDatabase.query(
@@ -487,25 +528,12 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         val result = mutableListOf<BlogMember>()
         readableDatabase.rawQuery(
             """
-            SELECT
-                posts.member_id AS id,
-                MAX(posts.member_name) AS name,
-                COALESCE(NULLIF(MAX(directory.category), ''), '团体/运营') AS category,
-                COALESCE(
-                    MAX(NULLIF(directory.avatar_url, '')),
-                    MAX(NULLIF(posts.member_avatar_url, ''))
-                ) AS avatar_url,
-                COALESCE(MIN(directory.display_order), 100000) AS display_order,
-                MAX(posts.published_at) AS latest_post_at
-            FROM blog_posts AS posts
-            LEFT JOIN blog_members AS directory ON directory.id = posts.member_id
-            WHERE TRIM(posts.member_id) <> ''
-            GROUP BY posts.member_id
-            ORDER BY
-                CASE WHEN MIN(directory.display_order) IS NULL THEN 1 ELSE 0 END,
-                MIN(directory.display_order) ASC,
-                latest_post_at DESC,
-                name ASC
+            SELECT id, name, category, avatar_url, display_order, latest_post_at
+            FROM blog_members
+            WHERE EXISTS (
+                SELECT 1 FROM blog_posts WHERE blog_posts.member_id = blog_members.id
+            )
+            ORDER BY display_order ASC, latest_post_at DESC, name ASC
             """.trimIndent(),
             null,
         ).use { cursor ->
@@ -535,6 +563,13 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                     put("category", member.category)
                     put("avatar_url", member.avatarUrl)
                     put("display_order", member.displayOrder)
+                    put(
+                        "latest_post_at",
+                        db.rawQuery(
+                            "SELECT MAX(published_at) FROM blog_posts WHERE member_id = ?",
+                            arrayOf(member.id),
+                        ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null },
+                    )
                 }
                 db.insertOrThrow("blog_members", null, values)
             }
@@ -833,7 +868,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     companion object {
         private const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 7
+        private const val DB_VERSION = 8
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
         private const val MEMBER_MESSAGE_ORDER = "sent_at DESC, received_at DESC, id DESC"
         private const val BLOG_FULL_SYNC_KEY = "blog_full_sync_complete_v2"

@@ -27,6 +27,10 @@ object BlogTranslationManager {
 
     fun enqueuePending(context: Context) {
         val appContext = context.applicationContext
+        scope.launch { enqueuePendingInternal(appContext) }
+    }
+
+    private fun enqueuePendingInternal(appContext: Context) {
         AppGraph.initialize(appContext)
         val settings = AppGraph.settings.read()
         if (!settings.translationEnabled || settings.aiApiKey.isBlank() || settings.aiModel.isBlank()) return

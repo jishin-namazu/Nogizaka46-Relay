@@ -4,6 +4,9 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Build
+import android.media.MediaMetadataRetriever
+import android.view.Surface
 import android.view.ViewGroup
 import android.widget.MediaController
 import android.widget.Toast
@@ -52,11 +55,16 @@ import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
+import com.nogirelay.app.performance.RefreshRatePolicy
+import com.nogirelay.app.performance.RefreshRatePolicyOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MediaViewerActivity : ComponentActivity() {
+class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
+    private var viewerType: MessageType = MessageType.IMAGE
+
+    override fun refreshRatePolicy(): RefreshRatePolicy = RefreshRatePolicy.Maximum
     companion object {
         private const val EXTRA_IMAGE_URL = "image_url"
         private const val EXTRA_IMAGE_TITLE = "image_title"
@@ -103,6 +111,7 @@ class MediaViewerActivity : ComponentActivity() {
             finish()
             return
         }
+        viewerType = message.type
 
         setContent {
             NogiRelayTheme(darkTheme = true) {
@@ -119,6 +128,7 @@ private fun MediaViewer(message: RelayMessage, onClose: () -> Unit) {
     var videoView by remember { mutableStateOf<VideoView?>(null) }
     var videoPlaying by remember { mutableStateOf(false) }
     var videoPath by remember(message.id) { mutableStateOf<String?>(null) }
+    var videoFps by remember(message.id) { mutableFloatStateOf(0f) }
     var imageScale by remember(message.id) { mutableFloatStateOf(1f) }
     var imageOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var waitingForStoragePermission by remember { mutableStateOf(false) }
@@ -160,11 +170,24 @@ private fun MediaViewer(message: RelayMessage, onClose: () -> Unit) {
 
     if (message.type == MessageType.VIDEO) {
         LaunchedEffect(message.id, message.mediaUrl) {
-            videoPath = runCatching {
+            val video = runCatching {
                 withContext(Dispatchers.IO) {
-                    MediaDownloader.enqueueIfNeeded(context, message)?.absolutePath
+                    val path = MediaDownloader.enqueueIfNeeded(context, message)?.absolutePath
+                    val fps = path?.let { localPath ->
+                        MediaMetadataRetriever().run {
+                            try {
+                                setDataSource(localPath)
+                                extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloatOrNull()
+                            } finally {
+                                release()
+                            }
+                        }
+                    } ?: 0f
+                    path to fps
                 }
             }.getOrNull()
+            videoPath = video?.first
+            videoFps = video?.second ?: 0f
         }
     }
 
@@ -173,6 +196,7 @@ private fun MediaViewer(message: RelayMessage, onClose: () -> Unit) {
             MessageType.IMAGE -> RemoteImage(
                 url = message.mediaUrl,
                 contentDescription = message.text,
+                placeholderColor = Color.Black,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
@@ -199,33 +223,55 @@ private fun MediaViewer(message: RelayMessage, onClose: () -> Unit) {
 
             MessageType.VIDEO -> {
                 val path = videoPath
-                if (path == null) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.align(Alignment.Center))
-                } else {
-                    AndroidView(
-                        factory = { viewContext ->
-                            VideoView(viewContext).apply {
-                                videoView = this
-                                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                                val controller = MediaController(viewContext)
-                                controller.setAnchorView(this)
-                                setMediaController(controller)
-                                setOnPreparedListener {
-                                    it.isLooping = false
-                                    start()
-                                    videoPlaying = true
+                Box(Modifier.fillMaxSize()) {
+                    if (path != null) {
+                        AndroidView(
+                            factory = { viewContext ->
+                                VideoView(viewContext).apply {
+                                    videoView = this
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                    )
+                                    val controller = MediaController(viewContext)
+                                    controller.setAnchorView(this)
+                                    setMediaController(controller)
+                                    setOnPreparedListener {
+                                        it.isLooping = false
+                                        start()
+                                        videoPlaying = true
+                                    }
+                                    setOnCompletionListener { videoPlaying = false }
                                 }
-                                setOnCompletionListener { videoPlaying = false }
-                            }
-                        },
-                        update = { view ->
-                            if (view.tag != path) {
-                                view.tag = path
-                                view.setVideoPath(path)
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                            },
+                            update = { view ->
+                                if (view.tag != path) {
+                                    view.tag = path
+                                    view.setVideoPath(path)
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+
+                    if (!videoPlaying) {
+                        RemoteImage(
+                            url = message.thumbnailUrl ?: message.mediaUrl,
+                            contentDescription = message.text,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit,
+                            messageType = MessageType.VIDEO,
+                            message = message,
+                            placeholderColor = Color.Black,
+                        )
+                    }
+
+                    if (path == null) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
                 }
             }
 
