@@ -6,6 +6,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
@@ -46,13 +49,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +82,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 const val MEMBER_MESSAGES_PAGE_SIZE = 20
+
+private data class MemberPageData(
+    val matchingCount: Int = 0,
+    val totalPages: Int = 1,
+    val page: Int = 0,
+    val messages: List<RelayMessage> = emptyList(),
+    val loaded: Boolean = false,
+)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -115,6 +127,18 @@ fun MessagesScreen(
     var notificationScrollMessageId by remember { mutableStateOf<String?>(null) }
     var sessionUnreadIds by remember(selectedMemberId) { mutableStateOf(emptySet<String>()) }
     val isViewingLatest = (currentPage == 0 && searchQuery.isBlank() && !timeFilter.isActive)
+    val inboxListState = rememberLazyListState()
+
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            selectedMemberId = null
+            timeFilter = TimeFilter()
+            searchQuery = ""
+            currentPage = 0
+            pageInput = "1"
+            inboxListState.scrollToItem(0)
+        }
+    }
 
     DisposableEffect(selectedMemberId, isActive, isViewingLatest) {
         val memberKey = selectedMemberId
@@ -222,8 +246,10 @@ fun MessagesScreen(
             MemberInbox(
                 threads = threads,
                 userNickname = userNickname,
+                state = inboxListState,
                 onSelect = { thread ->
                     searchQuery = ""
+                    timeFilter = TimeFilter()
                     selectedMemberId = thread.id
                     currentPage = 0
                     pageInput = "1"
@@ -258,44 +284,114 @@ fun MessagesScreen(
             val initialForMember = remember(selectedMember) {
                 uiState.messages.filter { it.memberKey == selectedMember }.take(MEMBER_MESSAGES_PAGE_SIZE)
             }
-            val matchingMessageCount by produceState(
-                initialValue = if (searchQuery.isBlank() && !timeFilter.isActive) initialForMember.size else 0,
-                key1 = selectedMember,
-                key2 = searchQuery,
-                key3 = Pair(timeFilter, dataVersion),
-            ) {
-                value = withContext(AppGraph.dispatchers.databaseRead) {
-                    AppGraph.database.countMessagesForMember(
-                        memberKey = selectedMember,
-                        searchQuery = searchQuery,
-                        startMillis = timeFilter.startMillis,
-                        endMillisExclusive = timeFilter.endMillisExclusive,
-                    )
-                }
+            var pageData by remember(selectedMember) {
+                mutableStateOf(
+                    MemberPageData(
+                        matchingCount = initialForMember.size,
+                        totalPages = 1,
+                        page = 0,
+                        messages = initialForMember,
+                        loaded = initialForMember.isNotEmpty(),
+                    ),
+                )
             }
-            val totalPages = ((matchingMessageCount + MEMBER_MESSAGES_PAGE_SIZE - 1) / MEMBER_MESSAGES_PAGE_SIZE)
-                .coerceAtLeast(1)
-            val page = currentPage.coerceIn(0, totalPages - 1)
-            val messageListState = rememberLazyListState()
-            var showPageDialog by remember(selectedMember, searchQuery, timeFilter) { mutableStateOf(false) }
-            var showTimeFilterDialog by remember(selectedMember) { mutableStateOf(false) }
-            val memberMessages by produceState<List<RelayMessage>>(
-                initialValue = if (searchQuery.isBlank() && !timeFilter.isActive && page == 0) initialForMember else emptyList(),
-                key1 = selectedMember,
-                key2 = Pair(searchQuery, timeFilter),
-                key3 = Pair(page, dataVersion),
-            ) {
-                value = withContext(AppGraph.dispatchers.databaseRead) {
-                    AppGraph.database.messagesForMember(
+            LaunchedEffect(selectedMember, searchQuery, timeFilter, currentPage, dataVersion) {
+                val query = searchQuery
+                val bounds = timeFilter
+                val requestedPage = currentPage
+                pageData = withContext(AppGraph.dispatchers.databaseRead) {
+                    val matching = AppGraph.database.countMessagesForMember(
                         memberKey = selectedMember,
-                        searchQuery = searchQuery,
-                        startMillis = timeFilter.startMillis,
-                        endMillisExclusive = timeFilter.endMillisExclusive,
+                        searchQuery = query,
+                        startMillis = bounds.startMillis,
+                        endMillisExclusive = bounds.endMillisExclusive,
+                    )
+                    val totalPages = ((matching + MEMBER_MESSAGES_PAGE_SIZE - 1) / MEMBER_MESSAGES_PAGE_SIZE).coerceAtLeast(1)
+                    val page = requestedPage.coerceIn(0, totalPages - 1)
+                    val fetchedMessages = AppGraph.database.messagesForMember(
+                        memberKey = selectedMember,
+                        searchQuery = query,
+                        startMillis = bounds.startMillis,
+                        endMillisExclusive = bounds.endMillisExclusive,
                         limit = MEMBER_MESSAGES_PAGE_SIZE,
                         offset = page * MEMBER_MESSAGES_PAGE_SIZE,
                     )
+                    MemberPageData(
+                        matchingCount = matching,
+                        totalPages = totalPages,
+                        page = page,
+                        messages = fetchedMessages,
+                        loaded = true,
+                    )
                 }
             }
+
+            val matchingMessageCount = pageData.matchingCount
+            val totalPages = pageData.totalPages
+            val page = pageData.page
+            val memberMessages = pageData.messages
+            val messageListState = rememberLazyListState()
+            var showPageDialog by remember(selectedMember, searchQuery, timeFilter) { mutableStateOf(false) }
+            var showTimeFilterDialog by remember(selectedMember) { mutableStateOf(false) }
+
+            val currentMessageSignature = remember(memberMessages, page, matchingMessageCount) {
+                if (memberMessages.isEmpty()) {
+                    "empty:$matchingMessageCount:$searchQuery"
+                } else {
+                    "$page:$matchingMessageCount:" + memberMessages.joinToString(",") { it.id }
+                }
+            }
+            var initialDbLoaded by remember(selectedMember) { mutableStateOf(false) }
+            var previousMessageSignature by remember(selectedMember) { mutableStateOf<String?>(null) }
+            var filterAnimKey by remember(selectedMember) { mutableIntStateOf(0) }
+
+            LaunchedEffect(isActive) {
+                if (!isActive) {
+                    showTimeFilterDialog = false
+                    showPageDialog = false
+                    previousMessageSignature = null
+                }
+            }
+
+            LaunchedEffect(currentMessageSignature, pageData.loaded) {
+                if (!pageData.loaded) return@LaunchedEffect
+                if (!initialDbLoaded) {
+                    initialDbLoaded = true
+                    previousMessageSignature = currentMessageSignature
+                } else if (previousMessageSignature != currentMessageSignature) {
+                    previousMessageSignature = currentMessageSignature
+                    filterAnimKey++
+                }
+            }
+
+            val density = LocalDensity.current
+            val springOffset = remember(selectedMember) { Animatable(28f) }
+
+            LaunchedEffect(selectedMember) {
+                springOffset.snapTo(28f)
+                springOffset.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                )
+            }
+
+            LaunchedEffect(filterAnimKey) {
+                if (filterAnimKey > 0) {
+                    messageListState.scrollToItem(0)
+                    springOffset.snapTo(28f)
+                    springOffset.animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMediumLow,
+                        ),
+                    )
+                }
+            }
+
 
             val unreadInCurrentPage = remember(memberMessages) {
                 memberMessages.filter { it.isUnread }.map { it.id }
@@ -319,20 +415,25 @@ fun MessagesScreen(
             }
             val requestedPage = pageInput.toIntOrNull()
             val canJump = requestedPage != null && requestedPage in 1..totalPages
-            LaunchedEffect(selectedMember, searchQuery, timeFilter, page) {
+            LaunchedEffect(page, totalPages, pageData.loaded) {
+                if (!pageData.loaded) return@LaunchedEffect
                 if (currentPage != page) currentPage = page
                 pageInput = (page + 1).toString()
-                if (memberMessages.isNotEmpty() && notificationScrollMessageId == null) {
-                    // Check if playing message is in current page
-                    if (playbackState.isPlaying && playbackState.messageId != null) {
-                        val playingIndex = memberMessages.indexOfFirst { it.id == playbackState.messageId }
-                        if (playingIndex >= 0) {
-                            messageListState.scrollToItem(playingIndex + 1)
-                        } else {
-                            messageListState.scrollToItem(0)
-                        }
-                    } else {
-                        messageListState.scrollToItem(0)
+            }
+            var previousPage by remember(selectedMember) { mutableIntStateOf(page) }
+            LaunchedEffect(page) {
+                if (page != previousPage) {
+                    previousPage = page
+                    messageListState.scrollToItem(0)
+                }
+            }
+            var initialVoiceScrollHandled by remember(selectedMember) { mutableStateOf(false) }
+            LaunchedEffect(playbackState.isPlaying, playbackState.messageId, memberMessages) {
+                if (!initialVoiceScrollHandled && playbackState.isPlaying && playbackState.messageId != null) {
+                    val playingIndex = memberMessages.indexOfFirst { it.id == playbackState.messageId }
+                    if (playingIndex >= 0) {
+                        initialVoiceScrollHandled = true
+                        messageListState.scrollToItem(playingIndex + 1)
                     }
                 }
             }
@@ -437,7 +538,7 @@ fun MessagesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
                 ) {
-                    item {
+                    item(key = "messages-search-bar") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -483,70 +584,82 @@ fun MessagesScreen(
                             }
                         }
                     }
-                    if (memberMessages.isEmpty()) {
-                        item {
+                    if (pageData.loaded && memberMessages.isEmpty()) {
+                        item(key = "messages-empty") {
                             Text(
                                 text = if (searchQuery.isBlank()) "暂无消息" else "没有找到相关消息",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                modifier = Modifier
+                                    .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                                    .animateItemPlacement()
+                                    .fillMaxWidth()
+                                    .padding(vertical = 32.dp),
+                            )
+                        }
+                    } else if (memberMessages.isNotEmpty()) {
+                        items(memberMessages, key = { it.id }) { message ->
+                            MessageCard(
+                                modifier = Modifier
+                                    .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                                    .animateItemPlacement(),
+                                message = message,
+                                isUnread = message.isUnread || message.id in sessionUnreadIds,
+                                audioState = playbackState.takeIf { it.messageId == message.id },
+                                translationEnabled = translationEnabled,
+                                userNickname = userNickname,
+                                searchQuery = searchQuery,
+                                onOpenMedia = { onOpenMedia(message) },
+                                onPlayVoice = { onPlayVoice(message) },
+                                onDownload = { download(message) },
+                                onRetranslate = {
+                                    retranslateScope.launch {
+                                        AppGraph.database.markForRetranslation(message.id)
+                                        AppGraph.notifyDataChanged()
+                                        TranslationManager.enqueue(context)
+                                    }
+                                },
                             )
                         }
                     }
-                    items(memberMessages, key = { it.id }) { message ->
-                        MessageCard(
-                            modifier = Modifier.animateItemPlacement(),
-                            message = message,
-                            isUnread = message.isUnread || message.id in sessionUnreadIds,
-                            audioState = playbackState.takeIf { it.messageId == message.id },
-                            translationEnabled = translationEnabled,
-                            userNickname = userNickname,
-                            searchQuery = searchQuery,
-                            onOpenMedia = { onOpenMedia(message) },
-                            onPlayVoice = { onPlayVoice(message) },
-                            onDownload = { download(message) },
-                            onRetranslate = {
-                                retranslateScope.launch {
-                                    AppGraph.database.markForRetranslation(message.id)
-                                    AppGraph.notifyDataChanged()
-                                    TranslationManager.enqueue(context)
-                                }
-                            },
-                        )
-                    }
-                    item {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        ) {
-                            Text(
-                                text = "$matchingMessageCount 条消息",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp,
-                            )
-                            Row(
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth(),
+                    if (initialDbLoaded) {
+                        item(key = "messages-pagination") {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier
+                                    .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
                             ) {
-                                OutlinedButton(
-                                    onClick = { goToPage(page - 1) },
-                                    enabled = page > 0,
-                                ) { Text("上一页") }
-                                OutlinedButton(
-                                    onClick = {
-                                        pageInput = (page + 1).toString()
-                                        showPageDialog = true
-                                    },
-                                    enabled = matchingMessageCount > 0,
+                                Text(
+                                    text = "$matchingMessageCount 条消息",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Text("${page + 1} / $totalPages")
-                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码")
+                                    OutlinedButton(
+                                        onClick = { goToPage(page - 1) },
+                                        enabled = page > 0,
+                                    ) { Text("上一页") }
+                                    OutlinedButton(
+                                        onClick = {
+                                            pageInput = (page + 1).toString()
+                                            showPageDialog = true
+                                        },
+                                        enabled = matchingMessageCount > 0,
+                                    ) {
+                                        Text("${page + 1} / $totalPages")
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码")
+                                    }
+                                    OutlinedButton(
+                                        onClick = { goToPage(page + 1) },
+                                        enabled = page < totalPages - 1,
+                                    ) { Text("下一页") }
                                 }
-                                OutlinedButton(
-                                    onClick = { goToPage(page + 1) },
-                                    enabled = page < totalPages - 1,
-                                ) { Text("下一页") }
                             }
                         }
                     }

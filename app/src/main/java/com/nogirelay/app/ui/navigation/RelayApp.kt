@@ -51,6 +51,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
@@ -291,7 +293,11 @@ fun RelayApp(
                 AppTab.entries.forEach { item ->
                     RelayNavigationBarItem(
                         selected = tab == item,
-                        onClick = { tab = item },
+                        onClick = {
+                            if (tab != item) {
+                                tab = item
+                            }
+                        },
                         label = item.label,
                         imageVector = when (item) {
                             AppTab.HOME -> Icons.Rounded.Home
@@ -326,8 +332,17 @@ fun RelayApp(
                         }
                         .background(MaterialTheme.colorScheme.background)
                         .then(
-                            if (!isSelected && alpha == 0f) {
-                                Modifier.clearAndSetSemantics { }
+                            if (!isSelected) {
+                                Modifier
+                                    .clearAndSetSemantics { }
+                                    .pointerInput(Unit) {
+                                        awaitPointerEventScope {
+                                            while (true) {
+                                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                event.changes.forEach { it.consume() }
+                                            }
+                                        }
+                                    }
                             } else {
                                 Modifier
                             }

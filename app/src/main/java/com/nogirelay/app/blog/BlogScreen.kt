@@ -2,6 +2,9 @@ package com.nogirelay.app.blog
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -36,6 +39,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalTextToolbar
 import com.nogirelay.app.ui.AutoClearSelectionOnExit
@@ -89,6 +94,7 @@ import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.BlogSummary
+import com.nogirelay.app.data.isRealBlogImageUrl
 import com.nogirelay.app.translation.BlogTranslationLayout
 import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.UnreadTag
@@ -156,7 +162,7 @@ fun BlogScreen(
             val availableIds = members.mapTo(mutableSetOf(), BlogMember::id)
             val updated = selectedIds.intersect(availableIds)
             if (updated != selectedIds) {
-                selectedMemberIds = updated
+                selectedMemberIds = updated.takeUnless { it.size == availableIds.size }
                 currentPage = 0
                 pageInput = "1"
             }
@@ -234,7 +240,7 @@ fun BlogScreen(
     LaunchedEffect(dataVersion, blogs) {
         BlogMediaDownloader.prefetchImages(
             context,
-            blogs.mapNotNull { it.imageUrl?.takeIf(String::isNotBlank) },
+            blogs.mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) },
         )
     }
 
@@ -253,9 +259,78 @@ fun BlogScreen(
         if (currentPage != page) currentPage = page
         pageInput = (page + 1).toString()
     }
-    LaunchedEffect(page, selectedMemberIds, oldestFirst, searchQuery, timeFilter) {
-        blogListState.scrollToItem(0)
+    var previousPage by remember { mutableIntStateOf(page) }
+    LaunchedEffect(page) {
+        if (page != previousPage) {
+            previousPage = page
+            blogListState.scrollToItem(0)
+        }
     }
+
+    val currentBlogSignature = remember(blogs, page, matchingCount) {
+        if (blogs.isEmpty()) {
+            "empty:$matchingCount:$searchQuery"
+        } else {
+            "$page:$matchingCount:" + blogs.joinToString(",") { it.id }
+        }
+    }
+    var previousBlogSignature by remember { mutableStateOf<String?>(null) }
+    var filterAnimKey by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            selectedBlogId = null
+            selectedMemberIds = null
+            oldestFirst = false
+            searchQuery = ""
+            timeFilter = TimeFilter()
+            currentPage = 0
+            pageInput = "1"
+            showMemberDialog = false
+            showPageDialog = false
+            previousBlogSignature = null
+            blogListState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(currentBlogSignature, pageData.loaded) {
+        if (!pageData.loaded) return@LaunchedEffect
+        if (previousBlogSignature == null) {
+            previousBlogSignature = currentBlogSignature
+        } else if (previousBlogSignature != currentBlogSignature) {
+            previousBlogSignature = currentBlogSignature
+            filterAnimKey++
+        }
+    }
+
+    val density = LocalDensity.current
+    val springOffset = remember { Animatable(0f) }
+
+    LaunchedEffect(filterAnimKey) {
+        if (filterAnimKey > 0) {
+            blogListState.scrollToItem(0)
+            springOffset.snapTo(28f)
+            springOffset.animateTo(
+                targetValue = 0f,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+            )
+        }
+    }
+
+    LaunchedEffect(showMemberDialog) {
+        if (showMemberDialog && members.isEmpty()) {
+            withContext(AppGraph.dispatchers.databaseRead) {
+                val loaded = AppGraph.database.blogMembers()
+                if (loaded.isNotEmpty()) {
+                    members = loaded
+                }
+            }
+        }
+    }
+
 
     if (showMemberDialog) {
         BlogFilterDialog(
@@ -322,11 +397,13 @@ fun BlogScreen(
                 onOldestFirstChanged = { oldestFirst = it },
                 modifier = Modifier.weight(1f),
             )
+            val isMemberFilterActive = selectedMemberIds != null && (members.isEmpty() || selectedMemberIds?.size != members.size)
+            val isFilterActive = timeFilter.isActive || isMemberFilterActive
             IconButton(onClick = { showMemberDialog = true }) {
                 Icon(
                     Icons.Rounded.FilterList,
                     contentDescription = "筛选成员和时间",
-                    tint = if (timeFilter.isActive) {
+                    tint = if (isFilterActive) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -373,7 +450,11 @@ fun BlogScreen(
                 item(key = "blog-empty") {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 64.dp),
+                        modifier = Modifier
+                            .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                            .animateItemPlacement()
+                            .fillMaxWidth()
+                            .padding(vertical = 64.dp),
                     ) {
                         Icon(Icons.AutoMirrored.Rounded.Article, contentDescription = null, modifier = Modifier.size(52.dp))
                         Spacer(Modifier.height(10.dp))
@@ -389,7 +470,9 @@ fun BlogScreen(
             } else if (blogs.isNotEmpty()) {
                 items(blogs, key = BlogSummary::id) { blog ->
                     BlogSummaryCard(
-                        modifier = Modifier.animateItemPlacement(),
+                        modifier = Modifier
+                            .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                            .animateItemPlacement(),
                         blog = blog,
                         searchQuery = searchQuery,
                         bodyPreviews = bodyPreviews[blog.id].orEmpty(),
@@ -407,11 +490,14 @@ fun BlogScreen(
                         },
                     )
                 }
-                item {
+                item(key = "blog-pagination") {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
                         Text("$matchingCount 篇博客", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                         Row(
@@ -517,16 +603,30 @@ private fun BlogFilterDialog(
     val groups = remember(members) { members.groupBy(BlogMember::category) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("筛选") },
+        title = { Text("博客筛选") },
         text = {
             Column {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 104.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    // The time section is a single chip row, so the member grid keeps the bulk of the dialog.
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 430.dp),
-                ) {
+                if (members.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "正在加载成员...",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                        )
+                    }
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 104.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        // The time section is a single chip row, so the member grid keeps the bulk of the dialog.
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 430.dp),
+                    ) {
                     groups.forEach { (category, groupMembers) ->
                         item(key = "category-$category", span = { GridItemSpan(maxLineSpan) }) {
                             Text(
@@ -572,6 +672,7 @@ private fun BlogFilterDialog(
                             }
                         }
                     }
+                }
                 }
                 Spacer(Modifier.height(10.dp))
                 TimeFilterSection(
@@ -745,7 +846,7 @@ private fun BlogSummaryCard(
                     }
                 }
             }
-            blog.imageUrl?.let {
+            blog.imageUrl?.takeIf(::isRealBlogImageUrl)?.let {
                 RemoteImage(
                     url = it,
                     contentDescription = blog.title,
@@ -754,6 +855,7 @@ private fun BlogSummaryCard(
                     // Decode off the main thread, at screen width instead of full resolution: the
                     // covers are up to 3700x2800 photos.
                     loadCachedImmediately = false,
+                    placeholderColor = Color.Transparent,
                     maxDecodeDimension = 1440,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -935,18 +1037,21 @@ private fun BlogDetail(
         }
         items(displayBlocks) { block ->
             when (block) {
-                is DisplayBlock.Image -> RemoteImage(
-                    url = block.url,
-                    contentDescription = blog.title,
-                    contentScale = ContentScale.Fit,
-                    preserveAspectRatio = true,
-                    loadCachedImmediately = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { openImage(block.url) },
-                )
+                is DisplayBlock.Image -> if (isRealBlogImageUrl(block.url)) {
+                    RemoteImage(
+                        url = block.url,
+                        contentDescription = blog.title,
+                        contentScale = ContentScale.Fit,
+                        preserveAspectRatio = true,
+                        loadCachedImmediately = true,
+                        placeholderColor = Color.Transparent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { openImage(block.url) },
+                    )
+                }
                 is DisplayBlock.Paragraph -> Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     SelectionContainer { Text(block.original, lineHeight = 24.sp) }
                     block.translation?.takeIf(String::isNotBlank)?.let {

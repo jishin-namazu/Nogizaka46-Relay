@@ -159,7 +159,7 @@ class BlogClient {
             memberAvatarUrl = data["member_avatar_url"].nullIfBlank(),
             title = data["title"].orEmpty(),
             bodyHtml = "",
-            imageUrl = data["image_url"].nullIfBlank(),
+            imageUrl = data["image_url"].nullIfBlank()?.takeIf(::isRealBlogImageUrl),
             publishedAt = data["published_at"].orEmpty(),
             postUrl = data["post_url"].orEmpty().ifBlank {
                 "https://www.nogizaka46.com/s/n46/diary/detail/$id"
@@ -177,7 +177,7 @@ class BlogClient {
             memberAvatarUrl = officialUrl(json.optString("artist_img")),
             title = json.optString("title").trim(),
             bodyHtml = json.optString("text"),
-            imageUrl = officialUrl(json.optString("img")),
+            imageUrl = officialUrl(json.optString("img"))?.takeIf(::isRealBlogImageUrl),
             publishedAt = normalizePublishedAt(json.optString("date")),
             postUrl = officialUrl(json.optString("link"))
                 ?: "https://www.nogizaka46.com/s/n46/diary/detail/$id",

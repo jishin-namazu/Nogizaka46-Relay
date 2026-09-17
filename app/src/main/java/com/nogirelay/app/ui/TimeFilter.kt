@@ -297,7 +297,7 @@ fun TimeFilterDialog(
     var draft by remember(filter) { mutableStateOf(filter) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("筛选") },
+        title = { Text("消息时间筛选") },
         text = {
             TimeFilterSection(
                 filter = draft,

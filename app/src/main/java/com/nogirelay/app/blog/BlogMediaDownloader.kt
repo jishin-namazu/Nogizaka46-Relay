@@ -3,6 +3,7 @@ package com.nogirelay.app.blog
 import android.content.Context
 import android.util.Log
 import com.nogirelay.app.data.BlogPost
+import com.nogirelay.app.data.isRealBlogImageUrl
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.data.MessageType
 import kotlinx.coroutines.CoroutineScope
@@ -45,7 +46,7 @@ object BlogMediaDownloader {
     }
 
     fun imageUrls(post: BlogPost): List<String> = buildList {
-        post.imageUrl?.takeIf(String::isNotBlank)?.let(::add)
+        post.imageUrl?.takeIf(::isRealBlogImageUrl)?.let(::add)
         addAll(
             BlogContentParser.blocks(post.bodyHtml)
                 .filterIsInstance<BlogContentBlock.Image>()

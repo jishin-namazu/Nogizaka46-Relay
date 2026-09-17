@@ -46,3 +46,15 @@ data class BlogPage(
     val total: Int,
     val posts: List<BlogPost>,
 )
+
+fun isRealBlogImageUrl(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    val trimmed = url.trim()
+    if (trimmed.endsWith("/none.png", ignoreCase = true) ||
+        trimmed.contains("/blog/none.", ignoreCase = true) ||
+        trimmed.contains("no_image", ignoreCase = true)
+    ) {
+        return false
+    }
+    return true
+}
