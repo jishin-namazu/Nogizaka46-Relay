@@ -28,86 +28,12 @@
 
 ## 🏛️ 系统架构概览
 
-```mermaid
-flowchart TD
-    subgraph Sources["1. 乃木坂46 官方数据源"]
-        direction LR
-        NogiMsg["私有消息 Web API<br/>(订阅制 / 动态 JWT 鉴权)"]
-        NogiBlog["公开 BLOG API<br/>(无需登录 / JSONP 数据源)"]
-    end
+[![Nogi Relay 完整运行架构：官方采集、双进程服务端、持久化、FCM、Android、博客与 AI 直连及会话恢复](docs/architecture/architecture.png)](docs/architecture/architecture.png)
 
-    subgraph RelayServer["2. Nogi Relay 服务端 (Docker 容器)"]
-        direction TB
-        subgraph MonitorProc["Monitor 监控进程"]
-            Browser["Playwright 浏览器监控<br/>• 会话托管与 401 自动续期<br/>• Timeline 增量轮询与游标回填"]
-            BlogMon["公开 BLOG 监控器<br/>• 增量追赶与 head_id 推进<br/>• 仅存元数据，不存博客正文"]
-            MediaStore[("媒体内容归档<br/>• SHA-256 内容寻址<br/>• 多来电背景物理去重")]
-            MediaSrv["专有受保护媒体服务 (:8081)<br/>• Bearer 鉴权流式直出"]
-        end
-
-        subgraph ApiProc["API 主进程"]
-            RESTAPI["Express REST API (:8080)<br/>• 设备注册 / 历史同步<br/>• /health 探针 / 会话热更新"]
-            DB[(PostgreSQL 数据库<br/>消息 / 博客元数据 / 设备 / 错误日志)]
-        end
-
-        FCMService["Firebase Admin SDK<br/>(纯数据高优先级 Payload / 4KB 容灾)"]
-
-        Browser -->|"写入归档文件"| MediaStore
-        MediaStore -->|"提供本地流"| MediaSrv
-        Browser -->|"入库消息与状态"| DB
-        BlogMon -->|"入库博客元数据"| DB
-        DB ---|"读写数据"| RESTAPI
-        Browser -->|"触发推送"| FCMService
-        BlogMon -->|"触发推送"| FCMService
-    end
-
-    subgraph PushNetwork["3. 推送通道"]
-        FCM["Google Firebase Cloud Messaging<br/>(Android Priority: High / Data-Only)"]
-    end
-
-    subgraph AndroidClient["4. Nogi Relay Android 客户端"]
-        direction TB
-        FCMReceiver["FCM 接收服务<br/>(NogiFirebaseMessagingService)"]
-
-        subgraph InCallSys["拟真全屏语音呼叫系统"]
-            PrepService["来电准备前台服务<br/>(静默预载语音与写真)"]
-            CallActivity["全屏来电 Activity<br/>(锁屏唤醒 / 贴耳距离传感器息屏)"]
-        end
-
-        subgraph StorageSearch["本地离线存储与检索"]
-            LocalDB[("本地 SQLite (v7)<br/>离线消息 / 博客 / 成员名录")]
-            SearchEngine["全文检索与时间筛选器<br/>(词边界摘要 / 关键词高亮)"]
-        end
-
-        subgraph ExtEngines["扩展功能引擎"]
-            BlogUI["博客直连阅读器<br/>(段落中日对照 / 多图批量下载)"]
-            AITrans["大模型翻译引擎<br/>(11家厂商 / JSON Schema / 格式保真)"]
-        end
-
-        FCMReceiver -->|"语音来电"| PrepService
-        PrepService -->|"就绪唤醒"| CallActivity
-        FCMReceiver -->|"普通消息 / 博客更新"| LocalDB
-        LocalDB --> SearchEngine
-        LocalDB --> BlogUI
-        LocalDB -.->|"按需翻译"| AITrans
-    end
-
-    %% 主干链路 (从上至下平滑推进，避免交叉重叠)
-    NogiMsg -->|"1. 监听请求 / 轮询时间线"| Browser
-    NogiBlog -->|"1. 定期轮询新博客元数据"| BlogMon
-    FCMService -->|"2. 下发数据推送"| FCM
-    FCM -->|"3. 唤醒客户端"| FCMReceiver
-
-    %% 客户端与服务端的补充同步链路 (从上层下发至客户端，顺向连接)
-    RESTAPI -.->|"历史消息同步"| LocalDB
-    MediaSrv -.->|"音频/背景直连拉取"| PrepService
-
-    %% 客户端直连官网 (外侧顺向连接)
-    NogiBlog -.->|"正文与大图直连拉取 (不经服务端)"| BlogUI
-```
+[交互架构图](docs/architecture/architecture.html)
 
 - **双进程容器架构**：主 API 进程（提供 REST API、设备管理与 `/health` 探针）和 Monitor 进程（Chromium 会话轮询、博客监控与 8081 媒体服务）彼此独立运行。两者仍位于同一 Fly Machine 和 Linux cgroup 中，因此极端浏览器负载仍可能影响 API 延迟；Monitor 使用整机内存阈值主动回收 Chromium 来降低该风险。
-- **正文分离同步设计**：Relay 服务端仅保存用于去重、防漏和推送通知的博客元数据，正文与高清图片由 Android 客户端直接从官网并发异步拉取，极大节省服务端网络与存储开销。
+- **正文分离同步设计**：Relay 服务端仅保存用于去重、防漏和推送通知的博客元数据，正文与高清图片由 Android 客户端直接从官网并发异步拉取，节省服务端网络与存储开销。
 
 ---
 
