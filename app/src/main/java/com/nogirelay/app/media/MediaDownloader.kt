@@ -96,6 +96,24 @@ object MediaDownloader {
         return file.takeIf { it.isFile && it.length() > 0L }
     }
 
+    /** Returns whether a cached video contains an audio track, or null when it is not cached/readable. */
+    fun cachedVideoHasAudioTrack(context: Context, message: RelayMessage): Boolean? {
+        if (message.type != MessageType.VIDEO) return null
+        val mediaUrl = mediaUrlFor(message) ?: return null
+        val videoFile = cachedFileForUrl(context, mediaUrl, MessageType.VIDEO) ?: return null
+        return runCatching {
+            MediaMetadataRetriever().run {
+                try {
+                    setDataSource(videoFile.absolutePath)
+                    extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO)
+                        .equals("yes", ignoreCase = true)
+                } finally {
+                    release()
+                }
+            }
+        }.getOrNull()
+    }
+
     /** Returns an existing private file or downloads the URL into one. */
     fun downloadUrl(context: Context, url: String, type: MessageType): File {
         require(url.isNotBlank()) { "媒体地址为空" }

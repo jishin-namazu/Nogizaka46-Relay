@@ -77,7 +77,7 @@ object IncomingCallNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        val displayName = substituteNickname(message.incomingCallFrom ?: message.memberName, AppGraph.settings.read().userNickname) ?: (message.incomingCallFrom ?: message.memberName)
+        val displayName = message.incomingCallFrom ?: message.memberName
         val builder = Notification.Builder(context, NotificationChannels.CALLS)
             .setSmallIcon(R.drawable.ic_notification_call)
             .setContentTitle(displayName)
@@ -132,7 +132,7 @@ object IncomingCallNotifier {
             retryIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val displayName = substituteNickname(message.incomingCallFrom ?: message.memberName, AppGraph.settings.read().userNickname) ?: (message.incomingCallFrom ?: message.memberName)
+        val displayName = message.incomingCallFrom ?: message.memberName
         val notification = Notification.Builder(context, NotificationChannels.CALLS)
             .setSmallIcon(R.drawable.ic_notification_call)
             .setContentTitle(displayName)
@@ -157,13 +157,14 @@ object IncomingCallNotifier {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val userNickname = AppGraph.settings.read().userNickname
         val label = when (message.type) {
             com.nogirelay.app.data.MessageType.IMAGE -> "发来了一张图片"
             com.nogirelay.app.data.MessageType.AUDIO -> "发来了一条语音"
             com.nogirelay.app.data.MessageType.VIDEO -> "发来了一段视频"
-            com.nogirelay.app.data.MessageType.TEXT -> message.text.orEmpty()
+            com.nogirelay.app.data.MessageType.TEXT -> substituteNickname(message.text, userNickname).orEmpty()
         }.withoutTextPresentationSelector()
-        val displayName = substituteNickname(message.memberName, AppGraph.settings.read().userNickname) ?: message.memberName
+        val displayName = message.memberName
         val notification = Notification.Builder(context, NotificationChannels.MESSAGES)
             .setSmallIcon(R.drawable.ic_notification_message)
             .setContentTitle(displayName)

@@ -110,6 +110,7 @@ object BlogTranslationManager {
                         settings.userNickname,
                     ).mapCatching(layout::validateAndSerialize).getOrThrow()
                     AppGraph.database.saveBlogTranslation(blogId, translation)
+                    AppGraph.notifyDataChanged()
                 }
             }
         }

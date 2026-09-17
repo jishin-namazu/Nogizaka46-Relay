@@ -69,6 +69,7 @@ object TranslationManager {
                             result.onSuccess { translation ->
                                 Log.d(TAG, "Translation success for ${message.id}")
                                 AppGraph.database.saveTranslation(message.id, translation.takeIf { it.isNotBlank() })
+                                AppGraph.notifyDataChanged()
                                 retryAfter.remove(message.id)
                                 retryCount.remove(message.id)
                             }.onFailure { error ->
@@ -104,8 +105,8 @@ object TranslationManager {
         return provider.fetchModels(apiKey)
     }
 
-    private fun shouldTranslate(text: String): Boolean {
-        if (text.isBlank() || isPureEmojiOrSymbols(text)) return false
+    fun shouldTranslate(text: String?): Boolean {
+        if (text.isNullOrBlank() || isPureEmojiOrSymbols(text)) return false
         var hasHan = false
         var hasKana = false
         text.codePoints().forEach { codePoint ->

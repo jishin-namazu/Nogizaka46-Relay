@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -65,6 +66,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +86,8 @@ import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.BlogSummary
 import com.nogirelay.app.translation.BlogTranslationLayout
 import com.nogirelay.app.translation.BlogTranslationManager
+import com.nogirelay.app.UnreadTag
+import com.nogirelay.app.ui.AiTranslateIcon
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.TimeFilter
@@ -97,6 +101,7 @@ import kotlinx.coroutines.withContext
 
 private const val BLOG_PAGE_SIZE = 20
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun BlogScreen(
     dataVersion: Long,
@@ -106,6 +111,7 @@ fun BlogScreen(
     isActive: Boolean = true,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val retranslateScope = rememberCoroutineScope()
     var selectedBlogId by remember { mutableStateOf<String?>(null) }
     var selectedMemberIds by remember { mutableStateOf<Set<String>?>(null) }
     var oldestFirst by remember { mutableStateOf(false) }
@@ -370,6 +376,7 @@ fun BlogScreen(
             } else if (blogs.isNotEmpty()) {
                 items(blogs, key = BlogSummary::id) { blog ->
                     BlogSummaryCard(
+                        modifier = Modifier.animateItemPlacement(),
                         blog = blog,
                         searchQuery = searchQuery,
                         bodyPreviews = bodyPreviews[blog.id].orEmpty(),
@@ -377,6 +384,13 @@ fun BlogScreen(
                         onClick = { selectedBlogId = blog.id },
                         onDownload = {
                             context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
+                        },
+                        onRetranslate = {
+                            retranslateScope.launch(Dispatchers.IO) {
+                                AppGraph.database.markBlogForRetranslation(blog.id)
+                                AppGraph.notifyDataChanged()
+                                BlogTranslationManager.enqueue(context, blog.id, force = true)
+                            }
                         },
                     )
                 }
@@ -615,6 +629,8 @@ private fun BlogSummaryCard(
     translationEnabled: Boolean,
     onClick: () -> Unit,
     onDownload: () -> Unit,
+    onRetranslate: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val highlightBackground = MaterialTheme.colorScheme.primaryContainer
     val highlightText = MaterialTheme.colorScheme.onPrimaryContainer
@@ -622,39 +638,47 @@ private fun BlogSummaryCard(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
     ) {
         Column {
             Column(Modifier.padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 2.dp),
-                    ) {
-                        RemoteImage(
-                            url = blog.memberAvatarUrl,
-                            contentDescription = blog.memberName,
-                            // Decoded on IO at avatar size: search results bring members whose avatar is
-                            // not in the memory cache, and a synchronous main-thread decode per card is
-                            // what made scrolling search results stutter while the newest posts did not.
-                            loadCachedImmediately = false,
-                            maxDecodeDimension = 256,
-                            modifier = Modifier.size(38.dp).clip(CircleShape),
-                        )
-                        Column(Modifier.padding(start = 10.dp)) {
+                    RemoteImage(
+                        url = blog.memberAvatarUrl,
+                        contentDescription = blog.memberName,
+                        // Decoded on IO at avatar size: search results bring members whose avatar is
+                        // not in the memory cache, and a synchronous main-thread decode per card is
+                        // what made scrolling search results stutter while the newest posts did not.
+                        loadCachedImmediately = false,
+                        maxDecodeDimension = 256,
+                        modifier = Modifier.size(42.dp).clip(CircleShape),
+                    )
+                    Spacer(Modifier.size(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
                                 fontWeight = FontWeight.SemiBold,
                             )
-                            Text(
-                                highlightMatches(formatBlogDate(blog.publishedAt), searchQuery, highlightBackground, highlightText),
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (blog.isUnread) {
+                                Spacer(Modifier.width(6.dp))
+                                UnreadTag("未读")
+                            }
+                        }
+                        Text(
+                            highlightMatches(formatBlogDate(blog.publishedAt), searchQuery, highlightBackground, highlightText),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (translationEnabled) {
+                        IconButton(onClick = onRetranslate, modifier = Modifier.size(40.dp)) {
+                            AiTranslateIcon(
+                                tint = MaterialTheme.colorScheme.primary,
+                                size = 24.dp,
                             )
                         }
                     }
-                    Spacer(Modifier.weight(1f))
-                    if (blog.isUnread) Badge { Text("未读") }
                     IconButton(onClick = onDownload, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.Rounded.Download, contentDescription = "选择下载博客图片")
                     }
@@ -737,6 +761,7 @@ private fun BlogDetail(
     onUnreadChanged: () -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val retranslateScope = rememberCoroutineScope()
     var localRefresh by remember { mutableIntStateOf(0) }
 
     val detailState by produceState<ParsedBlogDetail?>(
@@ -824,32 +849,40 @@ private fun BlogDetail(
         item {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 2.dp),
-                    ) {
-                        RemoteImage(
-                            url = blog.memberAvatarUrl,
-                            contentDescription = blog.memberName,
-                            loadCachedImmediately = true,
-                            modifier = Modifier.size(44.dp).clip(CircleShape),
-                        )
-                        Column(Modifier.padding(start = 10.dp)) {
-                            Text(blog.memberName, fontWeight = FontWeight.SemiBold)
-                            Text(formatBlogDate(blog.publishedAt), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                    RemoteImage(
+                        url = blog.memberAvatarUrl,
+                        contentDescription = blog.memberName,
+                        loadCachedImmediately = true,
+                        modifier = Modifier.size(42.dp).clip(CircleShape),
+                    )
+                    Spacer(Modifier.size(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(blog.memberName, fontWeight = FontWeight.SemiBold)
+                        Text(formatBlogDate(blog.publishedAt), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Spacer(Modifier.weight(1f))
                     if (translationEnabled && blog.bodyHtml.isNotBlank()) {
-                        IconButton(onClick = {
-                            BlogTranslationManager.enqueue(context, blog.id, force = true)
-                        }) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "重新翻译")
+                        IconButton(
+                            onClick = {
+                                retranslateScope.launch(Dispatchers.IO) {
+                                    AppGraph.database.markBlogForRetranslation(blog.id)
+                                    AppGraph.notifyDataChanged()
+                                    BlogTranslationManager.enqueue(context, blog.id, force = true)
+                                }
+                            },
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            AiTranslateIcon(
+                                tint = MaterialTheme.colorScheme.primary,
+                                size = 24.dp,
+                            )
                         }
                     }
-                    IconButton(onClick = {
-                        context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
-                    }) {
+                    IconButton(
+                        onClick = {
+                            context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
+                        },
+                        modifier = Modifier.size(40.dp),
+                    ) {
                         Icon(Icons.Rounded.Download, contentDescription = "选择下载博客图片")
                     }
                 }

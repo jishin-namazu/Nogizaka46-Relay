@@ -139,7 +139,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             put("incoming_call_from", message.incomingCallFrom)
             put("ringtone_url", message.ringtoneUrl)
             put("is_played", if (message.isPlayed) 1 else 0)
-            put("is_unread", if (isUnread) 1 else 0)
+            put("is_unread", if (isUnread || message.isUnread) 1 else 0)
             put("translation", message.translation)
             put("translation_done", if (message.translationDone) 1 else 0)
             put("received_at", System.currentTimeMillis())
@@ -292,6 +292,22 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             "is_unread = 1 AND ${filter.selection}",
             filter.arguments,
         )
+    }
+
+    fun markMessagesReadByIds(ids: Collection<String>): Int {
+        if (ids.isEmpty()) return 0
+        val values = ContentValues().apply { put("is_unread", 0) }
+        var updated = 0
+        ids.toList().chunked(500).forEach { chunk ->
+            val placeholders = chunk.joinToString(",") { "?" }
+            updated += writableDatabase.update(
+                "messages",
+                values,
+                "is_unread = 1 AND id IN ($placeholders)",
+                chunk.toTypedArray(),
+            )
+        }
+        return updated
     }
 
     fun find(id: String): RelayMessage? {
@@ -839,6 +855,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         isPlayed = getInt(getColumnIndexOrThrow("is_played")) == 1,
         translation = nullableString("translation"),
         translationDone = getInt(getColumnIndexOrThrow("translation_done")) == 1,
+        isUnread = getInt(getColumnIndexOrThrow("is_unread")) == 1,
     )
 
     private fun Cursor.toBlogPost(): BlogPost = BlogPost(

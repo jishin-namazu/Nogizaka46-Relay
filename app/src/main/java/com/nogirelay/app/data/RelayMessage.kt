@@ -33,6 +33,7 @@ data class RelayMessage(
     val isPlayed: Boolean,
     val translation: String? = null,
     val translationDone: Boolean = false,
+    val isUnread: Boolean = false,
 ) {
     val memberKey: String
         get() = memberId.ifBlank { memberName }

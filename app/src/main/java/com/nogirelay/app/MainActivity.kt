@@ -84,6 +84,7 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -163,6 +164,7 @@ import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.translation.normalizeTranslationText
 import com.nogirelay.app.translation.substituteNickname
+import com.nogirelay.app.ui.AiTranslateIcon
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.RemoteImage
@@ -246,16 +248,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        MessageReadTracker.setAppVisible(true)
-        BlogReadTracker.setAppVisible(true)
         AppGraph.notifyDataChanged()
         syncRequests.update { it + 1 }
     }
 
-    override fun onStop() {
+    override fun onResume() {
+        super.onResume()
+        MessageReadTracker.setAppVisible(true)
+        BlogReadTracker.setAppVisible(true)
+        AppGraph.notifyDataChanged()
+    }
+
+    override fun onPause() {
         MessageReadTracker.setAppVisible(false)
         BlogReadTracker.setAppVisible(false)
-        super.onStop()
+        super.onPause()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -689,7 +696,8 @@ private fun syncBlogsFromOfficial(context: Context): Int {
             if (newestId == null) newestId = page.posts.firstOrNull()?.id
             val boundaryReached = page.posts.any { it.id == syncBoundaryId }
             page.posts.forEach { post ->
-                if (AppGraph.database.upsertBlog(post)) inserted += 1
+                val isUnread = !BlogReadTracker.isViewing(post.id)
+                if (AppGraph.database.upsertBlog(post, isUnread = isUnread)) inserted += 1
                 BlogMediaDownloader.enqueue(context, post)
             }
             offset += page.posts.size
@@ -784,7 +792,10 @@ private fun syncNewMessages(context: Context, settings: AppSettings, syncBoundar
         }
         if (newestId == null) newestId = page.firstOrNull()?.id
         val boundaryReached = page.any { it.id == syncBoundaryId }
-        page.forEach { if (storeSyncedMessage(context, it)) inserted++ }
+        page.forEach {
+            val isUnread = !MessageReadTracker.isViewing(it.memberKey)
+            if (storeSyncedMessage(context, it, isUnread = isUnread)) inserted++
+        }
         offset += page.size
         if (boundaryReached || (expectedCount != null && offset >= expectedCount) || page.size < pageSize) {
             completed = true
@@ -863,8 +874,8 @@ private fun messageCountOrNull(settings: AppSettings): Int? =
         .onFailure { Log.w("NogiRelay", "Message count unavailable; verifying with the head only", it) }
         .getOrNull()
 
-private fun storeSyncedMessage(context: Context, message: RelayMessage): Boolean {
-    val inserted = AppGraph.database.insert(message, isUnread = false)
+private fun storeSyncedMessage(context: Context, message: RelayMessage, isUnread: Boolean = false): Boolean {
+    val inserted = AppGraph.database.insert(message, isUnread = isUnread)
     if (message.type != MessageType.TEXT) {
         runCatching { MediaDownloader.enqueueIfNeeded(context, message) }
             .onFailure { error -> Log.w("NogiRelay", "Media download enqueue failed for ${message.id}", error) }
@@ -1173,6 +1184,7 @@ class MessagesViewModel : ViewModel() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessagesScreen(
     dataVersion: Long,
@@ -1206,21 +1218,17 @@ private fun MessagesScreen(
     var pageInput by remember { mutableStateOf("1") }
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
     var notificationScrollMessageId by remember { mutableStateOf<String?>(null) }
+    var sessionUnreadIds by remember(selectedMemberId) { mutableStateOf(emptySet<String>()) }
+    val isViewingLatest = (currentPage == 0 && searchQuery.isBlank() && !timeFilter.isActive)
 
-    DisposableEffect(selectedMemberId, isActive) {
+    DisposableEffect(selectedMemberId, isActive, isViewingLatest) {
         val memberKey = selectedMemberId
-        if (isActive && memberKey != null) MessageReadTracker.openMember(memberKey)
+        if (isActive && memberKey != null) {
+            MessageReadTracker.openMember(memberKey, viewingLatest = isViewingLatest)
+        }
         onDispose {
             if (memberKey != null) MessageReadTracker.closeMember(memberKey)
         }
-    }
-
-    LaunchedEffect(selectedMemberId) {
-        val memberKey = selectedMemberId ?: return@LaunchedEffect
-        val updated = withContext(Dispatchers.IO) {
-            AppGraph.database.markMessagesReadForMember(memberKey)
-        }
-        if (updated > 0) onUnreadChanged()
     }
     
     LaunchedEffect(playbackState) {
@@ -1393,6 +1401,19 @@ private fun MessagesScreen(
                     )
                 }
             }
+
+            val unreadInCurrentPage = remember(memberMessages) {
+                memberMessages.filter { it.isUnread }.map { it.id }
+            }
+            LaunchedEffect(unreadInCurrentPage) {
+                if (unreadInCurrentPage.isNotEmpty()) {
+                    sessionUnreadIds = sessionUnreadIds + unreadInCurrentPage
+                    val updated = withContext(Dispatchers.IO) {
+                        AppGraph.database.markMessagesReadByIds(unreadInCurrentPage)
+                    }
+                    if (updated > 0) onUnreadChanged()
+                }
+            }
             
             fun goToPage(targetPage: Int) {
                 val safePage = targetPage.coerceIn(0, totalPages - 1)
@@ -1500,6 +1521,11 @@ private fun MessagesScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    val remainingUnread = thread?.unreadCount ?: 0
+                    if (remainingUnread > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        UnreadTag("$remainingUnread 条未读")
+                    }
                 }
                 LazyColumn(
                     state = messageListState,
@@ -1563,7 +1589,9 @@ private fun MessagesScreen(
                     }
                     items(memberMessages, key = { it.id }) { message ->
                         MessageCard(
+                            modifier = Modifier.animateItemPlacement(),
                             message = message,
+                            isUnread = message.isUnread || message.id in sessionUnreadIds,
                             audioState = playbackState.takeIf { it.messageId == message.id },
                             translationEnabled = translationEnabled,
                             userNickname = userNickname,
@@ -1574,6 +1602,7 @@ private fun MessagesScreen(
                             onRetranslate = {
                                 retranslateScope.launch {
                                     AppGraph.database.markForRetranslation(message.id)
+                                    AppGraph.notifyDataChanged()
                                     TranslationManager.enqueue(context)
                                 }
                             },
@@ -1633,6 +1662,7 @@ data class MemberThread(
     val unreadCount: Int,
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MemberInbox(
     threads: List<MemberThread>,
@@ -1660,7 +1690,10 @@ private fun MemberInbox(
                 items(threads.take(6), key = { it.id }) { thread ->
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.width(92.dp).clickable { onSelect(thread) },
+                        modifier = Modifier
+                            .animateItemPlacement()
+                            .width(92.dp)
+                            .clickable { onSelect(thread) },
                     ) {
                         Box {
                             RemoteImage(
@@ -1700,7 +1733,10 @@ private fun MemberInbox(
                 onClick = { onSelect(thread) },
                 shape = RoundedCornerShape(8.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                modifier = Modifier
+                    .animateItemPlacement()
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1749,6 +1785,8 @@ private fun threadPreview(message: RelayMessage, userNickname: String): String =
 @Composable
 private fun MessageCard(
     message: RelayMessage,
+    modifier: Modifier = Modifier,
+    isUnread: Boolean = false,
     audioState: VoicePlaybackState?,
     translationEnabled: Boolean,
     userNickname: String,
@@ -1761,6 +1799,17 @@ private fun MessageCard(
     val context = androidx.compose.ui.platform.LocalContext.current
     val highlightBackground = MaterialTheme.colorScheme.primaryContainer
     val highlightText = MaterialTheme.colorScheme.onPrimaryContainer
+    val videoHasAudioTrack by produceState<Boolean?>(
+        initialValue = null,
+        key1 = message.id,
+        key2 = message.mediaUrl,
+    ) {
+        if (message.type == MessageType.VIDEO) {
+            value = withContext(Dispatchers.IO) {
+                MediaDownloader.cachedVideoHasAudioTrack(context, message)
+            }
+        }
+    }
     var scrubPositionMs by remember(message.id) { mutableIntStateOf(0) }
     var scrubbing by remember(message.id) { mutableStateOf(false) }
     val audioPlaying = audioState?.isPlaying == true
@@ -1781,7 +1830,7 @@ private fun MessageCard(
             containerColor = MaterialTheme.colorScheme.surface,
         ),
         shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1793,22 +1842,31 @@ private fun MessageCard(
                 )
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        highlightMatches(message.memberName, searchQuery, highlightBackground, highlightText),
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            highlightMatches(message.memberName, searchQuery, highlightBackground, highlightText),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        if (isUnread) {
+                            Spacer(Modifier.width(6.dp))
+                            UnreadTag("未读")
+                        }
+                    }
                     Text(
                         highlightMatches(formatMessageDateTime(message.sentAt), searchQuery, highlightBackground, highlightText),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (translationEnabled && message.text?.isNotBlank() == true) {
+                val canTranslate = remember(message.text, userNickname) {
+                    val text = substituteNickname(message.text, userNickname) ?: message.text
+                    TranslationManager.shouldTranslate(text)
+                }
+                if (translationEnabled && canTranslate) {
                     IconButton(onClick = onRetranslate, modifier = Modifier.size(40.dp)) {
-                        Icon(
-                            Icons.Rounded.Refresh,
-                            contentDescription = "重新翻译",
-                            modifier = Modifier.size(20.dp),
+                        AiTranslateIcon(
+                            tint = MaterialTheme.colorScheme.primary,
+                            size = 24.dp,
                         )
                     }
                 }
@@ -1870,6 +1928,23 @@ private fun MessageCard(
                             placeholderColor = Color.Transparent,
                         )
                         if (message.type == MessageType.VIDEO) {
+                            if (videoHasAudioTrack == false) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .padding(10.dp)
+                                        .size(32.dp)
+                                        .background(Color.Black.copy(alpha = 0.62f), CircleShape),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.VolumeOff,
+                                        contentDescription = "视频无声音",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(19.dp),
+                                    )
+                                }
+                            }
                             Box(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier
@@ -2348,6 +2423,30 @@ private fun SupportBadge(label: String) {
         fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
     )
+}
+
+@Composable
+internal fun UnreadTag(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .background(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(4.dp),
+            )
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 12.sp,
+        )
+    }
 }
 
 private fun hasNotificationPermission(context: android.content.Context): Boolean {
