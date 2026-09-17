@@ -62,6 +62,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalTextToolbar
+import com.nogirelay.app.ui.AutoClearSelectionOnExit
+import com.nogirelay.app.ui.clearSelectionOnTap
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -1310,8 +1314,14 @@ private fun MessagesScreen(
         }
     }
 
+    val focusManager = LocalFocusManager.current
+    val textToolbar = LocalTextToolbar.current
+    AutoClearSelectionOnExit(isActive = isActive)
+
     val selected = selectedMemberId
     BackHandler(enabled = isActive && selected != null) {
+        focusManager.clearFocus()
+        textToolbar.hide()
         selectedMemberId = null
     }
     Crossfade(
@@ -1416,6 +1426,8 @@ private fun MessagesScreen(
             }
             
             fun goToPage(targetPage: Int) {
+                focusManager.clearFocus()
+                textToolbar.hide()
                 val safePage = targetPage.coerceIn(0, totalPages - 1)
                 currentPage = safePage
                 pageInput = (safePage + 1).toString()
@@ -1508,12 +1520,20 @@ private fun MessagesScreen(
                     },
                 )
             }
-            Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .clearSelectionOnTap(focusManager, textToolbar)
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                 ) {
-                    IconButton(onClick = { selectedMemberId = null }) {
+                    IconButton(onClick = {
+                        focusManager.clearFocus()
+                        textToolbar.hide()
+                        selectedMemberId = null
+                    }) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回成员列表")
                     }
                     Text(
@@ -1842,14 +1862,21 @@ private fun MessageCard(
                 )
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.height(IntrinsicSize.Min),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
                             highlightMatches(message.memberName, searchQuery, highlightBackground, highlightText),
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
                         )
                         if (isUnread) {
                             Spacer(Modifier.width(6.dp))
-                            UnreadTag("未读")
+                            UnreadTag(
+                                text = "未读",
+                                modifier = Modifier.fillMaxHeight().padding(vertical = 2.dp),
+                            )
                         }
                     }
                     Text(
@@ -2444,7 +2471,11 @@ internal fun UnreadTag(
             color = MaterialTheme.colorScheme.onErrorContainer,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
-            lineHeight = 12.sp,
+            lineHeight = 10.sp,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
+            ),
         )
     }
 }

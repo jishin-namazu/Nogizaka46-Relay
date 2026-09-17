@@ -7,11 +7,49 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
+
 val BrandPurple = Color(0xFF7A2A90)
 val BrandPurpleDark = Color(0xFF4E175F)
 val SignalGreen = Color(0xFF14A46D)
 val SignalCoral = Color(0xFFDB4F61)
 val SignalCyan = Color(0xFF087E8B)
+
+private val defaultLineHeightStyle = LineHeightStyle(
+    alignment = LineHeightStyle.Alignment.Center,
+    trim = LineHeightStyle.Trim.Both,
+)
+
+@Suppress("DEPRECATION")
+private val defaultPlatformTextStyle = PlatformTextStyle(
+    includeFontPadding = false,
+)
+
+private fun TextStyle.withFixes(): TextStyle = this.copy(
+    platformStyle = defaultPlatformTextStyle,
+    lineHeightStyle = defaultLineHeightStyle,
+)
+
+private val defaultTypography = Typography()
+val AppTypography = Typography(
+    displayLarge = defaultTypography.displayLarge.withFixes(),
+    displayMedium = defaultTypography.displayMedium.withFixes(),
+    displaySmall = defaultTypography.displaySmall.withFixes(),
+    headlineLarge = defaultTypography.headlineLarge.withFixes(),
+    headlineMedium = defaultTypography.headlineMedium.withFixes(),
+    headlineSmall = defaultTypography.headlineSmall.withFixes(),
+    titleLarge = defaultTypography.titleLarge.withFixes(),
+    titleMedium = defaultTypography.titleMedium.withFixes(),
+    titleSmall = defaultTypography.titleSmall.withFixes(),
+    bodyLarge = defaultTypography.bodyLarge.withFixes(),
+    bodyMedium = defaultTypography.bodyMedium.withFixes(),
+    bodySmall = defaultTypography.bodySmall.withFixes(),
+    labelLarge = defaultTypography.labelLarge.withFixes(),
+    labelMedium = defaultTypography.labelMedium.withFixes(),
+    labelSmall = defaultTypography.labelSmall.withFixes(),
+)
 
 private val LightColors = lightColorScheme(
     primary = BrandPurple,
@@ -41,7 +79,7 @@ private val DarkColors = darkColorScheme(
 fun NogiRelayTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
-        typography = Typography(),
+        typography = AppTypography,
         content = content,
     )
 }

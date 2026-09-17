@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +36,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalTextToolbar
+import com.nogirelay.app.ui.AutoClearSelectionOnExit
+import com.nogirelay.app.ui.clearSelectionOnTap
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -136,8 +141,16 @@ fun BlogScreen(
         initialBlogId?.let { selectedBlogId = it }
     }
 
+    val focusManager = LocalFocusManager.current
+    val textToolbar = LocalTextToolbar.current
+    AutoClearSelectionOnExit(isActive = isActive)
+
     val selected = selectedBlogId
-    BackHandler(enabled = isActive && selected != null) { selectedBlogId = null }
+    BackHandler(enabled = isActive && selected != null) {
+        focusManager.clearFocus()
+        textToolbar.hide()
+        selectedBlogId = null
+    }
     LaunchedEffect(members) {
         selectedMemberIds?.let { selectedIds ->
             val availableIds = members.mapTo(mutableSetOf(), BlogMember::id)
@@ -655,14 +668,21 @@ private fun BlogSummaryCard(
                     )
                     Spacer(Modifier.size(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.height(IntrinsicSize.Min),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Text(
                                 highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
                             if (blog.isUnread) {
                                 Spacer(Modifier.width(6.dp))
-                                UnreadTag("未读")
+                                UnreadTag(
+                                    text = "未读",
+                                    modifier = Modifier.fillMaxHeight().padding(vertical = 2.dp),
+                                )
                             }
                         }
                         Text(
@@ -834,13 +854,25 @@ private fun BlogDetail(
         )
     }
 
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
+    val focusManager = LocalFocusManager.current
+    val textToolbar = LocalTextToolbar.current
+    AutoClearSelectionOnExit(isActive = true)
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .clearSelectionOnTap(focusManager, textToolbar)
+    ) {
         item {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             ) {
-                IconButton(onClick = onBack) {
+                IconButton(onClick = {
+                    focusManager.clearFocus()
+                    textToolbar.hide()
+                    onBack()
+                }) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客列表")
                 }
                 Text("博客", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
