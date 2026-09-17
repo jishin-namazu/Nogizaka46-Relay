@@ -23,6 +23,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.Alignment
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
@@ -93,6 +99,9 @@ fun RemoteImage(
     val bucketedDimension = ((decodeDimension + SIZE_BUCKET_PX - 1) / SIZE_BUCKET_PX) * SIZE_BUCKET_PX
     val cacheKey = "$bucketedDimension@$contentScale@$url"
 
+    var retryCount by remember(url) { mutableIntStateOf(0) }
+    var isError by remember(cacheKey) { mutableStateOf(false) }
+
     var knownAspectRatio by remember(url) {
         mutableStateOf(ImageAspectRatioCache.get(url))
     }
@@ -100,15 +109,17 @@ fun RemoteImage(
         mutableStateOf(url?.let { RemoteImageMemoryCache.get(cacheKey) ?: RemoteImageMemoryCache.getForUrl(it) })
     }
 
-    LaunchedEffect(cacheKey, loadCachedImmediately) {
+    LaunchedEffect(cacheKey, loadCachedImmediately, retryCount) {
         val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
         if (exactCached != null) {
             bitmap = exactCached
             val ratio = exactCached.width.toFloat() / exactCached.height.toFloat()
             ImageAspectRatioCache.put(url, ratio)
             knownAspectRatio = ratio
+            isError = false
         } else {
             url?.let { value ->
+                isError = false
                 val loaded = loadBitmap(context, value, messageType, message, bucketedDimension)
                 if (loaded != null) {
                     RemoteImageMemoryCache.put(cacheKey, value, loaded)
@@ -116,6 +127,8 @@ fun RemoteImage(
                     ImageAspectRatioCache.put(value, ratio)
                     knownAspectRatio = ratio
                     bitmap = loaded
+                } else {
+                    isError = true
                 }
             }
         }
@@ -128,10 +141,19 @@ fun RemoteImage(
         modifier
     }
 
-    Box(
+    val finalModifier = if (bitmap == null && isError) {
+        boxModifier
+            .clickable { retryCount++ }
+            .background(placeholderColor)
+    } else {
         boxModifier.background(
             if (bitmap != null || placeholderResId != null) Color.Transparent else placeholderColor,
-        ),
+        )
+    }
+
+    Box(
+        finalModifier,
+        contentAlignment = Alignment.Center,
     ) {
         val image = bitmap
         if (image != null) {
@@ -147,6 +169,12 @@ fun RemoteImage(
                 contentDescription = contentDescription,
                 contentScale = contentScale,
                 modifier = Modifier.fillMaxSize(),
+            )
+        } else if (isError) {
+            Icon(
+                imageVector = Icons.Rounded.Refresh,
+                contentDescription = "加载失败，点击重试",
+                tint = Color(0xFF888888),
             )
         }
     }

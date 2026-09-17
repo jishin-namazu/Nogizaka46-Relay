@@ -183,6 +183,26 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         return result
     }
 
+    /**
+     * Returns the newest message for every subscribed member by grouping on member_key.
+     * Unlike [latest], this ensures low-frequency members are never truncated out of the inbox.
+     */
+    fun latestMessagePerMember(): List<RelayMessage> {
+        val memberKeyExpression = "CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END"
+        val sql = """
+            SELECT *, MAX(sent_at) AS max_sent_at
+            FROM messages
+            WHERE id NOT GLOB ? AND (text_content IS NOT NULL OR media_url IS NOT NULL)
+            GROUP BY $memberKeyExpression
+            ORDER BY sent_at DESC, received_at DESC
+        """.trimIndent()
+        val result = mutableListOf<RelayMessage>()
+        readableDatabase.rawQuery(sql, arrayOf(TEST_MESSAGE_GLOB)).use { cursor ->
+            while (cursor.moveToNext()) result += cursor.toMessage()
+        }
+        return result
+    }
+
     fun messagesForMember(
         memberKey: String,
         searchQuery: String = "",

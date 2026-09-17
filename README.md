@@ -116,15 +116,21 @@ Nogizaka46-Relay/
 ├── docs/images/                # App 运行界面截图
 ├── app/                        # Android 原生客户端代码
 │   ├── src/main/java/com/nogirelay/app/
-│   │   ├── MainActivity.kt     # 主入口 (主页 / 消息 / 博客三 Tab 导航)
+│   │   ├── MainActivity.kt     # 轻量 Activity 入口 (生命周期、传感器、Intent 分发)
+│   │   ├── UnreadTag.kt        # 公共未读角标组件
 │   │   ├── blog/               # 博客解析、详情阅读、多图下载与通知
 │   │   ├── call/               # 拟真来电、全屏呼叫、距离传感器与振动
 │   │   ├── data/               # SQLite 数据库 (MessageDatabase)、API 客户端
+│   │   │   └── sync/           # 内容同步中枢 (ContentSyncManager)
 │   │   ├── media/              # 媒体后台下载器、前台语音播放服务
 │   │   ├── notification/       # Android 5 套专用通知渠道定义
 │   │   ├── push/               # FCM 接收器 (NogiFirebaseMessagingService)
 │   │   ├── translation/        # 大模型统一接口、11家厂商适配器与版式还原
-│   │   └── ui/                 # Material 3 主题、时间筛选器、全屏媒体播放器
+│   │   └── ui/                 # Material 3 模块化 UI 体系
+│   │       ├── home/           # 主页仪表盘与权限状态 (HomeScreen)
+│   │       ├── messages/       # 消息列表、会话抽屉与卡片 (MessagesScreen)
+│   │       ├── navigation/     # 全局三 Tab 导航与脚手架 (RelayApp)
+│   │       └── settings/       # 大模型配置与推送设置面板 (SettingsSection)
 │   └── build.gradle.kts        # 客户端依赖与构建配置
 ├── server/                     # Node.js 中继服务端代码
 │   ├── src/

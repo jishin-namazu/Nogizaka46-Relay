@@ -96,7 +96,7 @@ flowchart TD
         end
 
         subgraph StorageSearch["本地离线存储与检索"]
-            LocalDB[("本地 SQLite (v7)<br/>离线消息 / 博客 / 成员名录")]
+            LocalDB[("本地 SQLite (v8)<br/>离线消息 / 博客 / 成员名录")]
             SearchEngine["全文检索与时间筛选器<br/>(词边界摘要 / 关键词高亮)"]
         end
 
@@ -138,7 +138,7 @@ flowchart TD
 | **消息推送** | Firebase Admin SDK (`sendEachForMulticast`) | 高优先级数据消息 |
 | **持久化媒体存储** | 本地文件系统 / Docker Volume，SHA-256 寻址 | 规避三方 CDN 授权失效问题，多成员多来电背景物理去重 |
 | **Android 开发框架** | Kotlin 1.9+, Jetpack Compose (BOM 2024.05) | 声明式响应式 UI，高度定制 Material 3 组件 |
-| **Android 离线存储** | 原生 `SQLiteOpenHelper` (7 次版本平滑迁移) | 零反射、无 Room 额外依赖，极低内存开销，针对 LIKE 与 strftime 深度定制 |
+| **Android 离线存储** | 原生 `SQLiteOpenHelper` (8 次版本平滑迁移) | 零反射、无 Room 额外依赖，极低内存开销，针对 LIKE 与 strftime 深度定制 |
 | **网络通信与流处理** | Java 原生 `HttpURLConnection` + Coroutines | 最小化 APK 体积，无 OkHttp/Retrofit 冗余运行时开销 |
 | **AI 翻译矩阵** | 兼容 11 家大模型厂商，覆盖 3 种协议标准 | 全文单次上下文推理，JSON Schema 结构化约束，抑制思考模式，保持原文结构 |
 
@@ -466,7 +466,25 @@ erDiagram
 
 ### 3.2 客户端 SQLite 本地数据库演化 (SQLite)
 
-客户端通过 `app/.../data/MessageDatabase.kt` 维护独立的本地 SQLite 数据库（`nogi_messages.db`，版本 `DB_VERSION = 7`），无缝兼容平滑升级
+客户端通过 `app/.../data/MessageDatabase.kt` 维护独立的本地 SQLite 数据库（`messages.db`，版本 `DB_VERSION = 8`），无缝兼容平滑升级：
+
+1. **核心数据表设计**：
+   - `messages`：私信消息主表（消息 ID、成员标识与姓名、消息类型、正文内容、媒体/写真 URL、发送时间戳、未读状态 `is_unread`、已播放状态 `is_played` 等）。
+   - `blog_posts`：官方博客表（博客 ID、成员信息、标题、HTML 正文、首图 URL、发布时间、译文内容与完成标记、未读标记 `is_unread` 等）。
+   - `blog_members`：官方成员花名册（成员 ID、姓名、假名、期别、头像、最新发文时间 `latest_post_at` 等）。
+   - `sync_state`：同步游标表（保存博客增量同步头部 `blog_sync_head_id_v2`、消息增量同步头部 `message_sync_head_id_v1` 等同步基线）。
+
+2. **数据库版本演化路径 (v1 ~ v8)**：
+   - **v1 - v3**：基础消息与媒体本地存储模型。
+   - **v4**：引入私信未读状态字段 `is_unread` 与高性能复合索引 `idx_messages_unread_member`。
+   - **v5**：新增公开博客表 `blog_posts` 与同步状态表 `sync_state`。
+   - **v6**：博客表增加 `is_unread` 未读标记与倒序复合索引 `idx_blog_posts_unread`。
+   - **v7**：新增 `blog_members` 成员目录表；重置旧版翻译缓存以适配最新段落骨架回填算法。
+   - **v8**：成员表增加 `latest_post_at` 字段并维护最新发帖时间索引，支撑期别分类与活跃度排序。
+
+3. **高效聚合查询设计 (`latestMessagePerMember`)**：
+   - 会话抽屉与列表采用 SQLite 原生分组聚合（`CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END` 结合 `MAX(sent_at)`）；
+   - 在数据库底层单次选出所有订阅成员各自最新的消息记录。
 
 ---
 
@@ -638,10 +656,17 @@ Authorization: Bearer <ACCESS_TOKEN>
 
 ### 5.1 架构设计理念与轻量化选型
 
-Nogi Relay Android 端放弃了过度工程化的框架依赖（如 Room、Retrofit、Hilt、Navigation Compose）：
+Android 客户端采用轻量、高内聚的模块化架构设计，注重快速冷启动与低运行时开销：
 1. **极速冷启动**：无代码生成开销（KSP/APT），无动态代理反射。
-2. **轻量单例图 (`AppGraph.kt`)**：简单的全局上下文依赖持有者，提供 `database`、`settings`、`relayClient`、`blogClient` 访问。
-3. **UI 体系**：单 Activity（`MainActivity.kt`），纯 Jetpack Compose 驱动。基于 `AppTab`（主页、消息、博客）管理底部导航。自定义圆角矩形指示器（`RelayNavigationBarItem`）取代默认药丸胶囊，整体风格高度统一。
+2. **轻量单例图 (`AppGraph.kt`)**：简单的全局上下文依赖持有者，提供 `database`、`settings`、`relayClient`、`blogClient` 与各类专用 `CoroutineDispatcher` 调度器。
+3. **轻量 Entry 与职责单一**：
+   - **`MainActivity.kt`**：极简 Android `ComponentActivity` 入口（精简至 180+ 行），仅聚焦于系统生命周期分发、耳部距离传感器息屏调度、Intent 路由与前台服务启动。
+   - **`ContentSyncManager.kt`**：独立的内容同步中枢（位于 `data/sync/`），统筹消息与博客的全量回填、增量追赶及并发边界安全推进。
+   - **`RelayApp.kt`**：根界面脚手架（位于 `ui/navigation/`），承载基于 `AppTab`（主页、消息、博客）的全局底部导航与圆角矩形指示器（`RelayNavigationBarItem`）。
+4. **业务功能模块化划分**：
+   - **`ui/home/`**：主页仪表盘、系统权限能力卡片与 FCM 连通状态（`HomeScreen`）。
+   - **`ui/messages/`**：私信业务闭环（`MessagesViewModel`, `MessagesScreen`, `MemberInbox`, `MessageCard`），支持时间区间筛选与分页浏览。
+   - **`ui/settings/`**：服务地址配置、昵称占位符与 11 家大模型翻译参数面板（`SettingsSection`）。
 
 > 💡 **实机呈现参考**：
 > - 主页仪表盘与权限卡片：[01_home_dashboard.jpg](docs/images/01_home_dashboard.jpg)
@@ -691,8 +716,7 @@ sequenceDiagram
 
 #### 关键技术实现要点：
 1. **音频预下载保障机制 (`IncomingCallPreparationService`)**：
-   - “先响铃再边播边下”可能遭遇网络卡顿，体验差。
-   - Relay 采用 **“预载完成方才启动”** 策略：收到推送后，先启动低重要级前台服务静默完成音频及背景下载；一旦本地就绪，立刻唤醒 `IncomingCallActivity`。若网络异常下载失败，平滑降级为普通通知提醒重试。
+   - 采用 **“预载完成方才启动”** 策略：收到推送后，先启动前台准备服务静默完成音频及背景写真下载；一旦本地资源就绪，立刻唤醒 `IncomingCallActivity`；若网络异常下载失败，平滑降级为普通消息通知提醒重试，规避边播边下时因网络抖动产生的卡顿。
 2. **全权限锁屏唤醒 (`AndroidManifest.xml` & `Activity`)**：
    - 配置 `android:showWhenLocked="true"`、`android:turnScreenOn="true"`、`android:excludeFromRecents="true"`。
    - Android 12+ (API 31+) 适配：使用 `setPendingIntentCreatorBackgroundActivityStartMode(MODE_BACKGROUND_ACTIVITY_START_ALLOWED)` 保证后台强行拉起能力。

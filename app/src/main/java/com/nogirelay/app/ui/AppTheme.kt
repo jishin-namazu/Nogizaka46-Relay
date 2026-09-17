@@ -11,11 +11,17 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
+
 val BrandPurple = Color(0xFF7A2A90)
 val BrandPurpleDark = Color(0xFF4E175F)
 val SignalGreen = Color(0xFF14A46D)
 val SignalCoral = Color(0xFFDB4F61)
 val SignalCyan = Color(0xFF087E8B)
+
+val NavigationTabIndicatorShape = RoundedCornerShape(10.dp)
+val RelayControlShape = RoundedCornerShape(12.dp)
 
 private val defaultLineHeightStyle = LineHeightStyle(
     alignment = LineHeightStyle.Alignment.Center,
