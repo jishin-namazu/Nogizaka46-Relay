@@ -95,9 +95,11 @@ import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogPost
+import android.widget.Toast
 import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.BlogSummary
 import com.nogirelay.app.data.isRealBlogImageUrl
+import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.translation.BlogTranslationLayout
 import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.NameWithUnreadTag
@@ -1057,16 +1059,20 @@ private fun BlogDetail(
             .distinct()
     }
     val openImage: (String) -> Unit = { url ->
-        context.startActivity(
-            MediaViewerActivity.imageIntent(
-                context = context,
-                url = url,
-                title = blog.title,
-                ownerName = blog.memberName,
-                imageId = "blog-${blog.id}",
-                urls = blogImageUrls,
-            ),
-        )
+        if (MediaDownloader.isNotFound(context, url)) {
+            Toast.makeText(context, "官网未保存此照片 (404)", Toast.LENGTH_SHORT).show()
+        } else {
+            context.startActivity(
+                MediaViewerActivity.imageIntent(
+                    context = context,
+                    url = url,
+                    title = blog.title,
+                    ownerName = blog.memberName,
+                    imageId = "blog-${blog.id}",
+                    urls = blogImageUrls,
+                ),
+            )
+        }
     }
 
     val focusManager = LocalFocusManager.current

@@ -31,8 +31,15 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
+import com.nogirelay.app.media.HttpNotFoundException
 import com.nogirelay.app.media.MediaDownloader
 import kotlinx.coroutines.withContext
+
+private sealed interface BitmapLoadResult {
+    data class Success(val bitmap: Bitmap) : BitmapLoadResult
+    data object NotFound : BitmapLoadResult
+    data object Error : BitmapLoadResult
+}
 
 /**
  * Blog and message photos are published up to ~3700x2800, which decodes to ~40 MB. Decoding that
@@ -100,6 +107,7 @@ fun RemoteImage(
     val cacheKey = "$bucketedDimension@$contentScale@$url"
 
     var retryCount by remember(url) { mutableIntStateOf(0) }
+    var isNotFound by remember(url) { mutableStateOf(MediaDownloader.isNotFound(context, url)) }
     var isError by remember(cacheKey) { mutableStateOf(false) }
 
     var knownAspectRatio by remember(url) {
@@ -110,6 +118,11 @@ fun RemoteImage(
     }
 
     LaunchedEffect(cacheKey, loadCachedImmediately, retryCount) {
+        if (url != null && (isNotFound || MediaDownloader.isNotFound(context, url))) {
+            isNotFound = true
+            isError = false
+            return@LaunchedEffect
+        }
         val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
         if (exactCached != null) {
             bitmap = exactCached
@@ -117,18 +130,31 @@ fun RemoteImage(
             ImageAspectRatioCache.put(url, ratio)
             knownAspectRatio = ratio
             isError = false
+            isNotFound = false
         } else {
             url?.let { value ->
                 isError = false
-                val loaded = loadBitmap(context, value, messageType, message, bucketedDimension)
-                if (loaded != null) {
-                    RemoteImageMemoryCache.put(cacheKey, value, loaded)
-                    val ratio = loaded.width.toFloat() / loaded.height.toFloat()
-                    ImageAspectRatioCache.put(value, ratio)
-                    knownAspectRatio = ratio
-                    bitmap = loaded
-                } else {
-                    isError = true
+                when (val result = loadBitmap(context, value, messageType, message, bucketedDimension)) {
+                    is BitmapLoadResult.Success -> {
+                        val loaded = result.bitmap
+                        RemoteImageMemoryCache.put(cacheKey, value, loaded)
+                        val ratio = loaded.width.toFloat() / loaded.height.toFloat()
+                        ImageAspectRatioCache.put(value, ratio)
+                        knownAspectRatio = ratio
+                        bitmap = loaded
+                        isError = false
+                        isNotFound = false
+                    }
+                    BitmapLoadResult.NotFound -> {
+                        bitmap = null
+                        isNotFound = true
+                        isError = false
+                    }
+                    BitmapLoadResult.Error -> {
+                        bitmap = null
+                        isNotFound = false
+                        isError = true
+                    }
                 }
             }
         }
@@ -141,7 +167,7 @@ fun RemoteImage(
         modifier
     }
 
-    val finalModifier = if (bitmap == null && isError) {
+    val finalModifier = if (bitmap == null && isError && !isNotFound) {
         boxModifier
             .clickable { retryCount++ }
             .background(placeholderColor)
@@ -170,7 +196,7 @@ fun RemoteImage(
                 contentScale = contentScale,
                 modifier = Modifier.fillMaxSize(),
             )
-        } else if (isError) {
+        } else if (isError && !isNotFound) {
             Icon(
                 imageVector = Icons.Rounded.Refresh,
                 contentDescription = "加载失败，点击重试",
@@ -186,34 +212,51 @@ private suspend fun loadBitmap(
     messageType: MessageType = MessageType.IMAGE,
     message: RelayMessage? = null,
     maxDecodeDimension: Int = FALLBACK_DECODE_DIMENSION,
-): Bitmap? = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
-    runCatching {
+): BitmapLoadResult = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
+    if (MediaDownloader.isNotFound(context, url)) {
+        return@withContext BitmapLoadResult.NotFound
+    }
+    try {
         if (messageType == MessageType.VIDEO && message != null) {
             val thumbFile = MediaDownloader.cachedVideoThumbnail(context, message)
                 ?: MediaDownloader.generateVideoThumbnail(context, message)
             if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
-                return@withContext decodeSampled(thumbFile, maxDecodeDimension)
+                val bmp = decodeSampled(thumbFile, maxDecodeDimension)
+                return@withContext if (bmp != null) BitmapLoadResult.Success(bmp) else BitmapLoadResult.Error
             }
             val explicitThumb = message.thumbnailUrl?.takeIf { it.isNotBlank() }
             if (explicitThumb != null) {
+                if (MediaDownloader.isNotFound(context, explicitThumb)) {
+                    return@withContext BitmapLoadResult.NotFound
+                }
                 val cached = MediaDownloader.cachedFileForUrl(context, explicitThumb, MessageType.IMAGE)
                 val file = cached ?: MediaDownloader.downloadUrl(context, explicitThumb, MessageType.IMAGE)
-                return@withContext decodeSampled(file, maxDecodeDimension)
+                val bmp = decodeSampled(file, maxDecodeDimension)
+                return@withContext if (bmp != null) BitmapLoadResult.Success(bmp) else BitmapLoadResult.Error
             }
-            return@withContext null
+            return@withContext BitmapLoadResult.Error
         }
 
         val uri = Uri.parse(url)
-        if (uri.scheme in setOf("android.resource", "content", "file")) {
+        val bmp = if (uri.scheme in setOf("android.resource", "content", "file")) {
             context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
-        } else if (uri.scheme == "https") {
+        } else if (uri.scheme?.lowercase() in setOf("https", "http")) {
             val cached = MediaDownloader.cachedFileForUrl(context, url, messageType)
             val file = cached ?: MediaDownloader.downloadUrl(context, url, messageType)
             decodeSampled(file, maxDecodeDimension)
         } else {
             null
         }
-    }.getOrNull()
+        if (bmp != null) {
+            BitmapLoadResult.Success(bmp)
+        } else {
+            BitmapLoadResult.Error
+        }
+    } catch (e: HttpNotFoundException) {
+        BitmapLoadResult.NotFound
+    } catch (e: Throwable) {
+        BitmapLoadResult.Error
+    }
 }
 
 private fun decodeSampled(file: java.io.File, maxDecodeDimension: Int): Bitmap? {

@@ -24,11 +24,50 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
+class HttpNotFoundException(
+    message: String = "媒体文件不存在 (HTTP 404)",
+    val url: String? = null,
+) : java.io.IOException(message)
+
 object MediaDownloader {
     private const val MAX_BYTES = 100L * 1024L * 1024L
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 90_000
     private val locks = ConcurrentHashMap<String, Any>()
+    private val notFoundUrls = ConcurrentHashMap.newKeySet<String>()
+
+    fun isNotFound(context: Context?, url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        if (notFoundUrls.contains(url)) return true
+        if (context != null) {
+            val marker = notFoundMarkerFile(context.applicationContext, url)
+            if (marker.exists()) {
+                notFoundUrls.add(url)
+                return true
+            }
+        }
+        return false
+    }
+
+    fun markNotFound(context: Context?, url: String?) {
+        if (url.isNullOrBlank()) return
+        notFoundUrls.add(url)
+        if (context != null) {
+            runCatching {
+                val marker = notFoundMarkerFile(context.applicationContext, url)
+                val parent = marker.parentFile
+                if (parent != null && !parent.exists()) parent.mkdirs()
+                if (!marker.exists()) marker.createNewFile()
+            }
+        }
+    }
+
+    private fun notFoundMarkerFile(context: Context, url: String): File {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+        return File(File(context.filesDir, "media-cache"), "$digest.notfound")
+    }
 
     data class SavedDownload(val uri: Uri, val displayName: String)
 
@@ -118,6 +157,9 @@ object MediaDownloader {
     fun downloadUrl(context: Context, url: String, type: MessageType): File {
         require(url.isNotBlank()) { "媒体地址为空" }
         val appContext = context.applicationContext
+        if (isNotFound(appContext, url)) {
+            throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $url", url)
+        }
         val uri = Uri.parse(url)
         val target = cacheFile(appContext, url, type)
         target.takeIf { it.isFile && it.length() > 0L }?.let { return it }
@@ -125,10 +167,13 @@ object MediaDownloader {
         val lock = locks.computeIfAbsent(url) { Any() }
         return try {
             synchronized(lock) {
+                if (isNotFound(appContext, url)) {
+                    throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $url", url)
+                }
                 target.takeIf { it.isFile && it.length() > 0L }?.let { return@synchronized it }
                 when (uri.scheme?.lowercase()) {
                     "android.resource", "content", "file" -> copyLocalUri(appContext, uri, target)
-                    "https" -> downloadHttps(appContext, uri, target, type)
+                    "https" -> downloadHttps(appContext, uri, target, type, url)
                     else -> error("不支持的媒体地址")
                 }
             }
@@ -137,7 +182,13 @@ object MediaDownloader {
         }
     }
 
-    private fun downloadHttps(context: Context, uri: Uri, target: File, type: MessageType): File {
+    private fun downloadHttps(
+        context: Context,
+        uri: Uri,
+        target: File,
+        type: MessageType,
+        originalUrl: String = uri.toString(),
+    ): File {
         val connection = (URL(uri.toString()).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = CONNECT_TIMEOUT_MS
@@ -153,6 +204,11 @@ object MediaDownloader {
         val temp = File(parent, "${target.name}.part-${System.nanoTime()}")
         return try {
             val status = connection.responseCode
+            if (status == HttpURLConnection.HTTP_NOT_FOUND) {
+                markNotFound(context, originalUrl)
+                markNotFound(context, uri.toString())
+                throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $uri", originalUrl)
+            }
             if (status !in 200..299) error("媒体服务返回 HTTP $status")
             val contentLength = connection.getHeaderFieldLong("Content-Length", -1L)
             if (contentLength > MAX_BYTES) error("媒体文件超过 100 MB 限制")

@@ -32,7 +32,7 @@ object BlogMediaDownloader {
     fun prefetchImages(context: Context, urls: List<String>) {
         val appContext = context.applicationContext
         urls.forEach { url ->
-            if (url.isBlank() || !queued.add(url)) return@forEach
+            if (url.isBlank() || MediaDownloader.isNotFound(appContext, url) || !queued.add(url)) return@forEach
             scope.launch {
                 try {
                     slots.withPermit { MediaDownloader.downloadUrl(appContext, url, MessageType.IMAGE) }
