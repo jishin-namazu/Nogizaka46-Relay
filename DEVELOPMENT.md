@@ -36,9 +36,8 @@
 - [6. 本地开发与调试指南](#6-本地开发与调试指南)
   - [6.1 服务端本地环境搭建](#61-服务端本地环境搭建)
   - [6.2 提取官网会话 (bootstrap-browser.js)](#62-提取官网会话-bootstrap-browserjs)
-  - [6.3 运行单元测试与端到端测试](#63-运行单元测试与端到端测试)
-  - [6.4 Android 客户端本地构建与调试](#64-android-客户端本地构建与调试)
-  - [6.5 常见故障排查 (Troubleshooting)](#65-常见故障排查-troubleshooting)
+  - [6.3 Android 客户端本地构建与调试](#63-android-客户端本地构建与调试)
+  - [6.4 常见故障排查 (Troubleshooting)](#64-常见故障排查-troubleshooting)
 - [7. 许可证与法律声明](#7-许可证与法律声明)
 
 ---
@@ -67,7 +66,7 @@ flowchart TD
         end
 
         subgraph ApiProc["API 主进程"]
-            RESTAPI["Express REST API (:8080)<br/>• 设备注册 / 历史同步<br/>• /health 探针 / 会话热更新"]
+            RESTAPI["Express REST API<br/>(Fly :8080 / 本地 :3000)<br/>• 设备注册 / 历史同步<br/>• /health 探针 / 会话热更新"]
             DB[(PostgreSQL 数据库<br/>消息 / 博客元数据 / 设备 / 错误日志)]
         end
 
@@ -316,7 +315,7 @@ Step 2: 检查当前批次中是否包含 head_id_v1：
 Step 3: 触发 FCM 推送（仅对本次轮询新入库且未抑制的博客推送）。
 ```
 > [!NOTE]
-> **正文分离原则**：Relay 服务端在 `blog_posts` 表中仅保存用于去重、防漏和推送通知的基础元数据（ID、成员名、标题、头图、发布时间、链接），**不持久化存储博客正文 HTML 或评论**。正文完全由 Android 客户端在用户查看时直接从官网异步拉取，极大节省了服务端资源。
+> **正文分离原则**：Relay 服务端在 `blog_posts` 表中仅保存用于去重、防漏和推送通知的基础元数据（ID、成员名、标题、头图、发布时间、链接），不持久化存储博客正文 HTML 或评论。Android 客户端在全量与增量内容同步时直接从官网获取正文并写入本地 SQLite。
 
 ---
 
@@ -372,7 +371,7 @@ export function buildDataPayload(message, includePayload) {
 
 ### 3.1 PostgreSQL 生产表结构 (PostgreSQL)
 
-位于 `server/database/schema.sql`，系统启动时在 `src/index.js` 中自动完成增量校验与升级。
+初始化结构位于 `server/database/schema.sql`。本地通过 `npm run db:setup` 执行，生产环境通过带 Bearer 鉴权的 `POST /init-db` 执行。
 
 ```mermaid
 erDiagram
@@ -771,7 +770,7 @@ sequenceDiagram
 #### 5.4.1 客户端直连与混合架构
 为了减轻中继服务器的带宽与存储压力，Android 客户端直接连接官方 API：
 - `BlogClient.kt` 负责直接请求 `https://www.nogizaka46.com/s/n46/api/list/blog` 和 `list/member`。
-- 解析官方 JSONP 包装体 `res(...)`，直接将最新博客同步写入本地 SQLite 表 `blog_posts`。
+- 解析官方 JSONP 包装体 `res(...)`，首次同步完整博客历史，后续按同步头部增量写入本地 SQLite 表 `blog_posts`。
 - 博客成员筛选列表以**本地实际发过博客的作者**为基准，同时联表匹配官方成员目录补充期别分类（一期至六期、团体/运营）与头像排序，自动隐藏从未发过博客的成员。
 
 #### 5.4.2 离线毫秒级全文检索与词边界高亮
@@ -783,8 +782,8 @@ sequenceDiagram
 #### 5.4.3 图片批量下载管理器 (`BlogImageDownloadActivity.kt`)
 针对下载照片的需求：
 - 解析博客 HTML 正文提取全部大图。
-- 提供“全选 / 反选 / 单选”网格交互，并发下载至系统公共目录 `Environment.DIRECTORY_DOWNLOADS/NogiRelay/`。
-- 自动写入系统 MediaStore，相册即时可见。
+- 提供“全选 / 清空 / 单选”网格交互，逐张下载至系统公共目录 `Environment.DIRECTORY_DOWNLOADS`。
+- Android 10 及以上通过 MediaStore 写入，Android 9 及以下写入公共 Download 目录后触发媒体扫描。
 
 > 💡 **实机呈现参考**：
 > - 博客列表与关键词搜索：[05_blog_list.jpg](docs/images/05_blog_list.jpg)
@@ -814,7 +813,7 @@ sequenceDiagram
 
 #### 前置依赖
 - Node.js >= 20.x
-- PostgreSQL >= 14 (本地运行或 Docker 运行)
+- PostgreSQL >= 15 (本地运行或 Docker 运行)
 - Google Chrome 或 Microsoft Edge（用于本地提取会话）
 
 #### 1. 克隆项目与安装依赖
@@ -888,7 +887,7 @@ npm run bootstrap:browser
 - Android SDK 34，JDK 17。
 
 #### 1. 注入 Firebase 配置文件
-将你的 Firebase 项目的 `google-services.json` 放置于 `app/` 目录下（开发测试可参考 `app/google-services.json.example`）。
+将 Firebase 项目的 `google-services.json` 放置于 `app/` 目录下。
 
 #### 2. 本地个性化配置 (`local.properties`)
 从模板复制并编辑 `local.properties`：
@@ -919,7 +918,7 @@ relay.access.token=your-secret-access-token
 
 ---
 
-### 6.5 常见故障排查 (Troubleshooting)
+### 6.4 常见故障排查 (Troubleshooting)
 
 #### Q1: 服务端启动后提示 `[NOGI_SESSION_UPDATE_REQUIRED]`？
 - **原因**：官网刷新令牌失效，`/v2/update_token` 接口返回 400。

@@ -21,7 +21,7 @@
 | 文档 | 核心用途与内容 |
 | :--- | :--- |
 | 🚀 **[DEPLOYMENT.md](DEPLOYMENT.md)** | **生产部署与运维指南**：在 Fly.io 等在线服务器上一键部署、配置密钥、上传会话与推送验收 |
-| 📖 **[DEVELOPMENT.md](DEVELOPMENT.md)** | **开发全景文档**：系统架构深度解析、双进程设计、数据库平滑演进、全套 REST API 规范、全屏来电与大模型翻译实现原理、本地调试与测试 |
+| 📖 **[DEVELOPMENT.md](DEVELOPMENT.md)** | **开发文档**：系统架构深度解析、双进程设计、数据库平滑演进、全套 REST API 规范、全屏来电与大模型翻译实现原理及本地调试 |
 | 🖥️ **[server/README.md](server/README.md)** | **服务端代码索引**：服务端核心代码入口、运行脚本与服务架构导读 |
 
 ---
@@ -33,7 +33,7 @@
 [交互架构图](docs/architecture/architecture.html)
 
 - **双进程容器架构**：主 API 进程（提供 REST API、设备管理与 `/health` 探针）和 Monitor 进程（Chromium 会话轮询、博客监控与 8081 媒体服务）彼此独立运行。两者仍位于同一 Fly Machine 和 Linux cgroup 中，因此极端浏览器负载仍可能影响 API 延迟；Monitor 使用整机内存阈值主动回收 Chromium 来降低该风险。
-- **正文分离同步设计**：Relay 服务端仅保存用于去重、防漏和推送通知的博客元数据，正文与高清图片由 Android 客户端直接从官网并发异步拉取，节省服务端网络与存储开销。
+- **正文分离同步设计**：Relay 服务端仅保存用于去重、防漏和推送通知的博客元数据，正文与高清图片由 Android 客户端直接从官网同步，节省服务端网络与存储开销。
 
 ---
 
@@ -134,15 +134,13 @@ Nogizaka46-Relay/
 │   └── build.gradle.kts        # 客户端依赖与构建配置
 ├── server/                     # Node.js 中继服务端代码
 │   ├── src/
-│   │   ├── index.js            # 主 API 进程、健康检查与数据库迁移
+│   │   ├── index.js            # 主 API 进程、健康检查与数据库初始化端点
 │   │   ├── middleware/         # Bearer 认证中间件
-│   │   ├── monitor/            # 监控进程 (nogi-browser, blog-monitor, media-server)
+│   │   ├── monitor/            # 监控进程、浏览器会话提取、博客与媒体服务
 │   │   ├── routes/             # REST 路由 (messages, devices, push, admin)
 │   │   └── services/           # 媒体归档、FCM 推送、会话持久化、错误日志
 │   ├── database/schema.sql     # PostgreSQL 数据库初始化脚本
 │   ├── scripts/audit-blog-api.js # 官方博客接口完整性审计工具
-│   ├── test/                   # 核心逻辑端到端单元测试套件
-│   ├── bootstrap-browser.js    # 交互式浏览器登录与会话抓取工具
 │   ├── upload-session.js       # 在线会话热更新与激活校验命令行
 │   ├── start-all.sh            # 生产双进程编排启动脚本
 │   └── package.json            # 服务端依赖配置
@@ -171,7 +169,7 @@ Nogizaka46-Relay/
 
 ### 2. 服务端本地运行 (开发与调试)
 
-若仅在本地电脑进行开发、调试或跑测试：
+若仅在本地电脑进行开发或调试：
 
 ```bash
 # 进入服务端目录并安装依赖
@@ -236,6 +234,6 @@ relay.access.token=YOUR_ACCESS_TOKEN
 
 ## 📄 许可证与使用免责声明
 
-1. 本项目代码遵循 **[MIT License](LICENSE)** 协议开源。
+1. 本项目代码遵循 **MIT License** 协议开源。
 2. **版权归属**：乃木坂46（Nogizaka46）及其关联团体的名称、成员写真、语音通话、官方视频、成员博客及相关商标权全部归属 **Sony Music Entertainment (Japan) Inc. / Seed & Flower LLC** 及相关版权方所有。
 3. **使用范围**：本项目仅供个人技术研究、自动化架构学习及正版订阅用户自身便利使用，严禁用于任何商业牟利、未经许可的内容再分发或侵权用途。部署与使用本项目须严格遵守相关法律法规及官网服务条款。

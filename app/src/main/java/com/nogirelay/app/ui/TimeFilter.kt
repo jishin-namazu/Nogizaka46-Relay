@@ -22,9 +22,9 @@ import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -156,44 +156,40 @@ fun TimeFilterSection(
                 .filter { it != TimePreset.CUSTOM }
                 .forEach { option ->
                     Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
-                        FilterChip(
+                        TimePresetChip(
                             selected = preset == option,
+                            label = presetLabel(option),
                             onClick = {
                                 preset = option
                                 onFilterChange(timePresetBounds(option, Instant.now(), zone))
                             },
-                            label = { Text(presetLabel(option), fontSize = 12.sp) },
                         )
                     }
                 }
-            // The custom button is built like the chips (8dp rounded rectangle, 32dp tall, 1dp outline
-            // when unselected). A plain clickable Surface is used instead of a Material button because
-            // those enforce a 48dp minimum touch target that would break the row alignment.
             val customSelected = preset == TimePreset.CUSTOM
-            val chipShape = RoundedCornerShape(8.dp)
+            val chipShape = RoundedCornerShape(10.dp)
             Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
                 Surface(
+                    onClick = { preset = TimePreset.CUSTOM },
                     shape = chipShape,
                     color = if (customSelected) {
-                        MaterialTheme.colorScheme.secondaryContainer
+                        BrandPurpleLight
                     } else {
-                        Color.Transparent
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                     },
                     contentColor = if (customSelected) {
-                        MaterialTheme.colorScheme.onSecondaryContainer
+                        BrandPurpleDark
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                     border = if (customSelected) {
-                        null
+                        BorderStroke(1.5.dp, BrandPurple)
                     } else {
-                        BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                        BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     },
                     modifier = Modifier
                         .height(32.dp)
-                        .clip(chipShape)
-                        // Only reveals the 开始日期 / 结束日期 buttons; the picker opens from those.
-                        .clickable { preset = TimePreset.CUSTOM },
+                        .clip(chipShape),
                 ) {
                     Box(
                         modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
@@ -264,25 +260,70 @@ fun TimeFilterSection(
     }
 }
 
-/** Date field of the custom range, built with the same 8dp / 32dp shape as the preset chips. */
+/** Preset chip for time filtering styled uniformly with the app filter system. */
 @Composable
-private fun RangeDateChip(text: String, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(8.dp)
+private fun TimePresetChip(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val chipShape = RoundedCornerShape(10.dp)
     Surface(
-        shape = shape,
-        color = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        onClick = onClick,
+        shape = chipShape,
+        color = if (selected) {
+            BrandPurpleLight
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        },
+        contentColor = if (selected) {
+            BrandPurpleDark
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        border = if (selected) {
+            BorderStroke(1.5.dp, BrandPurple)
+        } else {
+            BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        },
         modifier = Modifier
             .height(32.dp)
-            .clip(shape)
-            .clickable(onClick = onClick),
+            .clip(chipShape),
     ) {
         Box(
-            modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text, fontSize = 12.sp, maxLines = 1)
+            Text(
+                text = label,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            )
+        }
+    }
+}
+
+/** Date field of the custom range, built with the same 10dp / 32dp shape as the preset chips. */
+@Composable
+private fun RangeDateChip(text: String, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Surface(
+        onClick = onClick,
+        shape = shape,
+        color = BrandPurpleLight,
+        contentColor = BrandPurpleDark,
+        border = BorderStroke(1.5.dp, BrandPurple),
+        modifier = Modifier
+            .height(32.dp)
+            .clip(shape),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxHeight().padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
@@ -297,7 +338,8 @@ fun TimeFilterDialog(
     var draft by remember(filter) { mutableStateOf(filter) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("消息时间筛选") },
+        shape = RoundedCornerShape(20.dp),
+        title = { Text("消息时间筛选", fontWeight = FontWeight.Bold) },
         text = {
             TimeFilterSection(
                 filter = draft,
@@ -309,9 +351,15 @@ fun TimeFilterDialog(
             TextButton(
                 onClick = { onConfirm(draft) },
                 enabled = !draft.hasInvertedRange(),
-            ) { Text("确定") }
+                colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+            ) { Text("确定", fontWeight = FontWeight.Bold) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+            ) { Text("取消") }
+        },
     )
 }
 
@@ -357,12 +405,13 @@ private fun DayPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(20.dp),
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(title)
+                Text(title, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onClear) {
-                    Icon(Icons.Rounded.ClearAll, contentDescription = "清空")
+                    Icon(Icons.Rounded.ClearAll, contentDescription = "清空", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
@@ -398,9 +447,15 @@ private fun DayPickerDialog(
             TextButton(
                 onClick = { pickedDate?.let(onConfirm) },
                 enabled = pickedDate != null,
-            ) { Text("确定") }
+                colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+            ) { Text("确定", fontWeight = FontWeight.Bold) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+            ) { Text("取消") }
+        },
     )
 }
 
@@ -416,15 +471,18 @@ private fun DayPartSelector(
     Box(modifier) {
         OutlinedButton(
             onClick = { expanded = true },
-            shape = RoundedCornerShape(8.dp),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.35f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurpleDark),
             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             // Shows only the unit while nothing has been picked yet.
-            Text(value?.let { "$it$unit" } ?: unit, fontSize = 13.sp, maxLines = 1)
+            Text(value?.let { "$it$unit" } ?: unit, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
             Icon(
                 Icons.Rounded.ArrowDropDown,
                 contentDescription = null,
+                tint = BrandPurpleDark,
                 modifier = Modifier.size(16.dp),
             )
         }

@@ -68,6 +68,12 @@ class MainActivity : ComponentActivity() {
         
         proximityControl = OfficialProximityScreenControl(this)
         audioManager = getSystemService(AudioManager::class.java)
+        window.statusBarColor = android.graphics.Color.WHITE
+        window.navigationBarColor = android.graphics.Color.WHITE
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
         notificationMessageIds.value = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)
         notificationBlogIds.value = intent.getStringExtra(BlogNotifier.EXTRA_BLOG_ID)
 

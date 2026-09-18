@@ -16,9 +16,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,12 +37,18 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,6 +83,10 @@ import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.ui.AutoClearSelectionOnExit
+import com.nogirelay.app.ui.BrandPurple
+import com.nogirelay.app.ui.BrandPurpleContainer
+import com.nogirelay.app.ui.RelayControlShape
+import com.nogirelay.app.ui.RelaySearchField
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterDialog
 import com.nogirelay.app.ui.clearSelectionOnTap
@@ -96,6 +109,8 @@ private data class MemberPageData(
 fun MessagesScreen(
     dataVersion: Long,
     initialMessageId: String?,
+    initialMemberId: String? = null,
+    onInitialMemberHandled: ((String) -> Unit)? = null,
     onInitialMessageHandled: (String) -> Unit,
     onUnreadChanged: () -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
@@ -174,6 +189,16 @@ fun MessagesScreen(
         currentPage = messageIndex / MEMBER_MESSAGES_PAGE_SIZE
         pageInput = (currentPage + 1).toString()
         notificationScrollMessageId = targetId
+    }
+
+    LaunchedEffect(initialMemberId) {
+        val targetMember = initialMemberId?.ifBlank { null } ?: return@LaunchedEffect
+        selectedMemberId = targetMember
+        timeFilter = TimeFilter()
+        searchQuery = ""
+        currentPage = 0
+        pageInput = "1"
+        onInitialMemberHandled?.invoke(targetMember)
     }
 
     val saveDownload: (RelayMessage) -> Unit = { message ->
@@ -462,11 +487,12 @@ fun MessagesScreen(
             if (showPageDialog) {
                 AlertDialog(
                     onDismissRequest = { showPageDialog = false },
-                    title = { Text("跳转") },
+                    shape = RoundedCornerShape(20.dp),
+                    title = { Text("跳转页码", fontWeight = FontWeight.Bold) },
                     text = {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                "请输入1-${totalPages}之间的页码",
+                                "请输入 1 ~ ${totalPages} 之间的页码",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             OutlinedTextField(
@@ -476,6 +502,11 @@ fun MessagesScreen(
                                 },
                                 singleLine = true,
                                 label = { Text("页码") },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BrandPurple,
+                                    focusedLabelColor = BrandPurple,
+                                ),
                                 keyboardOptions = KeyboardOptions(
                                     keyboardType = KeyboardType.Number,
                                     imeAction = ImeAction.Go,
@@ -499,7 +530,8 @@ fun MessagesScreen(
                                 showPageDialog = false
                             },
                             enabled = canJump,
-                        ) { Text("跳转") }
+                            colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+                        ) { Text("跳转", fontWeight = FontWeight.Bold) }
                     },
                     dismissButton = {
                         TextButton(onClick = { showPageDialog = false }) { Text("取消") }
@@ -511,26 +543,32 @@ fun MessagesScreen(
                     .fillMaxSize()
                     .clearSelectionOnTap(focusManager, textToolbar)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                Surface(
+                    tonalElevation = 0.dp,
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    IconButton(onClick = {
-                        focusManager.clearFocus()
-                        textToolbar.hide()
-                        selectedMemberId = null
-                    }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回成员列表")
-                    }
-                    Text(
-                        text = thread?.name ?: "成员消息",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    val remainingUnread = thread?.unreadCount ?: 0
-                    if (remainingUnread > 0) {
-                        Spacer(Modifier.width(8.dp))
-                        UnreadTag("$remainingUnread 条未读")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                    ) {
+                        IconButton(onClick = {
+                            focusManager.clearFocus()
+                            textToolbar.hide()
+                            selectedMemberId = null
+                        }) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回成员列表", tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                        Text(
+                            text = thread?.name ?: "成员消息",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        val remainingUnread = thread?.unreadCount ?: 0
+                        if (remainingUnread > 0) {
+                            Spacer(Modifier.width(8.dp))
+                            UnreadTag("$remainingUnread 条未读")
+                        }
                     }
                 }
                 LazyColumn(
@@ -542,45 +580,40 @@ fun MessagesScreen(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp),
                         ) {
-                            OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = {
+                            RelaySearchField(
+                                query = searchQuery,
+                                onQueryChange = {
                                     searchQuery = it
                                     currentPage = 0
                                     pageInput = "1"
                                 },
-                                singleLine = true,
-                                label = { Text("搜索") },
-                                leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                                trailingIcon = if (searchQuery.isNotEmpty()) {
-                                    {
-                                        IconButton(
-                                            onClick = {
-                                                searchQuery = ""
-                                                currentPage = 0
-                                                pageInput = "1"
-                                            },
-                                        ) {
-                                            Icon(Icons.Rounded.Close, contentDescription = "清除搜索")
-                                        }
-                                    }
-                                } else {
-                                    null
-                                },
-                                modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+                                placeholder = "搜索消息内容或日期",
+                                modifier = Modifier.weight(1f),
                             )
-                            IconButton(onClick = { showTimeFilterDialog = true }) {
-                                Icon(
-                                    Icons.Rounded.FilterList,
-                                    contentDescription = "筛选时间",
-                                    tint = if (timeFilter.isActive) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                )
+                            Surface(
+                                shape = CircleShape,
+                                color = if (timeFilter.isActive) BrandPurple.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
+                                border = if (timeFilter.isActive) BorderStroke(1.dp, BrandPurple) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                modifier = Modifier.size(42.dp),
+                            ) {
+                                IconButton(
+                                    onClick = { showTimeFilterDialog = true },
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.FilterList,
+                                        contentDescription = "筛选时间",
+                                        tint = if (timeFilter.isActive) {
+                                            BrandPurple
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
@@ -625,40 +658,60 @@ fun MessagesScreen(
                         item(key = "messages-pagination") {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier
                                     .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
                                     .fillMaxWidth()
-                                    .padding(vertical = 8.dp),
+                                    .padding(vertical = 12.dp),
                             ) {
                                 Text(
-                                    text = "$matchingMessageCount 条消息",
+                                    text = "共 $matchingMessageCount 条消息",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
                                 )
                                 Row(
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
                                     OutlinedButton(
                                         onClick = { goToPage(page - 1) },
                                         enabled = page > 0,
-                                    ) { Text("上一页") }
+                                        shape = RelayControlShape,
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = BrandPurple,
+                                        ),
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text("上一页", fontSize = 13.sp) }
+
                                     OutlinedButton(
                                         onClick = {
                                             pageInput = (page + 1).toString()
                                             showPageDialog = true
                                         },
                                         enabled = matchingMessageCount > 0,
+                                        shape = RelayControlShape,
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = BrandPurple,
+                                            containerColor = BrandPurple.copy(alpha = 0.06f),
+                                        ),
+                                        border = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.3f)),
+                                        modifier = Modifier.weight(1.2f),
                                     ) {
-                                        Text("${page + 1} / $totalPages")
-                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码")
+                                        Text("${page + 1} / $totalPages", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码", modifier = Modifier.size(18.dp))
                                     }
+
                                     OutlinedButton(
                                         onClick = { goToPage(page + 1) },
                                         enabled = page < totalPages - 1,
-                                    ) { Text("下一页") }
+                                        shape = RelayControlShape,
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = BrandPurple,
+                                        ),
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text("下一页", fontSize = 13.sp) }
                                 }
                             }
                         }

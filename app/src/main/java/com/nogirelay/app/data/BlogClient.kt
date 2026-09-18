@@ -83,14 +83,18 @@ class BlogClient {
             for (index in 0 until data.length()) {
                 val member = data.optJSONObject(index) ?: continue
                 val id = member.optString("code").trim()
-                if (id.isEmpty() || id == "10001") continue
+                if (id.isEmpty()) continue
+                val rawName = member.optString("name").trim()
+                val isStaff = id == "10001" || rawName == "乃木坂46" || rawName.contains("運営") || rawName.contains("スタッフ")
+                val name = if (isStaff) "運営スタッフ" else rawName.ifBlank { "乃木坂46" }
+                val category = if (isStaff) "運営スタッフ" else member.optString("cate").trim().ifBlank { "其他" }
                 add(
                     BlogMember(
                         id = id,
-                        name = member.optString("name").trim(),
-                        category = member.optString("cate").trim().ifBlank { "其他" },
+                        name = name,
+                        category = category,
                         avatarUrl = officialUrl(member.optString("img")),
-                        displayOrder = index,
+                        displayOrder = if (isStaff) 9999 else index,
                     ),
                 )
             }

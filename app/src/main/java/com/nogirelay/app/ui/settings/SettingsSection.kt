@@ -1,5 +1,14 @@
 package com.nogirelay.app.ui.settings
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -7,13 +16,20 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -22,7 +38,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nogirelay.app.BuildConfig
@@ -47,6 +66,13 @@ import com.nogirelay.app.translation.AIProviderFactory
 import com.nogirelay.app.translation.AIProviderType
 import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
+import androidx.compose.ui.graphics.Color
+import com.nogirelay.app.ui.BrandPurple
+import com.nogirelay.app.ui.BrandPurpleBorder
+import com.nogirelay.app.ui.BrandPurpleContainer
+import com.nogirelay.app.ui.BrandPurpleDark
+import com.nogirelay.app.ui.BrandPurpleLight
+import com.nogirelay.app.ui.RelayCardShape
 import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.SignalGreen
 import com.nogirelay.app.ui.navigation.RelayIconButton
@@ -54,7 +80,10 @@ import kotlinx.coroutines.launch
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-fun SettingsSection(onSettingsChanged: () -> Unit) {
+fun SettingsSection(
+    onSettingsChanged: () -> Unit,
+    onTestCall: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -71,7 +100,8 @@ fun SettingsSection(onSettingsChanged: () -> Unit) {
     var modelMenuExpanded by remember { mutableStateOf(false) }
     var providerFieldWidthPx by remember { mutableIntStateOf(0) }
     var modelFieldWidthPx by remember { mutableIntStateOf(0) }
-    var savedLabel by remember { mutableStateOf("") }
+    var pushStatusLabel by remember { mutableStateOf("") }
+    var translationSavedLabel by remember { mutableStateOf("") }
     var nicknameLabel by remember { mutableStateOf("") }
     var modelStatus by remember { mutableStateOf("") }
     var validatingApiKey by remember { mutableStateOf(false) }
@@ -117,7 +147,7 @@ fun SettingsSection(onSettingsChanged: () -> Unit) {
         BlogTranslationManager.resetRetries()
         TranslationManager.enqueue(context)
         BlogTranslationManager.enqueuePending(context)
-        savedLabel = "翻译设置已保存"
+        translationSavedLabel = "翻译设置已保存"
         onSettingsChanged()
     }
 
@@ -145,253 +175,390 @@ fun SettingsSection(onSettingsChanged: () -> Unit) {
         }
     }
 
+    val textFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = BrandPurple,
+        focusedLabelColor = BrandPurple,
+        cursorColor = BrandPurple,
+    )
+    val cardShape = RelayCardShape
+    val cardColors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    val cardBorder = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.12f))
+    val translationVisibilitySpring = spring<IntSize>(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessMediumLow,
+    )
+    val translationVisibilityFade = tween<Float>(durationMillis = 200)
+
     Column(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text("FCM 推送服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        if (!BuildConfig.SIMPLE_UI) {
-            OutlinedTextField(
-                value = relayUrl,
-                onValueChange = { relayUrl = it },
-                label = { Text("同步服务地址") },
-                placeholder = { Text("https://relay.example.com") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("访问令牌") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        Button(
-            onClick = {
-                AppGraph.settings.save(currentSettings())
-                savedLabel = "正在注册 FCM 设备..."
-                PushRegistrar.registerCurrentToken(context) { result ->
-                    (context as? android.app.Activity)?.runOnUiThread {
-                        savedLabel = result.fold(
-                            onSuccess = { "设备已注册，系统推送已就绪" },
-                            onFailure = { it.message ?: "FCM 设备注册失败" },
-                        )
-                    }
-                }
-            },
-            shape = RelayControlShape,
+        // Card 1: FCM 推送服务
+        Card(
+            shape = cardShape,
+            colors = cardColors,
+            border = cardBorder,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(Icons.Rounded.Save, contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text(if (BuildConfig.SIMPLE_UI) "注册推送" else "保存并注册推送", maxLines = 1)
-        }
-        Text("昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(
-            value = userNickname,
-            onValueChange = { userNickname = it },
-            label = { Text("你的昵称") },
-            placeholder = { Text("用于替换消息中的 %%%") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        FilledTonalButton(
-            onClick = ::saveNickname,
-            shape = RelayControlShape,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(Icons.Rounded.Save, contentDescription = null)
-            Spacer(Modifier.size(8.dp))
-            Text("保存", maxLines = 1)
-        }
-        if (nicknameLabel.isNotBlank()) {
-            Text(nicknameLabel, color = SignalGreen, fontSize = 13.sp)
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("翻译", fontWeight = FontWeight.Medium)
-            }
-            Switch(
-                checked = translationEnabled,
-                onCheckedChange = {
-                    translationEnabled = it
-                    AppGraph.settings.save(currentSettings())
-                    TranslationManager.resetRetries()
-                    BlogTranslationManager.resetRetries()
-                    if (it) {
-                        TranslationManager.enqueue(context)
-                        BlogTranslationManager.enqueuePending(context)
-                    }
-                    // The list and detail screens cache the setting behind refreshKey, so bump it to
-                    // hide or restore the BLOG translations immediately instead of within the next poll.
-                    onSettingsChanged()
-                },
-            )
-        }
-        Box {
-            OutlinedTextField(
-                value = aiProvider.displayName,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("AI 供应商") },
-                trailingIcon = {
-                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择供应商")
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onSizeChanged { providerFieldWidthPx = it.width },
-            )
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clickable { providerMenuExpanded = true },
-            )
-            DropdownMenu(
-                expanded = providerMenuExpanded,
-                onDismissRequest = { providerMenuExpanded = false },
-                modifier = if (providerFieldWidthPx > 0) {
-                    Modifier.width(with(density) { providerFieldWidthPx.toDp() })
-                } else {
-                    Modifier
-                },
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                AIProviderType.values().forEach { provider ->
-                    DropdownMenuItem(
-                        text = { Text(provider.displayName) },
-                        trailingIcon = {
-                            if (provider.supportsStructuredOutput) SupportBadge("结构化输出")
-                        },
-                        onClick = {
-                            // Every provider keeps its own API Key, model and cached model list, so
-                            // switching back and forth restores what was configured before.
-                            aiProvider = provider
-                            aiApiKey = AppGraph.settings.apiKeyFor(provider)
-                            aiModel = AppGraph.settings.modelFor(provider)
-                            modelOptions = AppGraph.settings.cachedModelsFor(provider)
-                            AppGraph.settings.save(currentSettings())
-                            modelStatus = ""
-                            providerMenuExpanded = false
-                        },
+                Text("FCM 推送服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (!BuildConfig.SIMPLE_UI) {
+                    OutlinedTextField(
+                        value = relayUrl,
+                        onValueChange = { relayUrl = it },
+                        label = { Text("同步服务地址") },
+                        placeholder = { Text("https://relay.example.com") },
+                        singleLine = true,
+                        shape = RelayControlShape,
+                        colors = textFieldColors,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = { Text("访问令牌") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        shape = RelayControlShape,
+                        colors = textFieldColors,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-            }
-        }
-        OutlinedTextField(
-            value = aiApiKey,
-            onValueChange = { aiApiKey = it },
-            label = { Text("${aiProvider.displayName} API Key") },
-            placeholder = { Text("sk-... 或对应供应商的 API Key") },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Button(
-                onClick = ::saveTranslationSettings,
-                shape = RelayControlShape,
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(Icons.Rounded.Save, contentDescription = null)
-                Spacer(Modifier.size(5.dp))
-                Text("保存", maxLines = 1)
-            }
-            OutlinedButton(
-                onClick = ::validateApiKey,
-                enabled = !validatingApiKey,
-                shape = RelayControlShape,
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(Icons.Rounded.CheckCircle, contentDescription = null)
-                Spacer(Modifier.size(5.dp))
-                Text(if (validatingApiKey) "校验中..." else "校验有效性", maxLines = 1)
-            }
-        }
-        if (modelStatus.isNotBlank()) {
-            Text(modelStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        }
-        Box {
-            OutlinedTextField(
-                value = aiModel,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("翻译模型") },
-                placeholder = { Text("请先校验 API Key 并选择模型") },
-                trailingIcon = {
-                    RelayIconButton(
-                        onClick = { modelMenuExpanded = true },
-                        enabled = modelOptions.isNotEmpty(),
-                        imageVector = Icons.Rounded.ArrowDropDown,
-                        contentDescription = "选择翻译模型",
-                    )
-                },
-                singleLine = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onSizeChanged { modelFieldWidthPx = it.width },
-            )
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clickable(enabled = modelOptions.isNotEmpty()) {
-                        modelMenuExpanded = true
+                Button(
+                    onClick = {
+                        AppGraph.settings.save(currentSettings())
+                        pushStatusLabel = "正在注册 FCM 设备..."
+                        PushRegistrar.registerCurrentToken(context) { result ->
+                            (context as? android.app.Activity)?.runOnUiThread {
+                                pushStatusLabel = result.fold(
+                                    onSuccess = { "设备已注册，系统推送已就绪" },
+                                    onFailure = { it.message ?: "FCM 设备注册失败" },
+                                )
+                            }
+                        }
                     },
-            )
-            DropdownMenu(
-                expanded = modelMenuExpanded,
-                onDismissRequest = { modelMenuExpanded = false },
-                modifier = if (modelFieldWidthPx > 0) {
-                    Modifier.width(with(density) { modelFieldWidthPx.toDp() })
-                } else {
-                    Modifier
-                },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                ) {
+                    Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text(if (BuildConfig.SIMPLE_UI) "注册推送" else "保存并注册推送", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+                if (pushStatusLabel.isNotBlank()) {
+                    Text(
+                        text = pushStatusLabel,
+                        color = if (pushStatusLabel.contains("失败")) MaterialTheme.colorScheme.error else SignalGreen,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+        }
+
+        // Card 2: 昵称设置
+        Card(
+            shape = cardShape,
+            colors = cardColors,
+            border = cardBorder,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                modelOptions.forEach { model ->
-                    val support = selectedProvider.jsonOutputSupport(model.id)
-                    DropdownMenuItem(
-                        text = { Text(model.displayName) },
-                        trailingIcon = { if (support.isSupported) SupportBadge(support.label) },
-                        onClick = {
-                            aiModel = model.id
-                            AppGraph.settings.save(currentSettings().copy(aiModel = model.id))
+                Text("个性化昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = userNickname,
+                    onValueChange = { userNickname = it },
+                    label = { Text("你的昵称") },
+                    placeholder = { Text("例如：小明") },
+                    singleLine = true,
+                    shape = RelayControlShape,
+                    colors = textFieldColors,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = ::saveNickname,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BrandPurple,
+                        contentColor = Color.White,
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                ) {
+                    Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text("保存昵称", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+                if (nicknameLabel.isNotBlank()) {
+                    Text(nicknameLabel, color = SignalGreen, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+
+        // Card 3: AI翻译
+        Card(
+            shape = cardShape,
+            colors = cardColors,
+            border = cardBorder,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "AI翻译",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = translationEnabled,
+                        onCheckedChange = {
+                            translationEnabled = it
+                            AppGraph.settings.save(currentSettings())
                             TranslationManager.resetRetries()
                             BlogTranslationManager.resetRetries()
-                            TranslationManager.enqueue(context)
-                            BlogTranslationManager.enqueuePending(context)
-                            savedLabel = "翻译模型已保存"
-                            modelMenuExpanded = false
+                            if (it) {
+                                TranslationManager.enqueue(context)
+                                BlogTranslationManager.enqueuePending(context)
+                            }
+                            onSettingsChanged()
                         },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = BrandPurple,
+                        ),
                     )
+                }
+
+                AnimatedVisibility(
+                    visible = translationEnabled,
+                    enter = expandVertically(
+                        expandFrom = Alignment.Top,
+                        animationSpec = translationVisibilitySpring,
+                    ) + fadeIn(
+                        animationSpec = translationVisibilityFade,
+                    ),
+                    exit = shrinkVertically(
+                        shrinkTowards = Alignment.Top,
+                        animationSpec = translationVisibilitySpring,
+                    ) + fadeOut(
+                        animationSpec = translationVisibilityFade,
+                    ),
+                ) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.padding(top = 14.dp),
+                    ) {
+                        Box {
+                            OutlinedTextField(
+                                value = aiProvider.displayName,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("AI 供应商") },
+                                trailingIcon = {
+                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择供应商")
+                                },
+                                shape = RelayControlShape,
+                                colors = textFieldColors,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onSizeChanged { providerFieldWidthPx = it.width },
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable { providerMenuExpanded = true },
+                            )
+                            DropdownMenu(
+                                expanded = providerMenuExpanded,
+                                onDismissRequest = { providerMenuExpanded = false },
+                                modifier = if (providerFieldWidthPx > 0) {
+                                    Modifier.width(with(density) { providerFieldWidthPx.toDp() })
+                                } else {
+                                    Modifier
+                                },
+                            ) {
+                                AIProviderType.values().forEach { provider ->
+                                    DropdownMenuItem(
+                                        text = { Text(provider.displayName) },
+                                        trailingIcon = {
+                                            if (provider.supportsStructuredOutput) SupportBadge("结构化输出")
+                                        },
+                                        onClick = {
+                                            aiProvider = provider
+                                            aiApiKey = AppGraph.settings.apiKeyFor(provider)
+                                            aiModel = AppGraph.settings.modelFor(provider)
+                                            modelOptions = AppGraph.settings.cachedModelsFor(provider)
+                                            AppGraph.settings.save(currentSettings())
+                                            modelStatus = ""
+                                            providerMenuExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    OutlinedTextField(
+                        value = aiApiKey,
+                        onValueChange = { aiApiKey = it },
+                        label = { Text("${aiProvider.displayName} API Key") },
+                        placeholder = { Text("sk-... 或对应 API Key") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        shape = RelayControlShape,
+                        colors = textFieldColors,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Button(
+                            onClick = ::saveTranslationSettings,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
+                            modifier = Modifier.weight(1f).height(44.dp),
+                        ) {
+                            Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("保存配置", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        }
+                        FilledTonalButton(
+                            onClick = ::validateApiKey,
+                            enabled = !validatingApiKey,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = BrandPurpleContainer,
+                                contentColor = BrandPurpleDark,
+                            ),
+                            modifier = Modifier.weight(1f).height(44.dp),
+                        ) {
+                            Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text(if (validatingApiKey) "校验中…" else "校验模型", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        }
+                    }
+                    if (modelStatus.isNotBlank()) {
+                        Text(modelStatus, color = BrandPurpleDark, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Box {
+                        OutlinedTextField(
+                            value = aiModel,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("翻译模型") },
+                            placeholder = { Text("请先校验 API Key 并选择模型") },
+                            trailingIcon = {
+                                RelayIconButton(
+                                    onClick = { modelMenuExpanded = true },
+                                    enabled = modelOptions.isNotEmpty(),
+                                    imageVector = Icons.Rounded.ArrowDropDown,
+                                    contentDescription = "选择翻译模型",
+                                )
+                            },
+                            singleLine = true,
+                            shape = RelayControlShape,
+                            colors = textFieldColors,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onSizeChanged { modelFieldWidthPx = it.width },
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable(enabled = modelOptions.isNotEmpty()) {
+                                    modelMenuExpanded = true
+                                },
+                        )
+                        DropdownMenu(
+                            expanded = modelMenuExpanded,
+                            onDismissRequest = { modelMenuExpanded = false },
+                            modifier = if (modelFieldWidthPx > 0) {
+                                Modifier.width(with(density) { modelFieldWidthPx.toDp() })
+                            } else {
+                                Modifier
+                            },
+                        ) {
+                            modelOptions.forEach { model ->
+                                val support = selectedProvider.jsonOutputSupport(model.id)
+                                DropdownMenuItem(
+                                    text = { Text(model.displayName) },
+                                    trailingIcon = { if (support.isSupported) SupportBadge(support.label) },
+                                    onClick = {
+                                        aiModel = model.id
+                                        AppGraph.settings.save(currentSettings().copy(aiModel = model.id))
+                                        TranslationManager.resetRetries()
+                                        BlogTranslationManager.resetRetries()
+                                        TranslationManager.enqueue(context)
+                                        BlogTranslationManager.enqueuePending(context)
+                                        translationSavedLabel = "翻译模型已保存"
+                                        modelMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (aiModel.isNotBlank()) {
+                        Text(
+                            text = if (selectedModelSupport.isSupported) {
+                                "结构化输出：${selectedModelSupport.label}"
+                            } else {
+                                "结构化输出：不支持，仅用提示词约束"
+                            },
+                            color = if (selectedModelSupport.isSupported) SignalGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    if (modelOptions.isEmpty() && aiApiKey.isNotBlank()) {
+                        Text(
+                            "请点击\"校验模型\"获取可用模型列表",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                        )
+                    }
+                    if (translationSavedLabel.isNotBlank()) {
+                        Text(translationSavedLabel, color = SignalGreen, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+                    }
+                    }
                 }
             }
         }
-        if (aiModel.isNotBlank()) {
-            Text(
-                text = if (selectedModelSupport.isSupported) {
-                    "结构化输出：${selectedModelSupport.label}"
-                } else {
-                    "结构化输出：不支持，仅用提示词约束"
-                },
-                color = if (selectedModelSupport.isSupported) SignalGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp,
-            )
-        }
-        if (modelOptions.isEmpty() && aiApiKey.isNotBlank()) {
-            Text(
-                "请点击\"校验有效性\"加载可用模型",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp
-            )
-        }
-        if (savedLabel.isNotBlank()) {
-            Text(savedLabel, color = SignalGreen, fontSize = 13.sp)
+
+        // Card 4: 全屏来电测试
+        if (onTestCall != null && !BuildConfig.SIMPLE_UI) {
+            Card(
+                shape = cardShape,
+                colors = cardColors,
+                border = cardBorder,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Text("全屏来电测试", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = onTestCall,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                    ) {
+                        Icon(Icons.Rounded.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text("测试全屏来电", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
         }
     }
 }

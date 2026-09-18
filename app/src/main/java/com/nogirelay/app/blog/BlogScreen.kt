@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,8 +55,11 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -65,6 +67,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -97,8 +100,15 @@ import com.nogirelay.app.data.BlogSummary
 import com.nogirelay.app.data.isRealBlogImageUrl
 import com.nogirelay.app.translation.BlogTranslationLayout
 import com.nogirelay.app.translation.BlogTranslationManager
-import com.nogirelay.app.UnreadTag
+import com.nogirelay.app.NameWithUnreadTag
 import com.nogirelay.app.ui.AiTranslateIcon
+import com.nogirelay.app.ui.BrandPurple
+import com.nogirelay.app.ui.BrandPurpleContainer
+import com.nogirelay.app.ui.BrandPurpleDark
+import com.nogirelay.app.ui.BrandPurpleLight
+import com.nogirelay.app.ui.RelayCardShape
+import com.nogirelay.app.ui.RelayControlShape
+import com.nogirelay.app.ui.RelaySearchField
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.TimeFilter
@@ -143,8 +153,28 @@ fun BlogScreen(
         }
     }
 
+    var pendingScrollBlogId by remember { mutableStateOf<String?>(null) }
+
     LaunchedEffect(initialBlogId) {
-        initialBlogId?.let { selectedBlogId = it }
+        initialBlogId?.let { id ->
+            searchQuery = ""
+            selectedMemberIds = null
+            oldestFirst = false
+            timeFilter = TimeFilter()
+            withContext(AppGraph.dispatchers.databaseRead) {
+                val rank = AppGraph.database.blogRank(id)
+                if (rank != null) {
+                    val targetPage = rank / BLOG_PAGE_SIZE
+                    withContext(Dispatchers.Main) {
+                        currentPage = targetPage
+                        pageInput = (targetPage + 1).toString()
+                    }
+                }
+            }
+            selectedBlogId = id
+            pendingScrollBlogId = id
+            onInitialBlogHandled(id)
+        }
     }
 
     val focusManager = LocalFocusManager.current
@@ -234,6 +264,17 @@ fun BlogScreen(
     val page = pageData.page
     val blogs = pageData.posts
     val bodyPreviews = pageData.previews
+
+    LaunchedEffect(selectedBlogId, pageData.loaded, blogs) {
+        if (selectedBlogId == null) {
+            val targetId = pendingScrollBlogId ?: return@LaunchedEffect
+            val index = blogs.indexOfFirst { it.id == targetId }
+            if (index >= 0) {
+                blogListState.animateScrollToItem(index + 1)
+                pendingScrollBlogId = null
+            }
+        }
+    }
 
     // Warm the current page's covers in the background (bounded to <= page size, cached files are
     // skipped) so scrolling decodes from disk instead of waiting for a first-time download.
@@ -384,7 +425,7 @@ fun BlogScreen(
         Text(
             "博客",
             style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
         Row(
@@ -399,16 +440,26 @@ fun BlogScreen(
             )
             val isMemberFilterActive = selectedMemberIds != null && (members.isEmpty() || selectedMemberIds?.size != members.size)
             val isFilterActive = timeFilter.isActive || isMemberFilterActive
-            IconButton(onClick = { showMemberDialog = true }) {
-                Icon(
-                    Icons.Rounded.FilterList,
-                    contentDescription = "筛选成员和时间",
-                    tint = if (isFilterActive) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
+            Surface(
+                shape = CircleShape,
+                color = if (isFilterActive) BrandPurple.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
+                border = if (isFilterActive) BorderStroke(1.dp, BrandPurple) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                modifier = Modifier.size(42.dp),
+            ) {
+                IconButton(
+                    onClick = { showMemberDialog = true },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    Icon(
+                        Icons.Rounded.FilterList,
+                        contentDescription = "筛选成员和时间",
+                        tint = if (isFilterActive) {
+                            BrandPurple
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
         }
         LazyColumn(
@@ -417,32 +468,17 @@ fun BlogScreen(
             modifier = Modifier.fillMaxSize().padding(top = 10.dp),
         ) {
             item(key = "blog-search") {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = {
+                RelaySearchField(
+                    query = searchQuery,
+                    onQueryChange = {
                         searchQuery = it
                         currentPage = 0
                         pageInput = "1"
                     },
-                    singleLine = true,
-                    label = { Text("搜索") },
-                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                    trailingIcon = if (searchQuery.isNotEmpty()) {
-                        {
-                            IconButton(
-                                onClick = {
-                                    searchQuery = ""
-                                    currentPage = 0
-                                    pageInput = "1"
-                                },
-                            ) {
-                                Icon(Icons.Rounded.Close, contentDescription = "清除搜索")
-                            }
-                        }
-                    } else {
-                        null
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    placeholder = "搜索博客标题、正文或日期",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
             // Nothing is rendered before the first load completes, so the empty state never flashes.
@@ -456,7 +492,7 @@ fun BlogScreen(
                             .fillMaxWidth()
                             .padding(vertical = 64.dp),
                     ) {
-                        Icon(Icons.AutoMirrored.Rounded.Article, contentDescription = null, modifier = Modifier.size(52.dp))
+                        Icon(Icons.AutoMirrored.Rounded.Article, contentDescription = null, modifier = Modifier.size(52.dp), tint = MaterialTheme.colorScheme.outline)
                         Spacer(Modifier.height(10.dp))
                         Text(
                             when {
@@ -477,7 +513,10 @@ fun BlogScreen(
                         searchQuery = searchQuery,
                         bodyPreviews = bodyPreviews[blog.id].orEmpty(),
                         translationEnabled = translationEnabled,
-                        onClick = { selectedBlogId = blog.id },
+                        onClick = {
+                            selectedBlogId = blog.id
+                            pendingScrollBlogId = blog.id
+                        },
                         onDownload = {
                             context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
                         },
@@ -493,31 +532,60 @@ fun BlogScreen(
                 item(key = "blog-pagination") {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier
                             .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
                     ) {
-                        Text("$matchingCount 篇博客", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        Text(
+                            text = "共 $matchingCount 篇博客",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            OutlinedButton(onClick = { goToPage(page - 1) }, enabled = page > 0, modifier = Modifier.weight(1f)) { Text("上一页", maxLines = 1) }
+                            OutlinedButton(
+                                onClick = { goToPage(page - 1) },
+                                enabled = page > 0,
+                                shape = RelayControlShape,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = BrandPurple,
+                                ),
+                                modifier = Modifier.weight(1f),
+                            ) { Text("上一页", maxLines = 1, fontSize = 13.sp) }
+
                             OutlinedButton(
                                 onClick = {
                                     pageInput = (page + 1).toString()
                                     showPageDialog = true
                                 },
                                 enabled = matchingCount > 0,
-                                modifier = Modifier.weight(1.25f),
+                                shape = RelayControlShape,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = BrandPurple,
+                                    containerColor = BrandPurple.copy(alpha = 0.06f),
+                                ),
+                                border = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.3f)),
+                                modifier = Modifier.weight(1.2f),
                             ) {
-                                Text("${page + 1} / $totalPages", maxLines = 1, fontSize = 12.sp)
-                                Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码")
+                                Text("${page + 1} / $totalPages", fontWeight = FontWeight.SemiBold, maxLines = 1, fontSize = 13.sp)
+                                Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码", modifier = Modifier.size(18.dp))
                             }
-                            OutlinedButton(onClick = { goToPage(page + 1) }, enabled = page < totalPages - 1, modifier = Modifier.weight(1f)) { Text("下一页", maxLines = 1) }
+
+                            OutlinedButton(
+                                onClick = { goToPage(page + 1) },
+                                enabled = page < totalPages - 1,
+                                shape = RelayControlShape,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = BrandPurple,
+                                ),
+                                modifier = Modifier.weight(1f),
+                            ) { Text("下一页", maxLines = 1, fontSize = 13.sp) }
                         }
                     }
                 }
@@ -537,8 +605,8 @@ private fun BlogSortSwitcher(
     BoxWithConstraints(
         modifier = modifier
             .height(42.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+            .clip(RoundedCornerShape(21.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
     ) {
         val tabWidth = maxWidth / 2
         val indicatorOffset by animateDpAsState(
@@ -546,19 +614,18 @@ private fun BlogSortSwitcher(
             animationSpec = tween(durationMillis = 220),
             label = "blog-sort-indicator",
         )
-    Surface(
-        shape = RoundedCornerShape(6.dp),
-        // Same light purple as the selected bottom navigation item instead of the strong brand purple.
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = Modifier
-            .align(Alignment.CenterStart)
-            .offset(x = indicatorOffset)
-            .padding(3.dp)
-            .width(tabWidth)
-            .fillMaxHeight(),
-    ) {
-        Box(Modifier.fillMaxSize())
-    }
+        Surface(
+            shape = RoundedCornerShape(19.dp),
+            color = BrandPurple,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = indicatorOffset)
+                .padding(3.dp)
+                .width(tabWidth)
+                .fillMaxHeight(),
+        ) {
+            Box(Modifier.fillMaxSize())
+        }
         Row(Modifier.fillMaxSize()) {
             BlogSortTab("最新", selected = !oldestFirst, onClick = { onOldestFirstChanged(false) }, modifier = Modifier.weight(1f))
             BlogSortTab("最早", selected = oldestFirst, onClick = { onOldestFirstChanged(true) }, modifier = Modifier.weight(1f))
@@ -581,11 +648,11 @@ private fun BlogSortTab(label: String, selected: Boolean, onClick: () -> Unit, m
         Text(
             label,
             color = if (selected) {
-                MaterialTheme.colorScheme.onSecondaryContainer
+                Color.White
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
         )
     }
 }
@@ -600,10 +667,19 @@ private fun BlogFilterDialog(
 ) {
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     var draftTimeFilter by remember(timeFilter) { mutableStateOf(timeFilter) }
-    val groups = remember(members) { members.groupBy(BlogMember::category) }
+    val groups = remember(members) {
+        val categoryOrder = listOf("6期生", "5期生", "4期生", "3期生", "2期生", "1期生", "運営スタッフ", "其他")
+        members.groupBy(BlogMember::category)
+            .toList()
+            .sortedBy { (cat, _) ->
+                val idx = categoryOrder.indexOf(cat)
+                if (idx >= 0) idx else categoryOrder.size
+            }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("博客筛选") },
+        shape = RoundedCornerShape(20.dp),
+        title = { Text("博客筛选", fontWeight = FontWeight.Bold) },
         text = {
             Column {
                 if (members.isEmpty()) {
@@ -631,25 +707,31 @@ private fun BlogFilterDialog(
                         item(key = "category-$category", span = { GridItemSpan(maxLineSpan) }) {
                             Text(
                                 category,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 2.dp),
+                                fontWeight = FontWeight.Bold,
+                                color = BrandPurple,
+                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
                             )
                         }
                         gridItems(groupMembers, key = BlogMember::id) { member ->
+                            val isSelected = member.id in draft
                             Surface(
                                 onClick = {
-                                    draft = if (member.id in draft) draft - member.id else draft + member.id
+                                    draft = if (isSelected) draft - member.id else draft + member.id
                                 },
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (member.id in draft) {
-                                    MaterialTheme.colorScheme.secondaryContainer
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) {
+                                    BrandPurpleLight
                                 } else {
-                                    MaterialTheme.colorScheme.surfaceVariant
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                },
+                                border = if (isSelected) {
+                                    BorderStroke(1.5.dp, BrandPurple)
+                                } else {
+                                    BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(92.dp),
+                                    .height(94.dp),
                             ) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -659,13 +741,24 @@ private fun BlogFilterDialog(
                                     RemoteImage(
                                         url = member.avatarUrl,
                                         contentDescription = member.name,
-                                            loadCachedImmediately = false,
-                                        modifier = Modifier.size(46.dp).clip(CircleShape),
+                                        loadCachedImmediately = false,
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .clip(CircleShape)
+                                            .then(
+                                                if (isSelected) {
+                                                    Modifier.border(1.5.dp, BrandPurple, CircleShape)
+                                                } else {
+                                                    Modifier
+                                                }
+                                            ),
                                     )
                                     Text(
                                         member.name,
                                         maxLines = 1,
                                         fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) BrandPurpleDark else MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.padding(top = 5.dp),
                                     )
                                 }
@@ -684,17 +777,18 @@ private fun BlogFilterDialog(
         confirmButton = {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 IconButton(onClick = { draft = members.mapTo(linkedSetOf(), BlogMember::id) }) {
-                    Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择")
+                    Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
                 }
                 IconButton(onClick = { draft = emptySet() }) {
-                    Icon(Icons.Rounded.ClearAll, contentDescription = "全部清除")
+                    Icon(Icons.Rounded.ClearAll, contentDescription = "全部清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDismiss) { Text("取消") }
                 TextButton(
                     onClick = { onConfirm(draft, draftTimeFilter) },
                     enabled = !draftTimeFilter.hasInvertedRange(),
-                ) { Text("确定") }
+                    colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+                ) { Text("确定", fontWeight = FontWeight.Bold) }
             }
         },
         dismissButton = {},
@@ -713,15 +807,21 @@ private fun BlogPageDialog(
     val canJump = requestedPage != null && requestedPage in 1..totalPages
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("跳转") },
+        shape = RoundedCornerShape(20.dp),
+        title = { Text("跳转页码", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("请输入1-${totalPages}之间的页码", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("请输入 1 ~ ${totalPages} 之间的页码", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = pageInput,
                     onValueChange = { onInputChange(it.filter(Char::isDigit).take(6)) },
                     singleLine = true,
                     label = { Text("页码") },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BrandPurple,
+                        focusedLabelColor = BrandPurple,
+                    ),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { if (canJump) onConfirm(requestedPage!!) }),
                     modifier = Modifier.fillMaxWidth(),
@@ -729,7 +829,11 @@ private fun BlogPageDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(requestedPage!!) }, enabled = canJump) { Text("跳转") }
+            TextButton(
+                onClick = { onConfirm(requestedPage!!) },
+                enabled = canJump,
+                colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+            ) { Text("跳转", fontWeight = FontWeight.Bold) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
@@ -750,7 +854,8 @@ private fun BlogSummaryCard(
     val highlightText = MaterialTheme.colorScheme.onPrimaryContainer
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(10.dp),
+        shape = RelayCardShape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
     ) {
@@ -765,27 +870,17 @@ private fun BlogSummaryCard(
                         // what made scrolling search results stutter while the newest posts did not.
                         loadCachedImmediately = false,
                         maxDecodeDimension = 256,
-                        modifier = Modifier.size(42.dp).clip(CircleShape),
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape),
                     )
                     Spacer(Modifier.size(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Row(
-                            modifier = Modifier.height(IntrinsicSize.Min),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            if (blog.isUnread) {
-                                Spacer(Modifier.width(6.dp))
-                                UnreadTag(
-                                    text = "未读",
-                                    modifier = Modifier.fillMaxHeight().padding(vertical = 2.dp),
-                                )
-                            }
-                        }
+                        NameWithUnreadTag(
+                            name = highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
+                            isUnread = blog.isUnread,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        )
                         Text(
                             highlightMatches(formatBlogDate(blog.publishedAt), searchQuery, highlightBackground, highlightText),
                             fontSize = 12.sp,
@@ -793,15 +888,19 @@ private fun BlogSummaryCard(
                         )
                     }
                     if (translationEnabled) {
-                        IconButton(onClick = onRetranslate, modifier = Modifier.size(40.dp)) {
+                        IconButton(onClick = onRetranslate, modifier = Modifier.size(38.dp)) {
                             AiTranslateIcon(
-                                tint = MaterialTheme.colorScheme.primary,
-                                size = 24.dp,
+                                tint = BrandPurple,
+                                size = 22.dp,
                             )
                         }
                     }
-                    IconButton(onClick = onDownload, modifier = Modifier.size(40.dp)) {
-                        Icon(Icons.Rounded.Download, contentDescription = "选择下载博客图片")
+                    IconButton(onClick = onDownload, modifier = Modifier.size(38.dp)) {
+                        Icon(
+                            Icons.Rounded.Download,
+                            contentDescription = "选择下载博客图片",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -813,10 +912,10 @@ private fun BlogSummaryCard(
                 blog.translatedTitle?.takeIf { translationEnabled }?.let {
                     Text(
                         highlightMatches(it, searchQuery, highlightBackground, highlightText),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 15.sp,
+                        color = BrandPurpleDark,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 6.dp),
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
                 // Excerpts around the matched term: the original body and, when it also matches,
@@ -826,9 +925,9 @@ private fun BlogSummaryCard(
                     Row(modifier = Modifier.padding(top = 6.dp)) {
                         Text(
                             preview.label,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = BrandPurple,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             modifier = Modifier
                                 .padding(end = 6.dp)
                                 .alignByBaseline(),
@@ -845,23 +944,29 @@ private fun BlogSummaryCard(
                         )
                     }
                 }
-            }
-            blog.imageUrl?.takeIf(::isRealBlogImageUrl)?.let {
-                RemoteImage(
-                    url = it,
-                    contentDescription = blog.title,
-                    contentScale = ContentScale.Fit,
-                    preserveAspectRatio = true,
-                    // Decode off the main thread, at screen width instead of full resolution: the
-                    // covers are up to 3700x2800 photos.
-                    loadCachedImmediately = false,
-                    placeholderColor = Color.Transparent,
-                    maxDecodeDimension = 1440,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                )
+                blog.imageUrl?.takeIf(::isRealBlogImageUrl)?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 180.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                    ) {
+                        RemoteImage(
+                            url = it,
+                            contentDescription = blog.title,
+                            contentScale = ContentScale.Fit,
+                            preserveAspectRatio = true,
+                            // Decode off the main thread, at screen width instead of full resolution:
+                            // blog covers can be up to 3700x2800 photos.
+                            loadCachedImmediately = false,
+                            placeholderColor = Color.Transparent,
+                            maxDecodeDimension = 1440,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
             }
         }
     }
@@ -966,18 +1071,24 @@ private fun BlogDetail(
             .clearSelectionOnTap(focusManager, textToolbar)
     ) {
         item {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            Surface(
+                tonalElevation = 0.dp,
+                color = MaterialTheme.colorScheme.background,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                IconButton(onClick = {
-                    focusManager.clearFocus()
-                    textToolbar.hide()
-                    onBack()
-                }) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客列表")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                ) {
+                    IconButton(onClick = {
+                        focusManager.clearFocus()
+                        textToolbar.hide()
+                        onBack()
+                    }) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客列表", tint = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Text("博客详情", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
-                Text("博客", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             }
         }
         item {
@@ -987,11 +1098,13 @@ private fun BlogDetail(
                         url = blog.memberAvatarUrl,
                         contentDescription = blog.memberName,
                         loadCachedImmediately = true,
-                        modifier = Modifier.size(42.dp).clip(CircleShape),
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape),
                     )
                     Spacer(Modifier.size(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(blog.memberName, fontWeight = FontWeight.SemiBold)
+                        Text(blog.memberName, fontWeight = FontWeight.Bold)
                         Text(formatBlogDate(blog.publishedAt), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (translationEnabled && blog.bodyHtml.isNotBlank()) {
@@ -1003,11 +1116,11 @@ private fun BlogDetail(
                                     BlogTranslationManager.enqueue(context, blog.id, force = true)
                                 }
                             },
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.size(38.dp),
                         ) {
                             AiTranslateIcon(
-                                tint = MaterialTheme.colorScheme.primary,
-                                size = 24.dp,
+                                tint = BrandPurple,
+                                size = 22.dp,
                             )
                         }
                     }
@@ -1015,9 +1128,13 @@ private fun BlogDetail(
                         onClick = {
                             context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
                         },
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier.size(38.dp),
                     ) {
-                        Icon(Icons.Rounded.Download, contentDescription = "选择下载博客图片")
+                        Icon(
+                            Icons.Rounded.Download,
+                            contentDescription = "选择下载博客图片",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 Spacer(Modifier.height(14.dp))
@@ -1025,8 +1142,9 @@ private fun BlogDetail(
                 titleTranslation?.takeIf(String::isNotBlank)?.let {
                     Text(
                         it,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = BrandPurpleDark,
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(top = 6.dp),
                     )
                 }
@@ -1037,33 +1155,38 @@ private fun BlogDetail(
         }
         items(displayBlocks) { block ->
             when (block) {
-                is DisplayBlock.Image -> if (isRealBlogImageUrl(block.url)) {
+                is DisplayBlock.Image -> if (block.url.isNotBlank()) {
                     RemoteImage(
                         url = block.url,
                         contentDescription = blog.title,
                         contentScale = ContentScale.Fit,
                         preserveAspectRatio = true,
                         loadCachedImmediately = true,
-                        placeholderColor = Color.Transparent,
+                        placeholderColor = BrandPurpleLight.copy(alpha = 0.5f),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(14.dp))
                             .clickable { openImage(block.url) },
                     )
                 }
-                is DisplayBlock.Paragraph -> Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    SelectionContainer { Text(block.original, lineHeight = 24.sp) }
+                is DisplayBlock.Paragraph -> Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                    SelectionContainer {
+                        Text(
+                            block.original,
+                            lineHeight = 24.sp,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                     block.translation?.takeIf(String::isNotBlank)?.let {
+                        Spacer(Modifier.height(6.dp))
                         SelectionContainer {
-                            // The translation is marked by its purple text colour instead of a
-                            // highlighted block, so no background is drawn behind it.
                             Text(
                                 it,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontSize = 15.sp,
-                                lineHeight = 22.sp,
-                                modifier = Modifier.padding(top = 7.dp),
+                                color = BrandPurpleDark,
+                                fontSize = 14.5.sp,
+                                lineHeight = 21.sp,
                             )
                         }
                     }

@@ -16,12 +16,20 @@ import androidx.compose.ui.unit.dp
 
 val BrandPurple = Color(0xFF7A2A90)
 val BrandPurpleDark = Color(0xFF4E175F)
+val BrandPurpleLight = Color(0xFFF3EDF7)
+val BrandPurpleSurface = Color(0xFFFBF8FC)
+val BrandPurpleContainer = Color(0xFFEADBEE)
+val BrandPurpleBorder = Color(0x267A2A90)
+
 val SignalGreen = Color(0xFF14A46D)
 val SignalCoral = Color(0xFFDB4F61)
 val SignalCyan = Color(0xFF087E8B)
+val SignalAmber = Color(0xFFF59E0B)
 
-val NavigationTabIndicatorShape = RoundedCornerShape(10.dp)
-val RelayControlShape = RoundedCornerShape(12.dp)
+val NavigationTabIndicatorShape = RoundedCornerShape(12.dp)
+val RelayControlShape = RoundedCornerShape(14.dp)
+val RelayCardShape = RoundedCornerShape(18.dp)
+val RelayBubbleShape = RoundedCornerShape(16.dp)
 
 private val defaultLineHeightStyle = LineHeightStyle(
     alignment = LineHeightStyle.Alignment.Center,
@@ -60,15 +68,16 @@ val AppTypography = Typography(
 private val LightColors = lightColorScheme(
     primary = BrandPurple,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFF1DCF5),
+    primaryContainer = BrandPurpleContainer,
     onPrimaryContainer = Color(0xFF2F0B38),
     secondary = SignalCyan,
     onSecondary = Color.White,
     tertiary = SignalGreen,
     background = Color.White,
     surface = Color.White,
-    surfaceVariant = Color(0xFFF0EDF2),
+    surfaceVariant = BrandPurpleLight,
     outline = Color(0xFF817882),
+    outlineVariant = Color(0xFFE2DCE6),
     error = SignalCoral,
 )
 
@@ -78,6 +87,7 @@ private val DarkColors = darkColorScheme(
     tertiary = Color(0xFF5EE0A5),
     background = Color(0xFF171318),
     surface = Color(0xFF211C22),
+    surfaceVariant = Color(0xFF2C2530),
     error = Color(0xFFFFB2BC),
 )
 

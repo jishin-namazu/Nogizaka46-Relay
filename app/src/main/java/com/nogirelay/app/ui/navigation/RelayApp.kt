@@ -3,6 +3,7 @@ package com.nogirelay.app.ui.navigation
 import android.Manifest
 import android.os.Build
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -90,12 +92,16 @@ fun RowScope.RelayNavigationBarItem(
     badgeCount: Int,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val iconScale by animateFloatAsState(
+        targetValue = if (selected) 1.08f else 1.0f,
+        animationSpec = tween(durationMillis = 200),
+        label = "nav_icon_scale",
+    )
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier
             .weight(1f)
-            // Whole tab stays tappable; only the indicator box below paints the ripple.
             .selectable(
                 selected = selected,
                 interactionSource = interactionSource,
@@ -110,7 +116,7 @@ fun RowScope.RelayNavigationBarItem(
                 .size(width = 64.dp, height = 32.dp)
                 .clip(NavigationTabIndicatorShape)
                 .background(
-                    if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                    if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                 )
                 .indication(
                     interactionSource = interactionSource,
@@ -131,9 +137,13 @@ fun RowScope.RelayNavigationBarItem(
                     imageVector = imageVector,
                     contentDescription = label,
                     tint = if (selected) {
-                        MaterialTheme.colorScheme.onSecondaryContainer
+                        MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
                     },
                 )
             }
@@ -142,8 +152,9 @@ fun RowScope.RelayNavigationBarItem(
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             color = if (selected) {
-                MaterialTheme.colorScheme.onSurface
+                MaterialTheme.colorScheme.primary
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
             },
@@ -221,6 +232,8 @@ fun RelayApp(
     var syncLabel by remember { mutableStateOf("") }
     var unreadMessageCount by remember { mutableIntStateOf(0) }
     var unreadBlogCount by remember { mutableIntStateOf(0) }
+    var navigatedBlogId by remember { mutableStateOf<String?>(null) }
+    var navigatedMemberId by remember { mutableStateOf<String?>(null) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -286,10 +299,17 @@ fun RelayApp(
         }
     }
 
+    BackHandler(enabled = tab != AppTab.HOME) {
+        tab = AppTab.HOME
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.background,
+                tonalElevation = 0.dp,
+            ) {
                 AppTab.entries.forEach { item ->
                     RelayNavigationBarItem(
                         selected = tab == item,
@@ -370,12 +390,22 @@ fun RelayApp(
                             syncLabel = syncLabel,
                             onSyncHistory = onManualSync,
                             onSettingsChanged = { AppGraph.notifyDataChanged() },
+                            onSelectMember = { memberId ->
+                                navigatedMemberId = memberId.ifBlank { null }
+                                tab = AppTab.MESSAGES
+                            },
+                            onSelectBlog = { blogId ->
+                                navigatedBlogId = blogId.ifBlank { null }
+                                tab = AppTab.BLOG
+                            },
                         )
 
                         AppTab.MESSAGES -> MessagesScreen(
                             isActive = isSelected,
                             dataVersion = dataVersion,
                             initialMessageId = initialMessageId,
+                            initialMemberId = navigatedMemberId,
+                            onInitialMemberHandled = { navigatedMemberId = null },
                             onInitialMessageHandled = onNotificationMessageHandled,
                             onUnreadChanged = { AppGraph.notifyDataChanged() },
                             onOpenMedia = onOpenMedia,
@@ -386,8 +416,11 @@ fun RelayApp(
                         AppTab.BLOG -> BlogScreen(
                             isActive = isSelected,
                             dataVersion = dataVersion,
-                            initialBlogId = initialBlogId,
-                            onInitialBlogHandled = onNotificationBlogHandled,
+                            initialBlogId = navigatedBlogId ?: initialBlogId,
+                            onInitialBlogHandled = {
+                                navigatedBlogId = null
+                                onNotificationBlogHandled(it)
+                            },
                             onUnreadChanged = { AppGraph.notifyDataChanged() },
                         )
                     }

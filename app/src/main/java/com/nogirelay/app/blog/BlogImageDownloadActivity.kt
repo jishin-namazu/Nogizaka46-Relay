@@ -22,16 +22,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,10 +53,14 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.media.MediaDownloader
+import com.nogirelay.app.ui.BrandPurple
+import com.nogirelay.app.ui.BrandPurpleLight
 import com.nogirelay.app.ui.NogiRelayTheme
+import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.RemoteImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -136,22 +141,28 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        Surface(
+            tonalElevation = 1.dp,
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            IconButton(onClick = onBack, enabled = !downloading) {
-                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客")
-            }
-            Column(Modifier.weight(1f)) {
-                Text("选择要下载的图片", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(
-                    blog.title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+                IconButton(onClick = onBack, enabled = !downloading) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客", tint = MaterialTheme.colorScheme.onSurface)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("选择要下载的图片", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        blog.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
 
@@ -174,8 +185,13 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                                 selectedUrls = if (selected) selectedUrls - url else selectedUrls + url
                             }
                         },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (selected) BrandPurpleLight else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = if (selected) {
+                            BorderStroke(2.dp, BrandPurple)
+                        } else {
+                            BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        },
                     ) {
                         Box(Modifier.fillMaxWidth().aspectRatio(1f).padding(4.dp)) {
                             RemoteImage(
@@ -183,44 +199,36 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                                 contentDescription = "第 ${index + 1} 张博客图片",
                                 contentScale = ContentScale.Fit,
                                 loadCachedImmediately = true,
-                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(9.dp)),
+                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
                             )
-                            Text(
-                                "${index + 1}",
-                                color = Color.White,
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(6.dp)
-                                    .background(Color.Black.copy(alpha = 0.58f), CircleShape)
-                                    .padding(horizontal = 8.dp, vertical = 3.dp),
-                            )
-                            if (selected) {
-                                Icon(
-                                    Icons.Rounded.CheckCircle,
-                                    contentDescription = "已选择",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(30.dp),
-                                )
-                            }
                         }
                     }
                 }
             }
         }
 
-        Surface(tonalElevation = 3.dp) {
+        Surface(
+            tonalElevation = 3.dp,
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 IconButton(onClick = { selectedUrls = urls.toSet() }, enabled = urls.isNotEmpty() && !downloading) {
-                    Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择")
+                    Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
                 }
                 IconButton(onClick = { selectedUrls = emptySet() }, enabled = selectedUrls.isNotEmpty() && !downloading) {
-                    Icon(Icons.Rounded.ClearAll, contentDescription = "全部清除")
+                    Icon(Icons.Rounded.ClearAll, contentDescription = "全部清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text("已选 ${selectedUrls.size} / ${urls.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "已选 ${selectedUrls.size} / ${urls.size}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
                 Spacer(Modifier.weight(1f))
                 Button(
                     onClick = {
@@ -232,14 +240,16 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                         }
                     },
                     enabled = selectedUrls.isNotEmpty() && !downloading,
+                    shape = RelayControlShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple),
                 ) {
                     if (downloading) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
                     } else {
                         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
                     Spacer(Modifier.size(6.dp))
-                    Text(if (downloading) "下载中" else "下载")
+                    Text(if (downloading) "下载中" else "下载", fontWeight = FontWeight.Bold)
                 }
             }
         }

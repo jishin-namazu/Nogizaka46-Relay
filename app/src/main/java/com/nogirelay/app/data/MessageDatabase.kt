@@ -560,8 +560,24 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
     }
 
+    private fun deduceBlogCategory(name: String): String {
+        val trimmed = name.trim()
+        return when {
+            trimmed.contains("6期") || trimmed.contains("６期") -> "6期生"
+            trimmed.contains("5期") || trimmed.contains("５期") -> "5期生"
+            trimmed.contains("新4期") || trimmed.contains("新４期") -> "4期生"
+            trimmed.contains("4期") || trimmed.contains("４期") -> "4期生"
+            trimmed.contains("3期") || trimmed.contains("３期") -> "3期生"
+            trimmed.contains("2期") || trimmed.contains("２期") -> "2期生"
+            trimmed.contains("1期") || trimmed.contains("１期") -> "1期生"
+            trimmed.contains("運営") || trimmed.contains("スタッフ") -> "運営スタッフ"
+            else -> "其他"
+        }
+    }
+
     fun blogMembers(): List<BlogMember> {
         val result = mutableListOf<BlogMember>()
+        val knownIds = mutableSetOf<String>()
         readableDatabase.rawQuery(
             """
             SELECT id, name, category, avatar_url, display_order, latest_post_at
@@ -574,15 +590,60 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             null,
         ).use { cursor ->
             while (cursor.moveToNext()) {
+                val id = cursor.getString(cursor.getColumnIndexOrThrow("id"))
+                knownIds += id
+                val rawName = cursor.getString(cursor.getColumnIndexOrThrow("name"))
+                val isStaff = id == "10001" || id == "40003" || rawName == "乃木坂46" || rawName.contains("運営") || rawName.contains("スタッフ")
+                val name = if (isStaff) "運営スタッフ" else rawName
+                val rawCat = cursor.getString(cursor.getColumnIndexOrThrow("category"))
+                val category = if (isStaff) "運営スタッフ" else rawCat.ifBlank { deduceBlogCategory(name) }
+                val rawAvatar = cursor.nullableString("avatar_url")
+                val avatarUrl = if (rawAvatar?.startsWith("/") == true) "https://www.nogizaka46.com$rawAvatar" else rawAvatar
                 result += BlogMember(
-                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
-                    name = cursor.getString(cursor.getColumnIndexOrThrow("name")),
-                    category = cursor.getString(cursor.getColumnIndexOrThrow("category")),
-                    avatarUrl = cursor.nullableString("avatar_url"),
+                    id = id,
+                    name = name,
+                    category = category,
+                    avatarUrl = avatarUrl,
                     displayOrder = cursor.getInt(cursor.getColumnIndexOrThrow("display_order")),
                 )
             }
         }
+
+        // 联合查询已存在文章但不在官网当前活跃名册中的成员与接力博客（如运营Staff、3期生、4期生、新4期生、5期生、6期生）
+        readableDatabase.rawQuery(
+            """
+            SELECT
+                member_id,
+                MAX(member_name) AS member_name,
+                MAX(member_avatar_url) AS avatar_url,
+                MAX(published_at) AS latest_post_at
+            FROM blog_posts
+            GROUP BY member_id
+            ORDER BY latest_post_at DESC
+            """.trimIndent(),
+            null,
+        ).use { cursor ->
+            var extraOrder = 10000
+            while (cursor.moveToNext()) {
+                val id = cursor.getString(cursor.getColumnIndexOrThrow("member_id"))
+                if (id in knownIds) continue
+                knownIds += id
+                val rawName = cursor.getString(cursor.getColumnIndexOrThrow("member_name")).ifBlank { "乃木坂46" }
+                val isStaff = id == "10001" || id == "40003" || rawName == "乃木坂46" || rawName.contains("運営") || rawName.contains("スタッフ")
+                val name = if (isStaff) "運営スタッフ" else rawName
+                val rawAvatar = cursor.nullableString("avatar_url")
+                val avatarUrl = if (rawAvatar?.startsWith("/") == true) "https://www.nogizaka46.com$rawAvatar" else rawAvatar
+                val category = if (isStaff) "運営スタッフ" else deduceBlogCategory(name)
+                result += BlogMember(
+                    id = id,
+                    name = name,
+                    category = category,
+                    avatarUrl = avatarUrl,
+                    displayOrder = extraOrder++,
+                )
+            }
+        }
+
         return result
     }
 
@@ -653,6 +714,17 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         null,
         "1",
     ).use { cursor -> if (cursor.moveToFirst()) cursor.toBlogPost() else null }
+
+    fun blogRank(blogId: String): Int? {
+        val post = findBlog(blogId) ?: return null
+        val publishedAt = post.publishedAt
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM blog_posts WHERE published_at > ? OR (published_at = ? AND id > ?)",
+            arrayOf(publishedAt, publishedAt, blogId),
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else null
+        }
+    }
 
     fun saveBlogTranslation(id: String, translation: String?) {
         val values = ContentValues().apply {

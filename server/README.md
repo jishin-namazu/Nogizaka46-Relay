@@ -23,8 +23,8 @@
 
 ### 环境变量替换说明
 在下文所有的 curl 与命令行示例中，请根据实际部署替换以下变量：
-- `<SERVER_URL>`：服务端地址，例如本地为 `http://127.0.0.1:8080`，云端为 `https://<YOUR_APP_NAME>.fly.dev`
-- `<MEDIA_URL>`：独立受保护媒体流地址，例如本地为 `http://127.0.0.1:8081`，云端为 `https://<YOUR_APP_NAME>.fly.dev:8081`（通过 8080 主端口亦可访问）
+- `<SERVER_URL>`：服务端地址，例如本地为 `http://127.0.0.1:3000`，云端为 `https://<YOUR_APP_NAME>.fly.dev`
+- `<MEDIA_URL>`：独立受保护媒体流地址，例如本地为 `http://127.0.0.1:8081`，云端为 `https://<YOUR_APP_NAME>.fly.dev:8081`（通过主 API 地址亦可访问）
 - `<ACCESS_TOKEN>`：你在服务端配置的访问令牌（即 `ACCESS_TOKEN` Secret）
 
 ### 通用认证头
@@ -262,7 +262,7 @@ Relay 服务端将抓取到的所有语音、图片、视频和来电全屏写�
   - `thumbnail`：缩略图
   - `phone_image`：语音来电时的全屏高清写真
 
-> **注意**：主服务端口 `8080` 与独立媒体服务端口 `8081` 均提供该路由。在低带宽或高并发音频播放时，推荐直连 `8081` 端口。
+主 API 与独立媒体服务均提供该路由。Fly 容器内对应端口为 `8080` 和 `8081`，本地默认端口为 `3000` 和 `8081`。
 
 ### 5.2 下载并保存语音文件 (音频流)
 ```bash
@@ -431,7 +431,7 @@ curl -X POST "$SERVER/init-db" \
 | `npm run bootstrap:browser` | 交互式唤起本地浏览器登录官网并提取会话文件 |
 | `node upload-session.js <path> <url> <token>` | 将会话文件热上传到云端并等待激活 |
 | `npm run audit:blogs` | 审计官方博客 API 完整性与可用性（执行 `scripts/audit-blog-api.js`） |
-| `npm test` | 执行本地端到端与核心逻辑单元测试 |
+| `npm test` | 运行 Node.js 内置测试运行器 |
 | `sh start-all.sh` | 按生产启动顺序拉起 API、Monitor 与媒体服务（需要可用的 POSIX shell） |
 | `npm start` / `npm run monitor` | 分别在两个终端启动 API，以及 Monitor/媒体服务 |
 
