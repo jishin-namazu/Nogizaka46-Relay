@@ -24,9 +24,9 @@ class OpenAIProvider : OpenAIResponsesProvider() {
     }
 
     /**
-     * OpenAI Responses structured outputs: `text.format` with a strict JSON Schema. An
-     * unsupported model answers with HTTP 400 ("text.format of type json_schema is not
-     * supported with model version ..."), so only the documented families are sent the field.
+     * OpenAI Responses 结构化输出：带严格 JSON Schema 的 `text.format`。不支持的模型会
+     * 返回 HTTP 400（"text.format of type json_schema is not supported with model version ..."），
+     * 因此只向有文档说明的模型系列发送该字段。
      */
     override fun jsonOutputSupport(model: String): JsonOutputSupport =
         if (supportsStructuredOutput(model)) JsonOutputSupport.JSON_SCHEMA else JsonOutputSupport.NONE
@@ -49,8 +49,8 @@ class OpenAIProvider : OpenAIResponsesProvider() {
     private fun supportsStructuredOutput(model: String): Boolean {
         val id = model.lowercase()
         if (id.contains("audio") || id.contains("realtime")) return false
-        // The 2024-05-13 GPT-4o snapshot predates structured outputs; later snapshots and the
-        // undated alias do support them.
+        // 2024-05-13 的 GPT-4o 快照早于结构化输出；之后的快照和
+        // 不带日期的别名则支持它们。
         val gpt4oSnapshot = Regex("^gpt-4o-(\\d{4}-\\d{2}-\\d{2})$").find(id)?.groupValues?.get(1)
         return when {
             id.startsWith("gpt-6") || id.startsWith("gpt-5") -> true

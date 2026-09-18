@@ -32,10 +32,9 @@ class ClaudeProvider : AnthropicMessagesProvider() {
     }
 
     /**
-     * Anthropic's generally available structured outputs live in `output_config.format`, which
-     * shares the object with the reasoning `effort` field, so the existing value is merged
-     * instead of overwritten. Only the models Anthropic documents as supported are sent the
-     * parameter; anything else would fail the request with a 400.
+     * Anthropic 正式可用的结构化输出位于 `output_config.format`，它与推理的 `effort`
+     * 字段共享同一个对象，因此会合并已有值而不是覆盖它。只有 Anthropic 文档中
+     * 声明支持的模型才会收到该参数；其他模型会导致请求以 400 失败。
      */
     override fun jsonOutputSupport(model: String): JsonOutputSupport =
         if (SUPPORTED_PATTERN.containsMatchIn(model.lowercase())) {
@@ -54,9 +53,9 @@ class ClaudeProvider : AnthropicMessagesProvider() {
 
     private companion object {
         /**
-         * Models listed under "Supported models" in Anthropic's structured outputs documentation.
-         * Prefix matching keeps newer snapshots of the same family working while a brand new
-         * family simply falls back to the prompt-only contract.
+         * Anthropic 结构化输出文档中“Supported models”下列出的模型。
+         * 前缀匹配让同一家族较新的快照继续可用，而全新的
+         * 家族则直接回退到仅用提示词的约定。
          */
         val SUPPORTED_PATTERN = Regex(
             "^claude-(fable-5|mythos-5|mythos-preview|opus-5|opus-4-[5-8]|sonnet-5|sonnet-4-[56]|haiku-4-5)",

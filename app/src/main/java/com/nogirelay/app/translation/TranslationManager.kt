@@ -3,6 +3,8 @@ package com.nogirelay.app.translation
 import android.content.Context
 import android.util.Log
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.AppSettings
+import com.nogirelay.app.data.RelayMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,17 +21,81 @@ object TranslationManager {
     private val retryCount = ConcurrentHashMap<String, Int>()
     private val requestSlots = Semaphore(3)
 
-    fun enqueue(context: Context) {
+    /** 数据库会把它限制到自身的最大值，因此一次批量处理会清空整个积压。 */
+    private const val BULK_LIMIT = Int.MAX_VALUE
+
+    fun enqueue(context: Context) = enqueueAfterSync(context)
+
+    /**
+     * 自动翻译入口：同步完成、App 启动、推送到达时调用。
+     *
+     * [newIds] 是本次刚写入的消息，永远会被翻译；历史积压只有在用户打开"消息全量翻译"
+     * （默认关闭）时才会一起翻，所以关掉开关后自动流程不会再消耗历史未翻译内容。
+     */
+    fun enqueueAfterSync(context: Context, newIds: Collection<String> = emptyList()) {
         val appContext = context.applicationContext
-        scope.launch { enqueueInternal(appContext) }
+        scope.launch {
+            AppGraph.initialize(appContext)
+            val settings = AppGraph.settings.read()
+            if (!isConfigured(settings)) return@launch
+            if (newIds.isNotEmpty()) {
+                val fresh = runCatching { AppGraph.database.pendingTranslationsByIds(newIds) }
+                    .onFailure { Log.w(TAG, "Fresh message lookup failed", it) }
+                    .getOrNull()
+                if (fresh != null) translateAll(settings, fresh)
+            }
+            if (settings.messageFullTranslation) {
+                val backlog = runCatching { AppGraph.database.pendingTranslations(BULK_LIMIT) }
+                    .onFailure { Log.w(TAG, "Translation backlog lookup failed", it) }
+                    .getOrNull()
+                if (backlog != null) translateAll(settings, backlog)
+            }
+        }
     }
 
-    private fun enqueueInternal(context: Context) {
-        AppGraph.initialize(context)
-        val settings = AppGraph.settings.read()
+    /** 只翻这些 id：单条"重新翻译"用，不受全量开关影响。 */
+    fun enqueueIds(context: Context, ids: Collection<String>) {
+        val appContext = context.applicationContext
+        scope.launch {
+            AppGraph.initialize(appContext)
+            val settings = AppGraph.settings.read()
+            if (!isConfigured(settings)) return@launch
+            val pending = runCatching { AppGraph.database.pendingTranslationsByIds(ids) }.getOrNull()
+            if (pending != null) translateAll(settings, pending)
+        }
+    }
+
+    /**
+     * 重新翻译整个本地库。用于在译文不再内嵌设备专属昵称之后执行一次，
+     * 使已有记录改用可移植的 "%%%" 占位符形式。
+     */
+    fun retranslateEverything(context: Context) {
+        val appContext = context.applicationContext
+        scope.launch {
+            AppGraph.initialize(appContext)
+            runCatching {
+                AppGraph.database.markAllMessagesForRetranslation()
+                AppGraph.database.markAllBlogsForRetranslation()
+            }
+            resetRetries()
+            BlogTranslationManager.resetRetries()
+            val settings = AppGraph.settings.read()
+            if (isConfigured(settings)) {
+                val backlog = runCatching { AppGraph.database.pendingTranslations(BULK_LIMIT) }.getOrNull()
+                if (backlog != null) translateAll(settings, backlog)
+            }
+            // "重新翻译全部"是明确的手动动作，必须无视全量开关。
+            BlogTranslationManager.enqueueAllPending(appContext, BULK_LIMIT)
+        }
+    }
+
+    private fun isConfigured(settings: AppSettings): Boolean {
         Log.d(TAG, "Translation enqueue called: enabled=${settings.translationEnabled}, hasApiKey=${settings.aiApiKey.isNotBlank()}, hasModel=${settings.aiModel.isNotBlank()}")
-        if (!settings.translationEnabled || settings.aiApiKey.isBlank() || settings.aiModel.isBlank()) return
-        
+        return settings.translationEnabled && settings.aiApiKey.isNotBlank() && settings.aiModel.isNotBlank()
+    }
+
+    /** 把这一批消息派发到请求池；并发仍由 [requestSlots] 控制。 */
+    private fun translateAll(settings: AppSettings, pending: List<RelayMessage>) {
         val provider = runCatching {
             AIProviderFactory.getProvider(settings.aiProvider)
         }.getOrElse { error ->
@@ -37,9 +103,7 @@ object TranslationManager {
             return
         }
         val model = settings.aiModel.trim()
-        val nickname = settings.userNickname
 
-        val pending = runCatching { AppGraph.database.pendingTranslations() }.getOrNull() ?: return
         Log.d(TAG, "Found ${pending.size} pending translations")
         val now = System.currentTimeMillis()
         pending.forEach { message ->
@@ -55,8 +119,10 @@ object TranslationManager {
             scope.launch {
                 try {
                     requestSlots.withPermit {
-                        val originalText = message.text
-                        val text = substituteNickname(originalText, nickname).orEmpty()
+                        // "%%%" 占位符在翻译过程中受到保护，只在渲染时解析，
+                        // 因此已存储的译文在任何设备（以及任何导出的存档）上都保持正确，
+                        // 并能经受昵称变更。
+                        val text = message.text.orEmpty()
                         if (!shouldTranslate(text)) {
                             Log.d(TAG, "Message ${message.id} skipped (shouldTranslate=false)")
                             AppGraph.database.saveTranslation(message.id, null)
@@ -64,7 +130,7 @@ object TranslationManager {
                             Log.d(TAG, "Translating message ${message.id}: $text")
                             val layout = TranslationLayout.from(text)
                             val result = provider
-                                .translate(settings.aiApiKey, model, layout.requestPayload, nickname)
+                                .translate(settings.aiApiKey, model, layout.requestPayload)
                                 .mapCatching(layout::restore)
                             result.onSuccess { translation ->
                                 Log.d(TAG, "Translation success for ${message.id}")

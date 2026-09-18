@@ -12,9 +12,9 @@ object TranslationNetworkHelper {
     private const val CONNECT_TIMEOUT_MS = 15_000
 
     /**
-     * Every model request (translation and model listing) gets the same generous read timeout: a
-     * whole document is translated in one non-streaming request, so the response can take a long
-     * time even after thinking is disabled.
+     * 每个模型请求（翻译和模型列表）都使用同样宽松的读取超时：整篇文档在
+     * 一次非流式请求中完成翻译，因此即使禁用了思考，响应也可能耗时
+     * 很久。
      */
     private const val READ_TIMEOUT_MS = 120_000
     
@@ -48,7 +48,6 @@ object TranslationNetworkHelper {
         apiKey: String,
         model: String,
         text: String,
-        nickname: String,
         endpoint: String
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
@@ -63,7 +62,7 @@ object TranslationNetworkHelper {
                 connection.setRequestProperty(key, value)
             }
             
-            val requestBody = provider.buildTranslateRequest(model, text, nickname)
+            val requestBody = provider.buildTranslateRequest(model, text)
             connection.outputStream.use { os ->
                 os.write(requestBody.toByteArray(StandardCharsets.UTF_8))
             }

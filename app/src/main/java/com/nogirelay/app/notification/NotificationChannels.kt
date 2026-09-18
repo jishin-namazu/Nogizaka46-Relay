@@ -13,6 +13,7 @@ object NotificationChannels {
     const val MESSAGES = "member_messages_v1"
     const val BLOGS = "member_blogs_v1"
     const val PLAYBACK = "voice_playback_v1"
+    const val MEDIA_BACKFILL = "media_backfill_v1"
 
     fun create(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -70,6 +71,17 @@ object NotificationChannels {
             setShowBadge(false)
         }
 
-        manager.createNotificationChannels(listOf(calls, preparing, messages, blogs, playback))
+        val mediaBackfill = NotificationChannel(
+            MEDIA_BACKFILL,
+            "补齐媒体",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "后台下载缺失的图片 / 视频 / 语音"
+            setSound(null, null)
+            enableVibration(false)
+            setShowBadge(false)
+        }
+
+        manager.createNotificationChannels(listOf(calls, preparing, messages, blogs, playback, mediaBackfill))
     }
 }

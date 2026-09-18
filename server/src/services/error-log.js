@@ -250,9 +250,8 @@ async function* readJsonLinesNewestFirst(filePath, chunkSize = 64 * 1024) {
 }
 
 /**
- * Read the durable JSONL error log newest-first. This intentionally reads the
- * volume copy rather than PostgreSQL so diagnostics still work during a
- * database incident.
+ * 以最新优先读取持久化的 JSONL 错误日志。读取的是卷副本而不是
+ * PostgreSQL，因此诊断信息能在数据库故障后依然可用。
  */
 export async function readPersistedErrorLogs({
   limit = 100,
@@ -317,15 +316,15 @@ function installPersistentConsoleLogging() {
 }
 
 /**
- * Keep a complete structured error in platform logs and durable storage.
- * Database persistence is best effort so logging can never create a failure loop.
+ * 在平台日志和持久化存储中保留完整的结构化错误。
+ * 数据库持久化是尽力而为的，因此日志记录绝不会造成故障循环。
  */
 export async function recordError(scope, error, context = {}) {
   const entry = buildEntry('error', scope, error, context);
   nativeConsole.error(`[${scope}] ${entry.message}`, entry);
   await appendFile(entry);
   if (dbWriter) {
-    // Do not block the caller on a database that may be the source of the error.
+    // 不要在可能是错误来源的数据库上阻塞调用方。
     void Promise.resolve(dbWriter(entry)).catch(() => {});
   }
   return entry;

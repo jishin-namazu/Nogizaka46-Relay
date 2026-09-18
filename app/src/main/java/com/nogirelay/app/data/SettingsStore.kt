@@ -7,9 +7,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Persists settings in SharedPreferences. The API key, model and cached model list are stored per
- * provider, so switching the active provider keeps every provider's own configuration instead of
- * overwriting the single shared slot.
+ * 将设置持久化到 SharedPreferences。API key、模型和缓存的模型列表按提供方
+ * 分别存储，因此切换当前提供方时会保留每个提供方各自的配置，而不是覆盖
+ * 单一的共享槽位。
  */
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -28,6 +28,8 @@ class SettingsStore(context: Context) {
             aiModel = modelFor(provider),
             cachedAiModels = cachedModelsFor(provider),
             translationEnabled = prefs.getBoolean(KEY_TRANSLATION_ENABLED, false),
+            messageFullTranslation = prefs.getBoolean(KEY_MESSAGE_FULL_TRANSLATION, false),
+            blogFullTranslation = prefs.getBoolean(KEY_BLOG_FULL_TRANSLATION, false),
             userNickname = prefs.getString(KEY_USER_NICKNAME, "").orEmpty(),
         )
     }
@@ -41,17 +43,19 @@ class SettingsStore(context: Context) {
             .putString(modelKey(settings.aiProvider), settings.aiModel.trim())
             .putString(modelsKey(settings.aiProvider), serializeModels(settings.cachedAiModels))
             .putBoolean(KEY_TRANSLATION_ENABLED, settings.translationEnabled)
+            .putBoolean(KEY_MESSAGE_FULL_TRANSLATION, settings.messageFullTranslation)
+            .putBoolean(KEY_BLOG_FULL_TRANSLATION, settings.blogFullTranslation)
             .putString(KEY_USER_NICKNAME, settings.userNickname.trim())
             .apply()
     }
 
-    /** API Key saved for [provider], even while another provider is active. */
+    /** 为 [provider] 保存的 API Key，即使当前激活的是另一个提供方。 */
     fun apiKeyFor(provider: AIProviderType): String = prefs.getString(apiKeyKey(provider), "").orEmpty()
 
-    /** Translation model saved for [provider]. */
+    /** 为 [provider] 保存的翻译模型。 */
     fun modelFor(provider: AIProviderType): String = prefs.getString(modelKey(provider), "").orEmpty()
 
-    /** Model list cached for [provider] by the last successful validation. */
+    /** 最近一次校验成功后为 [provider] 缓存的模型列表。 */
     fun cachedModelsFor(provider: AIProviderType): List<AIModel> =
         readCachedModels(prefs.getString(modelsKey(provider), "[]"))
 
@@ -67,9 +71,9 @@ class SettingsStore(context: Context) {
     }
 
     /**
-     * Older builds kept one shared key/model/model list for whichever provider was active. Move those
-     * values into the provider-specific slot once, so upgrading does not lose the current settings,
-     * while other providers start from an empty slot instead of inheriting them.
+     * 旧版本为当前激活的提供方保留一份共享的 key/模型/模型列表。把这些值
+     * 一次性迁移到对应提供方的槽位，这样升级就不会丢失当前设置，而其他
+     * 提供方则从空槽位开始，不会继承这些值。
      */
     private fun migrateLegacyProviderSlots() {
         if (prefs.getBoolean(KEY_PROVIDER_SLOTS_MIGRATED, false)) return
@@ -124,6 +128,8 @@ class SettingsStore(context: Context) {
         const val KEY_ACCESS_TOKEN = "access_token"
         const val KEY_AI_PROVIDER = "ai_provider"
         const val KEY_TRANSLATION_ENABLED = "translation_enabled"
+        const val KEY_MESSAGE_FULL_TRANSLATION = "message_full_translation"
+        const val KEY_BLOG_FULL_TRANSLATION = "blog_full_translation"
         const val KEY_USER_NICKNAME = "user_nickname"
         const val KEY_PUSH_TOKEN = "push_token"
         const val KEY_LEGACY_AI_API_KEY = "ai_api_key"

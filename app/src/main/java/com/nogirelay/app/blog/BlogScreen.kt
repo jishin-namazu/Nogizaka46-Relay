@@ -55,6 +55,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.material3.AlertDialog
@@ -62,6 +63,9 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -111,21 +115,26 @@ import com.nogirelay.app.ui.BrandPurpleLight
 import com.nogirelay.app.ui.RelayCardShape
 import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.RelaySearchField
+import com.nogirelay.app.ui.RelaySegmentedTabs
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.SearchHighlightText
+import com.nogirelay.app.ui.transfer.MemberPickerGrid
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterSection
 import com.nogirelay.app.ui.hasInvertedRange
 import com.nogirelay.app.ui.highlightMatches
 import com.nogirelay.app.ui.searchSnippets
+import com.nogirelay.app.data.transfer.ExportKind
+import com.nogirelay.app.ui.navigation.RelayIconButton
+import com.nogirelay.app.ui.transfer.DataTransferDrawer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val BLOG_PAGE_SIZE = 20
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun BlogScreen(
     dataVersion: Long,
@@ -145,6 +154,7 @@ fun BlogScreen(
     var currentPage by remember { mutableIntStateOf(0) }
     var pageInput by remember { mutableStateOf("1") }
     var showPageDialog by remember { mutableStateOf(false) }
+    var showDataDrawer by remember { mutableStateOf(false) }
     val blogListState = rememberLazyListState()
     var translationEnabled by remember { mutableStateOf(AppGraph.settings.read().translationEnabled) }
     var members by remember { mutableStateOf(BlogPrewarmer.cachedMembers ?: emptyList()) }
@@ -208,10 +218,10 @@ fun BlogScreen(
         }
     }
 
-    // All list work runs on databaseRead: a search count alone measured ~70ms on a desktop CPU because it
-    // scans every row's body_html (45MB in total), so doing it during composition blocked frames
-    // while the user was scrolling. The page and its excerpts are produced as one state so a card
-    // renders once at its final height instead of growing in a second pass.
+    // 所有列表工作都在 databaseRead 上执行：在桌面 CPU 上，仅一次搜索计数就测到约 70ms，因为
+    // 它要扫描每一行的 body_html（总计 45MB），所以在组合期间执行会阻塞帧，
+    // 而当时用户正在滚动。页面及其摘录作为同一个状态产出，这样卡片
+    // 一次就以最终高度渲染，而不是在第二轮中逐渐撑开。
     var pageData by remember { mutableStateOf(BlogPrewarmer.cachedInitialData ?: BlogPageData()) }
     LaunchedEffect(dataVersion, translationEnabled, selectedMemberIds, searchQuery, oldestFirst, timeFilter, currentPage) {
         val query = searchQuery
@@ -243,9 +253,9 @@ fun BlogScreen(
             } else {
                 AppGraph.database.blogSearchSources(posts.map(BlogSummary::id))
                     .mapNotNull { source ->
-                        // Original body first, then its translation: a term can match either one and
-                        // both excerpts are shown when both contain it. The label follows the source,
-                        // so a translation-only match is never labelled as the original.
+                        // 先原文正文，再其译文：一个词项可能匹配其中任意一个，
+                        // 当两者都包含它时两段摘录都会显示。标签跟随来源，
+                        // 因此仅命中译文的匹配永远不会被标为原文。
                         val excerpts = buildList {
                             val originalSnippets = searchSnippets(
                                 BlogContentParser.plainText(BlogContentParser.blocks(source.bodyHtml)),
@@ -292,8 +302,8 @@ fun BlogScreen(
         }
     }
 
-    // Warm the current page's covers in the background (bounded to <= page size, cached files are
-    // skipped) so scrolling decodes from disk instead of waiting for a first-time download.
+    // 在后台预热当前页的封面（上限为不超过页大小，已缓存的文件会被
+    // 跳过），这样滚动时从磁盘解码，而不必等待首次下载。
     LaunchedEffect(dataVersion, blogs) {
         BlogMediaDownloader.prefetchImages(
             context,
@@ -345,6 +355,7 @@ fun BlogScreen(
             pageInput = "1"
             showMemberDialog = false
             showPageDialog = false
+            showDataDrawer = false
             previousBlogSignature = null
             blogListState.scrollToItem(0)
         }
@@ -438,11 +449,23 @@ fun BlogScreen(
         }
 
     Column(Modifier.fillMaxSize()) {
-        Text(
-            "博客",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        TopAppBar(
+            title = {
+                Text(
+                    text = "博客",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            },
+            actions = {
+                RelayIconButton(
+                    onClick = { showDataDrawer = true },
+                    imageVector = Icons.Rounded.Settings,
+                    contentDescription = "数据管理",
+                )
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
         )
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -497,7 +520,7 @@ fun BlogScreen(
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
-            // Nothing is rendered before the first load completes, so the empty state never flashes.
+            // 首次加载完成前不渲染任何内容，因此空状态不会闪现。
             if (pageData.loaded && blogs.isEmpty()) {
                 item(key = "blog-empty") {
                     Column(
@@ -610,6 +633,14 @@ fun BlogScreen(
         }
     }
     }
+
+    if (showDataDrawer) {
+        DataTransferDrawer(
+            kind = ExportKind.BLOGS,
+            onDismiss = { showDataDrawer = false },
+            onDataChanged = onUnreadChanged,
+        )
+    }
 }
 
 @Composable
@@ -618,59 +649,12 @@ private fun BlogSortSwitcher(
     onOldestFirstChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    BoxWithConstraints(
-        modifier = modifier
-            .height(42.dp)
-            .clip(RoundedCornerShape(21.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-    ) {
-        val tabWidth = maxWidth / 2
-        val indicatorOffset by animateDpAsState(
-            targetValue = if (oldestFirst) tabWidth else 0.dp,
-            animationSpec = tween(durationMillis = 220),
-            label = "blog-sort-indicator",
-        )
-        Surface(
-            shape = RoundedCornerShape(19.dp),
-            color = BrandPurple,
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .offset(x = indicatorOffset)
-                .padding(3.dp)
-                .width(tabWidth)
-                .fillMaxHeight(),
-        ) {
-            Box(Modifier.fillMaxSize())
-        }
-        Row(Modifier.fillMaxSize()) {
-            BlogSortTab("最新", selected = !oldestFirst, onClick = { onOldestFirstChanged(false) }, modifier = Modifier.weight(1f))
-            BlogSortTab("最早", selected = oldestFirst, onClick = { onOldestFirstChanged(true) }, modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun BlogSortTab(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .fillMaxSize()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-    ) {
-        Text(
-            label,
-            color = if (selected) {
-                Color.White
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-        )
-    }
+    RelaySegmentedTabs(
+        labels = listOf("最新", "最早"),
+        selectedIndex = if (oldestFirst) 1 else 0,
+        onSelected = { onOldestFirstChanged(it == 1) },
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -683,15 +667,6 @@ private fun BlogFilterDialog(
 ) {
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     var draftTimeFilter by remember(timeFilter) { mutableStateOf(timeFilter) }
-    val groups = remember(members) {
-        val categoryOrder = listOf("6期生", "5期生", "4期生", "3期生", "2期生", "1期生", "運営スタッフ", "其他")
-        members.groupBy(BlogMember::category)
-            .toList()
-            .sortedBy { (cat, _) ->
-                val idx = categoryOrder.indexOf(cat)
-                if (idx >= 0) idx else categoryOrder.size
-            }
-    }
     AlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(20.dp),
@@ -712,76 +687,11 @@ private fun BlogFilterDialog(
                         )
                     }
                 } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = 104.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        // The time section is a single chip row, so the member grid keeps the bulk of the dialog.
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 430.dp),
-                    ) {
-                    groups.forEach { (category, groupMembers) ->
-                        item(key = "category-$category", span = { GridItemSpan(maxLineSpan) }) {
-                            Text(
-                                category,
-                                fontWeight = FontWeight.Bold,
-                                color = BrandPurple,
-                                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
-                            )
-                        }
-                        gridItems(groupMembers, key = BlogMember::id) { member ->
-                            val isSelected = member.id in draft
-                            Surface(
-                                onClick = {
-                                    draft = if (isSelected) draft - member.id else draft + member.id
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) {
-                                    BrandPurpleLight
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                },
-                                border = if (isSelected) {
-                                    BorderStroke(1.5.dp, BrandPurple)
-                                } else {
-                                    BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(94.dp),
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center,
-                                    modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 8.dp),
-                                ) {
-                                    RemoteImage(
-                                        url = member.avatarUrl,
-                                        contentDescription = member.name,
-                                        loadCachedImmediately = false,
-                                        modifier = Modifier
-                                            .size(46.dp)
-                                            .clip(CircleShape)
-                                            .then(
-                                                if (isSelected) {
-                                                    Modifier.border(1.5.dp, BrandPurple, CircleShape)
-                                                } else {
-                                                    Modifier
-                                                }
-                                            ),
-                                    )
-                                    Text(
-                                        member.name,
-                                        maxLines = 1,
-                                        fontSize = 12.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) BrandPurpleDark else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(top = 5.dp),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+                    MemberPickerGrid(
+                        members = members,
+                        selectedIds = draft,
+                        onSelectedChange = { draft = it },
+                    )
                 }
                 Spacer(Modifier.height(10.dp))
                 TimeFilterSection(
@@ -882,9 +792,9 @@ private fun BlogSummaryCard(
                     RemoteImage(
                         url = blog.memberAvatarUrl,
                         contentDescription = blog.memberName,
-                        // Decoded on IO at avatar size: search results bring members whose avatar is
-                        // not in the memory cache, and a synchronous main-thread decode per card is
-                        // what made scrolling search results stutter while the newest posts did not.
+                        // 以头像尺寸在 IO 上解码：搜索结果会带来头像
+                        // 不在内存缓存中的成员，而每张卡片都在主线程同步解码
+                        // 正是导致滚动搜索结果卡顿、而最新帖子不卡的原因。
                         loadCachedImmediately = false,
                         maxDecodeDimension = 256,
                         modifier = Modifier
@@ -952,8 +862,8 @@ private fun BlogSummaryCard(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
-                // Excerpts around the matched term: all occurrences in original body and,
-                // when it also matches, its translation are shown.
+                // 匹配词项周围的摘录：显示原文正文中的所有出现位置，
+                // 以及当译文也匹配时其中的所有出现位置。
                 val visiblePreviews = if (isPreviewsExpanded || bodyPreviews.size <= 3) {
                     bodyPreviews
                 } else {
@@ -961,7 +871,7 @@ private fun BlogSummaryCard(
                 }
 
                 visiblePreviews.forEach { preview ->
-                    // Baseline alignment keeps the smaller 原文/译文 label on the same line as the excerpt.
+                    // 基线对齐让更小的 原文/译文 标签与摘录保持在同一行。
                     Row(modifier = Modifier.padding(top = 6.dp)) {
                         Text(
                             preview.label,
@@ -1032,8 +942,8 @@ private fun BlogSummaryCard(
                             contentDescription = blog.title,
                             contentScale = ContentScale.Fit,
                             preserveAspectRatio = true,
-                            // Decode off the main thread, at screen width instead of full resolution:
-                            // blog covers can be up to 3700x2800 photos.
+                            // 在主线程之外解码，以屏幕宽度而非完整分辨率：
+                            // 博客封面可能是高达 3700x2800 的照片。
                             loadCachedImmediately = false,
                             placeholderColor = Color.Transparent,
                             maxDecodeDimension = 1440,
@@ -1303,12 +1213,12 @@ private fun displayBlocks(blocks: List<BlogContentBlock>, translations: List<Str
     }
 }
 
-/** One search excerpt plus the source it came from, so the label always matches the text. */
+/** 一条搜索摘要及其来源字段，标签与正文始终对应。 */
 internal data class BlogSearchPreview(val label: String, val text: String)
 
 /**
- * One loaded BLOG list page: the counts, the summaries and their search excerpts. All of it is
- * produced together off the main thread so the cards are composed once with their final content.
+ * 已加载的一页 BLOG 列表：总数、摘要及其搜索片段。三者在主线程外一次性产出，
+ * 卡片一次就以最终内容完成组合。
  */
 internal data class BlogPageData(
     val totalCount: Int = 0,
@@ -1344,7 +1254,7 @@ object BlogPrewarmer {
     }
 }
 
-/** Plain text of a stored BLOG translation (JSON array of paragraphs) for search summaries. */
+/** 已存 BLOG 译文的纯文本（段落 JSON 数组），用于搜索摘要。 */
 private fun translatedBlogText(serialized: String?): String {
     if (serialized.isNullOrBlank()) return ""
     return runCatching {

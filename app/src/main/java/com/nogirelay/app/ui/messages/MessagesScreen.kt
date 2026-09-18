@@ -37,10 +37,14 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,6 +75,7 @@ import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -90,6 +95,9 @@ import com.nogirelay.app.ui.RelaySearchField
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterDialog
 import com.nogirelay.app.ui.clearSelectionOnTap
+import com.nogirelay.app.data.transfer.ExportKind
+import com.nogirelay.app.ui.navigation.RelayIconButton
+import com.nogirelay.app.ui.transfer.DataTransferDrawer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,7 +112,7 @@ private data class MemberPageData(
     val loaded: Boolean = false,
 )
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun MessagesScreen(
     dataVersion: Long,
@@ -141,6 +149,7 @@ fun MessagesScreen(
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
     var notificationScrollMessageId by remember { mutableStateOf<String?>(null) }
     var sessionUnreadIds by remember(selectedMemberId) { mutableStateOf(emptySet<String>()) }
+    var showDataDrawer by remember { mutableStateOf(false) }
     val isViewingLatest = (currentPage == 0 && searchQuery.isBlank() && !timeFilter.isActive)
     val inboxListState = rememberLazyListState()
 
@@ -151,6 +160,7 @@ fun MessagesScreen(
             searchQuery = ""
             currentPage = 0
             pageInput = "1"
+            showDataDrawer = false
             inboxListState.scrollToItem(0)
         }
     }
@@ -183,7 +193,7 @@ fun MessagesScreen(
             return@LaunchedEffect
         }
         searchQuery = ""
-        // The target index is computed without filters, so clear the time filter to stay consistent.
+        // 目标索引是在不带筛选的情况下计算的，因此清空时间筛选以保持一致。
         timeFilter = TimeFilter()
         selectedMemberId = memberKey
         currentPage = messageIndex / MEMBER_MESSAGES_PAGE_SIZE
@@ -274,42 +284,63 @@ fun MessagesScreen(
         label = "member-message-transition",
     ) { selectedMember ->
         if (selectedMember == null) {
-            MemberInbox(
-                threads = threads,
-                userNickname = userNickname,
-                state = inboxListState,
-                onSelect = { thread ->
-                    searchQuery = ""
-                    timeFilter = TimeFilter()
-                    selectedMemberId = thread.id
-                    currentPage = 0
-                    pageInput = "1"
-                    
-                    // Check if there's a playing message for this member asynchronously to avoid blocking UI thread
-                    val currentPlayingMessageId = playbackState.messageId
-                    if (playbackState.isPlaying && currentPlayingMessageId != null) {
-                        downloadScope.launch(AppGraph.dispatchers.databaseRead) {
-                            val playingMessage = AppGraph.database.find(currentPlayingMessageId)
-                            val playingMemberId = playingMessage?.memberId?.ifBlank { playingMessage.memberName }
-                            if (playingMemberId == thread.id) {
-                                val playingIndex = AppGraph.database.messageIndexForMember(
-                                    memberKey = thread.id,
-                                    messageId = currentPlayingMessageId,
-                                    startMillis = timeFilter.startMillis,
-                                    endMillisExclusive = timeFilter.endMillisExclusive,
-                                )
-                                if (playingIndex >= 0) {
-                                    val targetPage = playingIndex / MEMBER_MESSAGES_PAGE_SIZE
-                                    withContext(Dispatchers.Main) {
-                                        currentPage = targetPage
-                                        pageInput = (targetPage + 1).toString()
+            Column(Modifier.fillMaxSize()) {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "消息",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    },
+                    actions = {
+                        RelayIconButton(
+                            onClick = { showDataDrawer = true },
+                            imageVector = Icons.Rounded.Settings,
+                            contentDescription = "数据管理",
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                )
+                MemberInbox(
+                    threads = threads,
+                    userNickname = userNickname,
+                    state = inboxListState,
+                    onSelect = { thread ->
+                        searchQuery = ""
+                        timeFilter = TimeFilter()
+                        selectedMemberId = thread.id
+                        currentPage = 0
+                        pageInput = "1"
+                        
+                        // 异步检查该成员是否有正在播放的消息，以避免阻塞 UI 线程
+                        val currentPlayingMessageId = playbackState.messageId
+                        if (playbackState.isPlaying && currentPlayingMessageId != null) {
+                            downloadScope.launch(AppGraph.dispatchers.databaseRead) {
+                                val playingMessage = AppGraph.database.find(currentPlayingMessageId)
+                                val playingMemberId = playingMessage?.memberId?.ifBlank { playingMessage.memberName }
+                                if (playingMemberId == thread.id) {
+                                    val playingIndex = AppGraph.database.messageIndexForMember(
+                                        memberKey = thread.id,
+                                        messageId = currentPlayingMessageId,
+                                        startMillis = timeFilter.startMillis,
+                                        endMillisExclusive = timeFilter.endMillisExclusive,
+                                        nickname = userNickname,
+                                    )
+                                    if (playingIndex >= 0) {
+                                        val targetPage = playingIndex / MEMBER_MESSAGES_PAGE_SIZE
+                                        withContext(Dispatchers.Main) {
+                                            currentPage = targetPage
+                                            pageInput = (targetPage + 1).toString()
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                },
-            )
+                    },
+                )
+            }
         } else {
             val thread = threads.firstOrNull { it.id == selectedMember }
             val initialForMember = remember(selectedMember) {
@@ -326,7 +357,7 @@ fun MessagesScreen(
                     ),
                 )
             }
-            LaunchedEffect(selectedMember, searchQuery, timeFilter, currentPage, dataVersion) {
+            LaunchedEffect(selectedMember, searchQuery, timeFilter, currentPage, dataVersion, userNickname) {
                 val query = searchQuery
                 val bounds = timeFilter
                 val requestedPage = currentPage
@@ -336,6 +367,7 @@ fun MessagesScreen(
                         searchQuery = query,
                         startMillis = bounds.startMillis,
                         endMillisExclusive = bounds.endMillisExclusive,
+                        nickname = userNickname,
                     )
                     val totalPages = ((matching + MEMBER_MESSAGES_PAGE_SIZE - 1) / MEMBER_MESSAGES_PAGE_SIZE).coerceAtLeast(1)
                     val page = requestedPage.coerceIn(0, totalPages - 1)
@@ -346,6 +378,7 @@ fun MessagesScreen(
                         endMillisExclusive = bounds.endMillisExclusive,
                         limit = MEMBER_MESSAGES_PAGE_SIZE,
                         offset = page * MEMBER_MESSAGES_PAGE_SIZE,
+                        nickname = userNickname,
                     )
                     MemberPageData(
                         matchingCount = matching,
@@ -472,7 +505,7 @@ fun MessagesScreen(
                 val targetId = notificationScrollMessageId ?: return@LaunchedEffect
                 val targetIndex = memberMessages.indexOfFirst { it.id == targetId }
                 if (targetIndex >= 0) {
-                    // The search field occupies item 0, matching the existing voice-playback positioning.
+                    // 搜索框占据第 0 项，与现有的语音播放定位保持一致。
                     messageListState.scrollToItem(targetIndex + 1)
                     notificationScrollMessageId = null
                     onInitialMessageHandled(targetId)
@@ -549,15 +582,8 @@ fun MessagesScreen(
                     .fillMaxSize()
                     .clearSelectionOnTap(focusManager, textToolbar)
             ) {
-                Surface(
-                    tonalElevation = 0.dp,
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                    ) {
+                TopAppBar(
+                    navigationIcon = {
                         IconButton(onClick = {
                             focusManager.clearFocus()
                             textToolbar.hide()
@@ -571,18 +597,33 @@ fun MessagesScreen(
                         }) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = if (searchQuery.isNotEmpty()) "清空搜索" else "返回成员列表", tint = MaterialTheme.colorScheme.onSurface)
                         }
-                        Text(
-                            text = thread?.name ?: "成员消息",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        val remainingUnread = thread?.unreadCount ?: 0
-                        if (remainingUnread > 0) {
-                            Spacer(Modifier.width(8.dp))
-                            UnreadTag("$remainingUnread 条未读")
+                    },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = thread?.name ?: "成员消息",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            val remainingUnread = thread?.unreadCount ?: 0
+                            if (remainingUnread > 0) {
+                                Spacer(Modifier.width(8.dp))
+                                UnreadTag("$remainingUnread 条未读")
+                            }
                         }
-                    }
-                }
+                    },
+                    actions = {
+                        RelayIconButton(
+                            onClick = { showDataDrawer = true },
+                            imageVector = Icons.Rounded.Settings,
+                            contentDescription = "数据管理",
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                )
                 LazyColumn(
                     state = messageListState,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -660,7 +701,8 @@ fun MessagesScreen(
                                     retranslateScope.launch {
                                         AppGraph.database.markForRetranslation(message.id)
                                         AppGraph.notifyDataChanged()
-                                        TranslationManager.enqueue(context)
+                                        // 单条重翻是明确的手动动作，不经过"消息全量翻译"开关。
+                                        TranslationManager.enqueueIds(context, listOf(message.id))
                                     }
                                 },
                             )
@@ -732,5 +774,13 @@ fun MessagesScreen(
                 }
             }
         }
+    }
+
+    if (showDataDrawer) {
+        DataTransferDrawer(
+            kind = ExportKind.MESSAGES,
+            onDismiss = { showDataDrawer = false },
+            onDataChanged = onUnreadChanged,
+        )
     }
 }

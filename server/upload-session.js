@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Upload browser session to Nogi Relay server
+ * 将浏览器会话上传到 Nogi Relay 服务器
  * Usage: node upload-session.js <session-file> <server-url> <access-token>
  * Example: node upload-session.js ./nogi-browser-state.json https://nogi-relay.fly.dev YOUR_TOKEN
  */
@@ -39,14 +39,14 @@ async function waitForActivation(serverUrl, accessToken, requestId, timeoutMs = 
 
 async function uploadSession(sessionFilePath, serverUrl, accessToken) {
   try {
-    // Read session file
+    // 读取会话文件
     const sessionData = await fs.readFile(sessionFilePath, 'utf8');
     const session = JSON.parse(sessionData);
 
     console.log(`Reading session from: ${sessionFilePath}`);
     console.log(`Uploading to: ${serverUrl}/v1/admin/browser-session`);
 
-    // Upload to server
+    // 上传到服务器
     const response = await fetch(`${serverUrl}/v1/admin/browser-session`, {
       method: 'POST',
       headers: {
@@ -106,7 +106,7 @@ async function checkSessionStatus(serverUrl, accessToken) {
   }
 }
 
-// Main
+// 主流程
 const args = process.argv.slice(2);
 
 if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {

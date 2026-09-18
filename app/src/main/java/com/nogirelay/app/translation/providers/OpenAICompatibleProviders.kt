@@ -15,11 +15,11 @@ class DeepSeekProvider : AnthropicMessagesProvider() {
     override fun applyReasoningControls(request: JSONObject, model: String) {
         val id = model.lowercase()
         if (id.contains("reasoner") || id.contains("thinking") || id.contains("r1")) {
-            // These models always think; use the lowest effort the Anthropic-format endpoint accepts.
+            // 这些模型始终会思考；使用 Anthropic 格式端点可接受的最低思考强度。
             request.put("output_config", JSONObject().put("effort", "low"))
         } else {
-            // DeepSeek defaults to thinking on and does not honour the Anthropic-format effort
-            // field as a toggle, so thinking has to be disabled explicitly.
+            // DeepSeek 默认开启思考，且不把 Anthropic 格式的 effort 字段当作开关，
+            // 因此必须显式禁用思考。
             request.put("thinking", JSONObject().put("type", "disabled"))
         }
     }
@@ -64,7 +64,7 @@ class QwenProvider : AnthropicMessagesProvider() {
 
     override fun applyReasoningControls(request: JSONObject, model: String) {
         val id = model.lowercase()
-        // These models default to thinking on; the Anthropic-format switch is thinking.type=disabled.
+        // 这些模型默认开启思考；Anthropic 格式的开关是 thinking.type=disabled。
         val configurable = (
             (id.startsWith("qwen3") && !id.contains("coder")) ||
                 id.startsWith("qwen-plus") ||
@@ -74,15 +74,15 @@ class QwenProvider : AnthropicMessagesProvider() {
     }
 
     /**
-     * Alibaba Model Studio documents `output_config.format` on the same Anthropic-compatible
-     * endpoint used here. qwen3.7/3.8 follow the schema strictly; every other qwen model falls
-     * back to a plain JSON mode that still guarantees a parseable document. That fallback needs
-     * the word "JSON" in the prompt, which createPrompt always contains.
+     * Alibaba Model Studio 在与此处相同的 Anthropic 兼容端点上提供了 `output_config.format`
+     * 的文档。qwen3.7/3.8 会严格遵循 schema；其他所有 qwen 模型则回退到普通 JSON 模式，该模式
+     * 仍能保证返回可解析的文档。该回退需要在提示词中包含 "JSON" 一词，而 createPrompt 始终
+     * 包含它。
      */
     override fun jsonOutputSupport(model: String): JsonOutputSupport {
         val id = model.lowercase()
         return when {
-            // Alibaba documents strict schema adherence for the qwen3.7/3.8 series only.
+            // Alibaba 仅针对 qwen3.7/3.8 系列记录了严格的 schema 遵循。
             id.startsWith("qwen3.8") || id.startsWith("qwen3.7") -> JsonOutputSupport.JSON_SCHEMA
             id.contains("qwen") -> JsonOutputSupport.JSON_MODE
             else -> JsonOutputSupport.NONE
@@ -108,8 +108,8 @@ class MiniMaxProvider : AnthropicMessagesProvider() {
     override val messagesEndpoint = "$baseUrl/anthropic/v1/messages"
 
     override fun applyReasoningControls(request: JSONObject, model: String) {
-        // MiniMax-M3 is off by default and accepts an explicit disable; M2.x cannot turn
-        // thinking off, so the field stays absent there.
+        // MiniMax-M3 默认关闭，并接受显式禁用；M2.x 无法关闭思考，
+        // 因此在那里不发送该字段。
         if (model.contains("MiniMax-M3", ignoreCase = true)) {
             request.put("thinking", JSONObject().put("type", "disabled"))
         }

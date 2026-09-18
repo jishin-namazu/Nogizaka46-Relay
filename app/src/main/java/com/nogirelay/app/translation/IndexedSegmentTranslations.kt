@@ -4,26 +4,26 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Encodes and parses the fragment list of a whole-content translation request.
+ * 编码并解析整篇内容翻译请求的片段列表。
  *
- * The request always carries the complete original text plus every fragment with its
- * index, and the model is asked to return the same indices. A translation is accepted
- * only when every index appears exactly once, so a missing or duplicated fragment is
- * detected instead of silently shifting the remaining text. Fragments are never sent
- * as separate requests: the model always sees and translates the whole content at once.
+ * 请求始终携带完整的原文，以及每个片段及其索引，并要求模型返回相同
+ * 的索引。只有当每个索引都恰好出现一次时才接受该译文，因此缺失
+ * 或重复的片段会被检测出来，而不会静默地导致其余文本错位。
+ * 片段绝不会作为独立请求发送：模型始终一次性看到并
+ * 翻译整篇内容。
  *
- * The canonical response is `{"segments":[{"index":0,"text":"..."}]}`: the providers with
- * enforced structured outputs (OpenAI Responses, Anthropic Messages) need an object at the
- * root of their JSON schema. A bare array is still accepted, so providers that can only
- * follow the prompt keep working.
+ * 规范响应为 `{"segments":[{"index":0,"text":"..."}]}`：强制结构化输出的
+ * 提供方（OpenAI Responses、Anthropic Messages）要求其 JSON schema
+ * 根节点是一个对象。裸数组仍然被接受，因此只能遵循提示词的提供方也能
+ * 继续工作。
  */
 internal object IndexedSegmentTranslations {
     private const val SEGMENTS_KEY = "segments"
 
     /**
-     * JSON Schema of the canonical response, sent to providers that support structured
-     * outputs. Every object sets `additionalProperties: false` and lists all of its
-     * properties in `required`, as strict mode demands.
+     * 规范响应的 JSON Schema，发送给支持结构化输出的提供方。按照严格模式的
+     * 要求，每个对象都设置 `additionalProperties: false`，并在 `required`
+     * 中列出其全部属性。
      */
     val schema: JSONObject = JSONObject()
         .put("type", "object")
@@ -52,8 +52,8 @@ internal object IndexedSegmentTranslations {
         )
 
     /**
-     * The same schema in Gemini's `responseSchema` dialect: upper-case types and no
-     * `additionalProperties`, which Gemini rejects.
+     * 同一 schema 的 Gemini `responseSchema` 方言：类型使用大写，且没有
+     * `additionalProperties`，因为 Gemini 会拒绝后者。
      */
     val geminiSchema: JSONObject = JSONObject()
         .put("type", "OBJECT")
@@ -92,7 +92,7 @@ internal object IndexedSegmentTranslations {
         return if (indexed) parseIndexed(elements, count) else parsePositional(elements, count)
     }
 
-    /** Accepts the canonical `{"segments":[...]}` object and the legacy bare array. */
+    /** 接受规范的 `{"segments":[...]}` 对象以及旧版的裸数组。 */
     private fun elementsOf(payload: String): JSONArray {
         val trimmed = payload.trim()
         if (!trimmed.startsWith("{")) return JSONArray(trimmed)
@@ -130,7 +130,7 @@ internal object IndexedSegmentTranslations {
         }
     }
 
-    /** Legacy positional array: still requires the exact fragment count. */
+    /** 旧版按位置的数组：仍然要求片段数量完全一致。 */
     private fun parsePositional(elements: JSONArray, count: Int): List<String> {
         require(elements.length() == count) {
             mismatchMessage(count, elements.length(), emptyList(), emptyList(), emptyList())

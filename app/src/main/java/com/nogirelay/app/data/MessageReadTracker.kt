@@ -1,6 +1,6 @@
 package com.nogirelay.app.data
 
-/** Process-local visibility used to avoid marking a message unread while its thread is on screen. */
+/** 进程内的可见性状态，用于在消息所属会话仍显示在屏幕上时避免将其标记为未读。 */
 object MessageReadTracker {
     @Volatile
     private var appVisible = false

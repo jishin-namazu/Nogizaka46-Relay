@@ -32,8 +32,8 @@ object IncomingCallNotifier {
             putExtra(EXTRA_MESSAGE_ID, message.id)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
-        // setPendingIntentCreatorBackgroundActivityStartMode and its constant are API 34; on
-        // 31-33 the call does not exist, so only 34+ gets the creator options.
+        // setPendingIntentCreatorBackgroundActivityStartMode 及其常量是 API 34 的；在
+        // 31-33 上该调用不存在，因此只有 34+ 才会设置 creator options。
         val fullScreenPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val creatorOptions = ActivityOptions.makeBasic().apply {
                 setPendingIntentCreatorBackgroundActivityStartMode(
@@ -105,7 +105,7 @@ object IncomingCallNotifier {
         Log.d("NogiRelay", "Showing incoming call notification for ${message.id}, isAppInForeground=${isAppInForeground(context)}")
         notificationManager.notify(notificationId(message.id), builder.build())
 
-        // Direct launch approach: if we have SYSTEM_ALERT_WINDOW, try direct start
+        // 直接启动方案：如果有 SYSTEM_ALERT_WINDOW，就尝试直接启动
         runCatching {
             if (isAppInForeground(context)) {
                 Log.d("NogiRelay", "App in foreground, starting IncomingCallActivity directly")
@@ -121,7 +121,7 @@ object IncomingCallNotifier {
         }
     }
 
-    /** Shows a retryable notification without opening the call page prematurely. */
+    /** 显示一个可重试的通知，而不提前打开通话页面。 */
     fun showUnavailable(context: Context, message: RelayMessage, reason: String) {
         val retryIntent = Intent(context, IncomingCallPreparationService::class.java).apply {
             putExtra(EXTRA_MESSAGE_ID, message.id)

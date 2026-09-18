@@ -25,16 +25,16 @@ function isTransientDatabaseError(error) {
   const code = String(error?.code || '').toUpperCase();
   const message = String(error?.message || '').toLowerCase();
   return [
-    '57P01', // admin_shutdown
-    '57P02', // crash_shutdown
-    '57P03', // cannot_connect_now / startup
-    '08000', // connection_exception
-    '08001', // sqlclient_unable_to_establish_sqlconnection
-    '08003', // connection_does_not_exist
-    '08004', // sqlserver_rejected_establishment
-    '08006', // connection_failure
-    '08007', // transaction_resolution_unknown
-    '08P01', // protocol_violation
+    '57P01', // 管理员关闭（admin_shutdown）
+    '57P02', // 崩溃关闭（crash_shutdown）
+    '57P03', // 当前无法连接 / 启动中（cannot_connect_now / startup）
+    '08000', // 连接异常（connection_exception）
+    '08001', // SQL 客户端无法建立 SQL 连接（sqlclient_unable_to_establish_sqlconnection）
+    '08003', // 连接不存在（connection_does_not_exist）
+    '08004', // SQL 服务器拒绝建立连接（sqlserver_rejected_establishment）
+    '08006', // 连接失败（connection_failure）
+    '08007', // 事务解析状态未知（transaction_resolution_unknown）
+    '08P01', // 协议违规（protocol_violation）
     'ECONNRESET',
     'ECONNREFUSED',
     'ETIMEDOUT',

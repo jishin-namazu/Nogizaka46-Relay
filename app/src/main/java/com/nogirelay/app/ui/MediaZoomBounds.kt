@@ -6,15 +6,15 @@ internal data class MediaOffset(val x: Float, val y: Float) {
     }
 }
 
-/** Converts a gesture delta from the transformed content's coordinates to screen pixels. */
+/** 把手势增量从变换后内容的坐标转换为屏幕像素。 */
 internal fun contentPanToScreen(x: Float, y: Float, scale: Float): MediaOffset {
     val safeScale = scale.coerceAtLeast(1f)
     return MediaOffset(x * safeScale, y * safeScale)
 }
 
 /**
- * Keeps a scaled, viewport-sized media layer covering the viewport on both axes.
- * At 1x there is no pannable overflow, while every extra scaled pixel can be panned into view.
+ * 让经过缩放、视口大小的媒体层在两个轴上都覆盖视口。
+ * 在 1x 时没有可平移的溢出，而每一个额外缩放出的像素都能被平移进视野。
  */
 internal fun constrainMediaOffset(
     x: Float,

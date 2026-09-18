@@ -18,7 +18,7 @@ class MessageService {
     );
 
     if (existing) {
-      // Retry media archival for rows created before local media storage was enabled.
+      // 为在本地媒体存储启用之前创建的行重试媒体归档。
       const needsPhoneImage = message.type === 'audio'
         && message.incoming_call_from
         && message.phone_image_url
@@ -80,8 +80,8 @@ class MessageService {
 
     if (result) return { message: result, isNew: true };
 
-    // A connection can be lost after PostgreSQL commits an insert. The retry
-    // then sees the conflict; treat that race as a successful existing row.
+    // 在 PostgreSQL 提交插入之后连接可能丢失。重试
+    // 随后会看到冲突；将这种竞态视为一行已存在的成功记录。
     const racedMessage = await db.queryOne(
       'SELECT * FROM messages WHERE id = $1',
       [message.id],

@@ -37,10 +37,10 @@ export function pushPayload(message) {
   };
 }
 
-// FCM caps the entire data map at 4096 bytes. Measure encoded UTF-8 bytes,
-// never JavaScript string length (UTF-16 code units), and keep a margin so an
-// oversized message degrades to message_id/type instead of failing the whole
-// multicast. The client then falls back to GET /v1/messages/:id.
+// FCM 将整个 data map 限制在 4096 字节。要以编码后的 UTF-8 字节数来度量，
+// 绝不能使用 JavaScript 字符串长度（UTF-16 码元），并保留一定余量，使超大消息
+// 降级为 message_id/type，而不是让整个 multicast 失败。客户端随后会回退到
+// GET /v1/messages/:id。
 const FCM_DATA_LIMIT_BYTES = 4096;
 const FCM_DATA_SAFETY_MARGIN_BYTES = 256;
 

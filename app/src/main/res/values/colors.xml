@@ -3,7 +3,7 @@
     <color name="launcher_background">#FFFFFF</color>
     <color name="splash_background">#FFFFFF</color>
     
-    <!-- Values used by the official call page (4.7.3). -->
+    <!-- 官方通话页面（4.7.3）使用的值。 -->
     <color name="nogi_call_start_background">#9B2CBB</color>
     <color name="nogi_call_end_background">#FF7473</color>
     <color name="nogi_call_background">#FFFFFF</color>

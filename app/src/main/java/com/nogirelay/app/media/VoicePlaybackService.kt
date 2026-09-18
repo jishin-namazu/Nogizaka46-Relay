@@ -130,7 +130,7 @@ class VoicePlaybackService : Service() {
         playing = false
         publishPlaybackState()
         
-        // Always use communication mode for consistent speaker/earpiece control
+        // 始终使用通信模式，以便一致地控制扬声器/听筒
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)

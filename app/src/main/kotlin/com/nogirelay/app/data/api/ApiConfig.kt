@@ -14,11 +14,11 @@ import com.nogirelay.app.BuildConfig
  * 不要把真实令牌写入受版本控制的源码。
  */
 object ApiConfig {
-    // Optional local build-time default; empty means "prefill nothing".
+    // 可选的本地构建时默认值；为空表示"不预填任何内容"。
     val BASE_URL: String
         get() = BuildConfig.DEFAULT_RELAY_URL
 
-    // Optional local build-time value; never commit a real token to source.
+    // 可选的本地构建时取值；切勿把真实令牌提交到源码。
     val ACCESS_TOKEN: String
         get() = BuildConfig.RELAY_ACCESS_TOKEN
 }

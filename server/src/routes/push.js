@@ -135,8 +135,8 @@ router.post('/test-message', async (req, res) => {
 
 /**
  * GET /v1/push/test-call-audio.wav
- * Authenticated short audio used by test-call so the client can verify
- * download-before-full-screen behavior without relying on a third-party URL.
+ * test-call 使用的需鉴权短音频，让客户端能够验证
+ * “先下载再进入全屏”的行为，而无需依赖第三方 URL。
  */
 router.get('/test-call-audio.wav', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');

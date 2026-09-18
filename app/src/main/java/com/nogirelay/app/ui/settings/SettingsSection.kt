@@ -25,7 +25,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -42,6 +44,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -95,6 +98,8 @@ fun SettingsSection(
     var aiModel by remember { mutableStateOf(initial.aiModel) }
     var modelOptions by remember { mutableStateOf(initial.cachedAiModels) }
     var translationEnabled by remember { mutableStateOf(initial.translationEnabled) }
+    var messageFullTranslation by remember { mutableStateOf(initial.messageFullTranslation) }
+    var blogFullTranslation by remember { mutableStateOf(initial.blogFullTranslation) }
     var userNickname by remember { mutableStateOf(initial.userNickname) }
     var providerMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
@@ -105,15 +110,17 @@ fun SettingsSection(
     var nicknameLabel by remember { mutableStateOf("") }
     var modelStatus by remember { mutableStateOf("") }
     var validatingApiKey by remember { mutableStateOf(false) }
-    // The support badge in the lists and under the model field all read the same query the
-    // request builder uses, so the label always matches what is actually sent.
+    var showRetranslateAllDialog by remember { mutableStateOf(false) }
+    var retranslateStatus by remember { mutableStateOf("") }
+    // 列表里的支持标记与模型输入框下方读的是请求构造器同一个查询，
+    // 标签始终与实际发出的请求一致。
     val selectedProvider = remember(aiProvider) { AIProviderFactory.getProvider(aiProvider) }
     val selectedModelSupport = remember(selectedProvider, aiModel) {
         selectedProvider.jsonOutputSupport(aiModel)
     }
 
-    // Everything being edited except the nickname: it has its own field and save button, so saving
-    // any other setting here must not pick up a half-typed nickname.
+    // 除昵称外正在编辑的全部设置：昵称有自己的输入框与保存按钮，
+    // 这里保存其它设置时不会带上半途输入的昵称。
     fun currentSettings() = AppGraph.settings.read().copy(
         relayUrl = relayUrl,
         accessToken = token,
@@ -122,21 +129,26 @@ fun SettingsSection(
         aiModel = aiModel,
         cachedAiModels = modelOptions,
         translationEnabled = translationEnabled,
+        messageFullTranslation = messageFullTranslation,
+        blogFullTranslation = blogFullTranslation,
     )
 
+    /**
+     * 重新翻译所有已存消息与 BLOG。译文不再把设备昵称写死之后需要执行一次：
+     * 旧数据里存的是字面昵称，重新翻译后才会换成占位符形式。
+     */
+    fun retranslateAll() {
+        retranslateStatus = "已标记全部内容，正在后台按当前模型重新翻译…"
+        TranslationManager.retranslateEverything(context)
+        onSettingsChanged()
+    }
+
     fun saveNickname() {
-        val previous = AppGraph.settings.read().userNickname
         val trimmed = userNickname.trim()
         AppGraph.settings.save(AppGraph.settings.read().copy(userNickname = trimmed))
         userNickname = trimmed
-        // The nickname is substituted into the text handed to the translator, so anything translated
-        // with the old name is stale once it changes. enqueue() is a no-op while 翻译 is switched off.
-        if (previous != trimmed) {
-            TranslationManager.resetRetries()
-            BlogTranslationManager.resetRetries()
-            TranslationManager.enqueue(context)
-            BlogTranslationManager.enqueuePending(context)
-        }
+        // 译文保留「%%%」占位符、渲染时才套用昵称，所以改昵称只需刷新，
+        // 已翻译的内容不会过期。
         nicknameLabel = "昵称已保存"
         onSettingsChanged()
     }
@@ -527,6 +539,60 @@ fun SettingsSection(
                     if (translationSavedLabel.isNotBlank()) {
                         Text(translationSavedLabel, color = SignalGreen, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
                     }
+                    FullTranslationToggle(
+                        title = "消息全量翻译",
+                        description = "开启后自动翻译所有历史未翻译的消息；关闭时只自动翻译新收到的消息。",
+                        checked = messageFullTranslation,
+                        onCheckedChange = {
+                            messageFullTranslation = it
+                            saveTranslationSettings()
+                        },
+                    )
+                    FullTranslationToggle(
+                        title = "博客全量翻译",
+                        description = "开启后自动翻译所有历史未翻译的博客；关闭时只自动翻译新发布的博客。",
+                        checked = blogFullTranslation,
+                        onCheckedChange = {
+                            blogFullTranslation = it
+                            saveTranslationSettings()
+                        },
+                    )
+                    OutlinedButton(
+                        onClick = { showRetranslateAllDialog = true },
+                        enabled = aiModel.isNotBlank() && aiApiKey.isNotBlank(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurple),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                    ) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.size(6.dp))
+                        Text("重新翻译全部", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                    if (retranslateStatus.isNotBlank()) {
+                        Text(retranslateStatus, color = BrandPurpleDark, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
+                    }
+                    if (showRetranslateAllDialog) {
+                        AlertDialog(
+                            onDismissRequest = { showRetranslateAllDialog = false },
+                            shape = RoundedCornerShape(20.dp),
+                            title = { Text("重新翻译全部", fontWeight = FontWeight.Bold) },
+                            text = {
+                                Text("将清空本机所有消息与博客的译文并重新翻译。内容较多时耗时较久并消耗 API 额度，确定继续？")
+                            },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        showRetranslateAllDialog = false
+                                        retranslateAll()
+                                    },
+                                    colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+                                ) { Text("开始", fontWeight = FontWeight.Bold) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showRetranslateAllDialog = false }) { Text("取消") }
+                            },
+                        )
+                    }
                     }
                 }
             }
@@ -561,7 +627,47 @@ fun SettingsSection(
     }
 }
 
-/** Small green marker for a provider or model that sends an API-level structured-output request. */
+/**
+ * 全量翻译开关的一行：开关关闭（默认）时自动流程只处理新到内容，打开后才翻历史积压。
+ * 手动"重新翻译全部"不受这里影响。
+ */
+@Composable
+private fun FullTranslationToggle(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                description,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+            )
+        }
+        Spacer(Modifier.size(10.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = BrandPurple,
+            ),
+        )
+    }
+}
+
+/** 表示厂商或模型会发出 API 级结构化输出请求的小绿标。 */
 @Composable
 fun SupportBadge(label: String) {
     Text(

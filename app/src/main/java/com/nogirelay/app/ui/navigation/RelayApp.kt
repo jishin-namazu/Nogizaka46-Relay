@@ -163,9 +163,9 @@ fun RowScope.RelayNavigationBarItem(
 }
 
 /**
- * [androidx.compose.material3.IconButton] equivalent carrying the app's rounded-square shape: Material 3 locks [androidx.compose.material3.IconButton]
- * itself to a circle and exposes no shape parameter, so the container is drawn here instead.
- * The 48dp box matches [androidx.compose.material3.IconButton]'s touch target exactly.
+ * 相当于带应用圆角方形形状的 [androidx.compose.material3.IconButton]：Material 3 把 [androidx.compose.material3.IconButton]
+ * 本身固定为圆形，并且不暴露形状参数，所以这里改为自行绘制容器。
+ * 48dp 的方框与 [androidx.compose.material3.IconButton] 的触摸目标完全一致。
  */
 @Composable
 fun RelayIconButton(

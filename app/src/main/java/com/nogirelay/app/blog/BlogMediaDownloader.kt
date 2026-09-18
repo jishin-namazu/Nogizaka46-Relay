@@ -24,10 +24,10 @@ object BlogMediaDownloader {
         prefetchImages(context, imageUrls(post))
     }
 
-    /**
-     * Downloads the given images into the private cache in the background, skipping files that are
-     * already there. Used for a BLOG page's covers so scrolling decodes from disk instead of waiting
-     * for a fresh download, which keeps search results as smooth as the newest posts.
+/**
+     * 在后台把给定图片下载到私有缓存中，已存在的文件会跳过。用于 BLOG 页面的
+     * 封面，这样滚动时直接从磁盘解码，而不必等待新的下载，从而让搜索结果和
+     * 最新文章一样流畅。
      */
     fun prefetchImages(context: Context, urls: List<String>) {
         val appContext = context.applicationContext

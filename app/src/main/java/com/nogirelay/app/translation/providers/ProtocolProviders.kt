@@ -24,14 +24,14 @@ abstract class AnthropicMessagesProvider : BaseAIProvider() {
         if (includeAnthropicVersion) put("anthropic-version", "2023-06-01")
     }
 
-    override fun buildTranslateRequest(model: String, text: String, nickname: String): String =
+    override fun buildTranslateRequest(model: String, text: String): String =
         JSONObject().apply {
             put("model", model)
             put("max_tokens", TRANSLATION_MAX_OUTPUT_TOKENS)
             put("messages", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "user")
-                    put("content", createPrompt(text, nickname))
+                    put("content", createPrompt(text))
                 })
             })
             applyReasoningControls(this, model)
@@ -57,13 +57,11 @@ abstract class AnthropicMessagesProvider : BaseAIProvider() {
         apiKey: String,
         model: String,
         text: String,
-        nickname: String,
     ): Result<String> = TranslationNetworkHelper.translate(
         this,
         apiKey,
         model,
         text,
-        nickname,
         messagesEndpoint,
     )
 }
@@ -78,10 +76,10 @@ abstract class OpenAIResponsesProvider : BaseAIProvider() {
         "Content-Type" to "application/json",
     )
 
-    override fun buildTranslateRequest(model: String, text: String, nickname: String): String =
+    override fun buildTranslateRequest(model: String, text: String): String =
         JSONObject().apply {
             put("model", model)
-            put("input", createPrompt(text, nickname))
+            put("input", createPrompt(text))
             put("max_output_tokens", TRANSLATION_MAX_OUTPUT_TOKENS)
             applyReasoningControls(this, model)
             applyJsonOutputControls(this, model)
@@ -118,13 +116,11 @@ abstract class OpenAIResponsesProvider : BaseAIProvider() {
         apiKey: String,
         model: String,
         text: String,
-        nickname: String,
     ): Result<String> = TranslationNetworkHelper.translate(
         this,
         apiKey,
         model,
         text,
-        nickname,
         responsesEndpoint,
     )
 }

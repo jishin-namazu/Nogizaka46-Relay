@@ -34,7 +34,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 
-// Rate limiting
+// 速率限制
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 分钟
   max: 100, // 限制 100 个请求
@@ -218,9 +218,9 @@ app.use('/v1/messages', authenticate, messagesRouter);
 app.use('/v1/push', authenticate, pushRouter);
 app.use('/v1/admin', authenticate, adminRouter);
 
-// Keep existing deployments compatible with media archival columns added
-// after the original messages table was created. Both statements are
-// idempotent and do not alter existing message rows.
+// 保持现有部署与媒体归档列兼容，这些列是在原始 messages 表
+// 创建之后才添加的。两条语句都是幂等的，
+// 并且不会更改已有的 message 行。
 async function ensureMessageMediaColumns() {
   try {
     await dbQuery(`
@@ -271,8 +271,8 @@ async function ensureMessageMediaColumns() {
 
 await ensureMessageMediaColumns();
 
-// Remove rows written by older test-call implementations so they cannot be
-// returned by history sync or counted as real messages after a restart.
+// 移除旧版测试调用实现写入的行，以免它们在重启后被
+// 历史同步返回或被计为真实消息。
 async function cleanupTransientTestMessages() {
   try {
     const result = await dbQuery("DELETE FROM messages WHERE id ~ '^test[-_]'");
@@ -299,7 +299,7 @@ const server = app.listen(PORT, () => {
   console.log(`🔥 Firebase initialized`);
 });
 
-// Graceful shutdown
+// 优雅关闭
 const shutdown = async (signal) => {
   console.log(`${signal} signal received: closing HTTP server`);
   try {

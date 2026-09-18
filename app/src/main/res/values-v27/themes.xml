@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- A style declared in a qualified folder replaces the default bag instead of merging with
-         it, so the launch theme repeats every item. Without them API 27-30 dropped
-         android:windowBackground and showed a blank splash instead of launch_background. -->
+    <!-- 在限定文件夹中声明的 style 会替换默认 bag，而不是与之合并，
+         因此启动主题要重复列出每一项。缺少这些项时，API 27-30 会丢失
+         android:windowBackground，并显示空白启动画面而不是 launch_background。 -->
     <style name="Theme.NogiRelay.Launch" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowNoTitle">true</item>

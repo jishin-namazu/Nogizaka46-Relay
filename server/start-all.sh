@@ -1,6 +1,6 @@
 #!/bin/sh
-# Start the API first. Chromium and the media service start only after the
-# API has completed initialization and serves /health.
+# 先启动 API。只有在
+# API 完成初始化并提供 /health 之后，Chromium 和媒体服务才会启动。
 npm start &
 API_PID=$!
 

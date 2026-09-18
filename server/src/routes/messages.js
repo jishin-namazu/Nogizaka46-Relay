@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 function mediaUrl(message, field, kind) {
-  // Media is archived on the monitor volume. Return the protected relay URL
-  // so clients never need to access the private CloudFront URL directly.
+  // 媒体归档在 monitor 卷上。返回受保护的 relay URL，
+  // 因此客户端无需直接访问私有的 CloudFront URL。
   const localField = {
     media: 'media_local_path',
     thumbnail: 'thumbnail_local_path',
@@ -61,7 +61,7 @@ router.get('/:id', async (req, res) => {
 
 /**
  * GET /v1/messages/:id/media/:kind
- * Serve an archived media file. Authentication is provided by the parent router.
+ * 提供一个已归档的媒体文件。认证由父级路由提供。
  */
 router.get('/:id/media/:kind', async (req, res) => {
   try {

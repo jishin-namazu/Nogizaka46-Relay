@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Flutter ScreenUtil design values from the official call page (375 x 667). -->
+    <!-- 来自官方通话页面的 Flutter ScreenUtil 设计值（375 x 667）。 -->
     <dimen name="nogi_call_bottom_bar_height">112dp</dimen>
     <dimen name="nogi_call_horizontal_padding">24dp</dimen>
     <dimen name="nogi_call_button_size">64dp</dimen>

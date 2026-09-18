@@ -1,6 +1,6 @@
 # Nogi Relay 开发文档 (DEVELOPMENT.md)
 
-欢迎查阅 Nogi Relay 核心开发文档。本文档详细阐释系统的全景技术架构、服务端双进程设计、数据库模式演进、REST API 接口规范、Android 客户端底层实现原理（包括全屏来电、大模型多协议翻译管道、博客与媒体归档引擎）以及本地开发与调试指南。
+本文档详细阐释系统的技术架构、服务端双进程设计、数据库模式演进、REST API 接口规范、Android 客户端底层实现原理（包括全屏来电、大模型多协议翻译管道、博客与媒体归档引擎、客户端归档导入导出）以及本地开发与调试指南。
 
 ---
 
@@ -32,7 +32,8 @@
   - [5.2 拟真全屏语音来电系统](#52-拟真全屏语音来电系统)
   - [5.3 多大模型翻译流水线 (AI Translation System)](#53-多大模型翻译流水线-ai-translation-system)
   - [5.4 公开 BLOG 客户端直连与离线检索](#54-公开-blog-客户端直连与离线检索)
-  - [5.5 通知渠道与后台保活](#55-通知渠道与后台保活)
+  - [5.5 归档导入导出与媒体补齐 (Data Transfer)](#55-归档导入导出与媒体补齐-data-transfer)
+  - [5.6 通知渠道与后台保活](#56-通知渠道与后台保活)
 - [6. 本地开发与调试指南](#6-本地开发与调试指南)
   - [6.1 服务端本地环境搭建](#61-服务端本地环境搭建)
   - [6.2 提取官网会话 (bootstrap-browser.js)](#62-提取官网会话-bootstrap-browserjs)
@@ -95,13 +96,14 @@ flowchart TD
         end
 
         subgraph StorageSearch["本地离线存储与检索"]
-            LocalDB[("本地 SQLite (v8)<br/>离线消息 / 博客 / 成员名录")]
+            LocalDB[("本地 SQLite (v9)<br/>离线消息 / 博客 / 成员名录")]
             SearchEngine["全文检索与时间筛选器<br/>(词边界摘要 / 关键词高亮)"]
         end
 
         subgraph ExtEngines["扩展功能引擎"]
             BlogUI["博客直连阅读器<br/>(段落中日对照 / 多图批量下载)"]
             AITrans["大模型翻译引擎<br/>(11家厂商 / JSON Schema / 格式保真)"]
+            Archive["归档导入导出<br/>(zip 导出 / 逐条回写导入 / 媒体补齐)"]
         end
 
         FCMReceiver -->|"语音来电"| PrepService
@@ -110,6 +112,8 @@ flowchart TD
         LocalDB --> SearchEngine
         LocalDB --> BlogUI
         LocalDB -.->|"按需翻译"| AITrans
+        LocalDB -->|"导出记录与媒体"| Archive
+        Archive -->|"逐条回写导入"| LocalDB
     end
 
     %% 主干链路 (从上至下平滑推进，避免交叉重叠)
@@ -465,21 +469,22 @@ erDiagram
 
 ### 3.2 客户端 SQLite 本地数据库演化 (SQLite)
 
-客户端通过 `app/.../data/MessageDatabase.kt` 维护独立的本地 SQLite 数据库（`messages.db`，版本 `DB_VERSION = 8`），无缝兼容平滑升级：
+客户端通过 `app/.../data/MessageDatabase.kt` 维护独立的本地 SQLite 数据库（`messages.db`，版本 `DB_VERSION = 9`），无缝兼容平滑升级：
 
 1. **核心数据表设计**：
    - `messages`：私信消息主表（消息 ID、成员标识与姓名、消息类型、正文内容、媒体/写真 URL、发送时间戳、未读状态 `is_unread`、已播放状态 `is_played` 等）。
    - `blog_posts`：官方博客表（博客 ID、成员信息、标题、HTML 正文、首图 URL、发布时间、译文内容与完成标记、未读标记 `is_unread` 等）。
-   - `blog_members`：官方成员花名册（成员 ID、姓名、假名、期别、头像、最新发文时间 `latest_post_at` 等）。
+   - `blog_members`：官方成员花名册（成员 ID `id`、姓名 `name`、期别 `category`、头像 `avatar_url`、展示顺序 `display_order`、最新发文时间 `latest_post_at`、卒業标记 `graduated`）。
    - `sync_state`：同步游标表（保存博客增量同步头部 `blog_sync_head_id_v2`、消息增量同步头部 `message_sync_head_id_v1` 等同步基线）。
 
-2. **数据库版本演化路径 (v1 ~ v8)**：
+2. **数据库版本演化路径 (v1 ~ v9)**：
    - **v1 - v3**：基础消息与媒体本地存储模型。
    - **v4**：引入私信未读状态字段 `is_unread` 与高性能复合索引 `idx_messages_unread_member`。
    - **v5**：新增公开博客表 `blog_posts` 与同步状态表 `sync_state`。
    - **v6**：博客表增加 `is_unread` 未读标记与倒序复合索引 `idx_blog_posts_unread`。
    - **v7**：新增 `blog_members` 成员目录表；重置旧版翻译缓存以适配最新段落骨架回填算法。
    - **v8**：成员表增加 `latest_post_at` 字段并维护最新发帖时间索引，支撑期别分类与活跃度排序。
+   - **v9**：成员表增加 `graduated` 卒業标记字段，卒業状态随名册刷新与归档导入单向保留。
 
 3. **高效聚合查询设计 (`latestMessagePerMember`)**：
    - 会话抽屉与列表采用 SQLite 原生分组聚合（`CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END` 结合 `MAX(sent_at)`）；
@@ -772,6 +777,9 @@ sequenceDiagram
 - `BlogClient.kt` 负责直接请求 `https://www.nogizaka46.com/s/n46/api/list/blog` 和 `list/member`。
 - 解析官方 JSONP 包装体 `res(...)`，首次同步完整博客历史，后续按同步头部增量写入本地 SQLite 表 `blog_posts`。
 - 博客成员筛选列表以**本地实际发过博客的作者**为基准，同时联表匹配官方成员目录补充期别分类（一期至六期、团体/运营）与头像排序，自动隐藏从未发过博客的成员。
+- 期别分类在读取时统一归一化（`BlogMemberCategories`）：全角「３期生」「４期生」「５期生」「６期生」、集体帐号原名「新4期生」以及「研究生」都折回 `6期生 / 5期生 / 4期生 / 3期生 / 2期生 / 1期生 / 運営スタッフ` 这套标准写法。筛选按分类字符串全等分组，未归一化的写法会各自变成一个独立分区。
+- 成员头像优先取 `blog_members.avatar_url`，为空时回落到 `blog_posts.member_avatar_url`（`MAX` 聚合）。博客列表读的是后者，两处因此始终一致。
+- 官方 BLOG 的期别集体帐号 id：`40001` 新4期生、`40003` 運営スタッフ、`40004` ３期生、`40005` ４期生、`40006` 研究生、`40007` 5期生、`40008` 6期生。官方 `artist_img` 对它们返回 `files/46/assets/img/blog/none.png` 占位图。
 
 #### 5.4.2 离线毫秒级全文检索与词边界高亮
 在博客与消息时间线中，支持纯离线本地检索：
@@ -794,7 +802,60 @@ sequenceDiagram
 
 ---
 
-### 5.5 通知渠道与后台保活
+### 5.5 归档导入导出与媒体补齐 (Data Transfer)
+
+客户端在 `data/transfer/` 与 `ui/transfer/` 下实现离线归档体系：把本地消息或博客导出成 zip，或把 zip 合并回本地库。一次导出只覆盖一个 `kind`，消息与博客不混装。
+
+#### 5.5.1 归档格式 (`ExportFormat.kt`)
+
+```text
+manifest.json          # 清单，先于载荷写出
+data/messages.jsonl    # 或 data/blogs.jsonl，一行一个 JSON 对象
+media/<sha256>.<ext>   # 内容寻址，重复媒体只存一份
+data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
+```
+
+- `manifest.json` 字段：`format`（固定 `nogirelay-export`）、`formatVersion`（当前 `1`）、`appVersionName`、`appVersionCode`、`exportedAt`、`kind`（`messages` / `blogs`）、`includesMedia`、`includesTranslations`、`members[]`（`id`、`name`、`category`、`avatar_url`、`display_order`、`directory`、`graduated`）。
+- 导入防护：条目数上限 200,000（`MAX_ENTRIES`），单条目解压上限 100 MiB（`MAX_ENTRY_BYTES`）。
+- 链接列规则（`explicitColumns`）：键缺失或 JSON `null` 表示归档未携带该信息，本地值不动；显式空串表示清空，导入重复记录时照写。消息列为 `member_avatar_url`、`phone_image_url`、`media_url`、`thumbnail_url`、`ringtone_url`；博客列为 `image_url`、`post_url`、`member_avatar_url`，另外 `body_html`、`member_id`、`member_name` 只在非空时覆盖。
+- 媒体清单（`mediaCandidates`）：消息取主媒体，语音消息额外带全屏来电写真，缩略图不打包；博客取封面（正文已含则不重复）加全部正文大图，按 URL 去重。
+
+#### 5.5.2 导出 (`DataExporter.kt`)
+
+1. `estimate()` 用 `countMessagesForMembers` / `countBlogsForMembers` 取总数，再遍历记录一次，经 `MediaDownloader.cachedFileForUrl` 判断每份媒体是否已缓存，产出 `ExportEstimate`：记录数、引用媒体数、已缓存数、字节数、按角色统计、缺失清单。
+2. `export()` 先写 `manifest.json`，再逐条写 `data/*.jsonl` 并逐条回调进度，然后逐条写入 `media/` 条目，最后写可选的 `data/skipped.jsonl`。
+3. 导出不联网：只打包本地已缓存的媒体，缺失项记入 `data/skipped.jsonl`，记录本身完整写出。
+4. 读库按 `PAGE_SIZE = 500` 分页（`messagePageForMembers` / `blogPageForMembers`）。
+
+#### 5.5.3 导入 (`DataImporter.kt`)
+
+1. 读 `manifest.json`：`kind` 决定载荷解释方式；`members[]` 中 `directory == true` 的行经 `insertMemberIfAbsent`（`CONFLICT_IGNORE`）写入 `blog_members`，分类先过 `BlogMemberCategories.normalizeCategory`。
+2. 逐条回写：`data/*.jsonl` 每行解析后立刻在独立 SQLite 事务中落库 —— 消息走 `writeMessage()`（`insertImported`），博客走 `writeBlog()`（`insertBlogIfAbsent`）。不攒批，进程中断最多丢当前这一条。
+3. 重复 id：`refreshImportedLinks` / `refreshImportedBlogLinks` 只在归档显式列出的值与本地不同时 UPDATE（`updateLinksIfDifferent` 的 WHERE 含 `COALESCE(列,'') <> ?`）；`backfillMessageTranslation` / `backfillBlogTranslation` 只在本地缺译文时补写。
+4. 媒体条目：条目名 `media/<sha256>.<ext>` 的 sha256 与解压内容做摘要比对，通过后按引用它的每个 URL 写入媒体缓存；条目先于记录出现时先落暂存目录，记录解析完后按 `pathToUrls` 落位（`deferredPaths`）。
+5. 单行解析失败计入 `invalid`，最多记录 10 条错误信息，不中断整次导入。
+6. 进度逐条回调：记录 `onProgress("导入记录", processed, 0)`，媒体 `onProgress("导入媒体", mediaProcessed, 0)`。
+
+#### 5.5.4 传输调度 (`DataTransferManager.kt`)
+
+- 进程级单例，持有 `StateFlow<TransferState>`（`running`、`kind`、`operation`、`phase`、`done`、`total`、`outcome`、`error`），同一时刻只跑一个任务。
+- `operation` 取 `EXPORT` / `IMPORT` / `BACKFILL`；`cancel()` 取消协程，导出被取消时删除半成品文件。
+- 导出与导入完成后调用 `AppGraph.notifyDataChanged()` 刷新界面。
+
+#### 5.5.5 媒体补齐 (`MediaBackfill.kt` + `MediaBackfillService.kt`)
+
+- 补齐清单直接复用导出预览收集的 `missing` 列表，不重新遍历数据库。
+- 每条先查缓存，命中计入 `reused`；否则下载，`HttpNotFoundException` 计入 `notFound`，下载器写入永久 404 标记，后续不再请求该 URL。
+- 补齐期间启动前台服务 `MediaBackfillService` 维持后台下载，进度逐条上报。
+
+#### 5.5.6 交互界面 (`ui/transfer/`)
+
+- `DataTransferDrawer.kt`：按 `kind` 提供成员选择、时间范围、媒体/译文开关、导出预估、进度与结果卡片。
+- `MemberPickerDialog.kt`：成员网格与 `memberGroups()`；分区顺序由 `BlogMemberCategories.STANDARD_CATEGORIES + "其他"` 派生（`MemberCategoryOrder`）。
+
+---
+
+### 5.6 通知渠道与后台保活
 
 系统预先注册 5 个职责明确的通知渠道（`NotificationChannels.kt`）：
 

@@ -16,26 +16,26 @@ enum class AIProtocol {
 }
 
 /**
- * How far a provider and model can constrain the translation response. The settings screen shows
- * it as a badge and the request builder uses it to decide whether a schema is sent, so the two can
- * never disagree.
+ * 提供商与模型对翻译响应的约束程度。
+ * 设置界面把它显示为徽章，请求构建器用它决定是否发送 schema，
+ * 因此两者永远不会不一致。
  */
 enum class JsonOutputSupport(val label: String) {
-    /** Prompt only: no API-level guarantee. */
+    /** 仅提示词约束：没有 API 层面的保证。 */
     NONE("提示词约束"),
 
-    /** The API guarantees a parseable JSON document, but not the schema. */
+    /** API 保证返回可解析的 JSON 文档，但不保证符合 schema。 */
     JSON_MODE("JSON 模式"),
 
-    /** The API constrains decoding to the supplied JSON Schema. */
+    /** API 将解码约束到所提供的 JSON Schema。 */
     JSON_SCHEMA("JSON Schema");
 
     val isSupported: Boolean get() = this != NONE
 }
 
 /**
- * [supportsStructuredOutput] is the provider-level answer used by the provider list; the exact
- * per-model level comes from [AIProvider.jsonOutputSupport].
+ * [supportsStructuredOutput] 是提供商列表使用的提供商级答案；具体的单模型级别来自
+ * [AIProvider.jsonOutputSupport]。
  */
 enum class AIProviderType(val displayName: String, val supportsStructuredOutput: Boolean) {
     OPENAI("OpenAI", true),
@@ -58,18 +58,18 @@ interface AIProvider {
     val modelsEndpoint: String
     
     suspend fun fetchModels(apiKey: String): Result<List<AIModel>>
-    suspend fun translate(apiKey: String, model: String, text: String, nickname: String): Result<String>
+    suspend fun translate(apiKey: String, model: String, text: String): Result<String>
     
     fun buildModelHeaders(apiKey: String): Map<String, String>
     fun buildHeaders(apiKey: String): Map<String, String>
-    fun buildTranslateRequest(model: String, text: String, nickname: String): String
+    fun buildTranslateRequest(model: String, text: String): String
     fun parseTranslateResponse(response: String): String
     fun parseModelsResponse(response: String): List<AIModel>
     fun filterChatModels(models: List<AIModel>): List<AIModel>
 
     /**
-     * The structured-output level documented for this provider endpoint and [model]. Providers
-     * without a public statement keep the default, prompt-only answer.
+     * 该提供商端点与 [model] 文档中记载的结构化输出级别。没有公开说明的提供商保持默认的
+     * 仅提示词答案。
      */
     @Suppress("UNUSED_PARAMETER")
     fun jsonOutputSupport(model: String): JsonOutputSupport = JsonOutputSupport.NONE
@@ -79,17 +79,17 @@ abstract class BaseAIProvider : AIProvider {
     override fun buildModelHeaders(apiKey: String): Map<String, String> = buildHeaders(apiKey)
 
     /**
-     * Asks the provider to constrain the response to [IndexedSegmentTranslations.schema].
-     * Providers whose API documents structured output for the selected endpoint override
-     * this; everything else keeps the prompt-only contract. Never assume it succeeded:
-     * [IndexedSegmentTranslations.parse] still validates every response.
+     * 要求提供商把响应约束到 [IndexedSegmentTranslations.schema]。
+     * 其 API 为所选端点记载了结构化输出的提供商会重写此方法；
+     * 其余提供商保持仅提示词的约定。
+     * 不要假定它一定成功：[IndexedSegmentTranslations.parse] 仍会校验每个响应。
      */
     @Suppress("UNUSED_PARAMETER")
     protected open fun applyJsonOutputControls(request: JSONObject, model: String) = Unit
 
     /**
-     * Merges the canonical response schema into an Anthropic-style `output_config`, preserving a
-     * reasoning `effort` a provider may already have written there.
+     * 把规范的响应 schema 合并进 Anthropic 风格的 `output_config`，同时保留提供商可能已经
+     * 写入其中的推理 `effort`。
      */
     protected fun mergeJsonOutputFormat(request: JSONObject) {
         val outputConfig = request.optJSONObject("output_config") ?: JSONObject()
@@ -102,14 +102,17 @@ abstract class BaseAIProvider : AIProvider {
         request.put("output_config", outputConfig)
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    protected fun createPrompt(text: String, nickname: String): String {
+    /**
+     * 构建翻译提示词。昵称保持为原文中的 "%%%" 占位符：模型保留它，UI 再解析它，因此已存储的
+     * 译文在每台设备上都保持有效。
+     */
+    protected fun createPrompt(text: String): String {
         return """
             你将收到一份完整日语内容（消息或 BLOG），以及按原文顺序编号的文本片段。请结合完整内容的上下文，一次性把所有片段一起翻译成简体中文。
 
             要求：
             1. 人名必须保持原文，不得翻译、音译、改写或替换。
-            2. 对于不应翻译的内容（例如专有名词），请保留原文。
+            2. 对于不应翻译的内容（例如专有名词），请保留原文。原文中的 "%%%" 是用户昵称占位符，必须原样保留（三个百分号不变），不得翻译、替换、删除或改写成人名。
             3. 必须一次翻译整份内容，不得只翻译部分片段，也不得把内容拆成多次请求。
             4. 只能输出一个 JSON 对象，且只包含一个键 "segments"，格式如下：
             {"segments":[{"index":0,"text":"译文"},{"index":1,"text":"译文"}]}

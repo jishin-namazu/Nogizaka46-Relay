@@ -17,11 +17,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 
 /**
- * Automatically clears text selection and dismisses the floating toolbar
- * when the user taps anywhere on the modified container, while preserving:
- * 1. Long press gestures for text selection (duration >= longPressTimeout).
- * 2. Drag / scroll gestures (distance > touchSlop).
- * 3. Normal clicks on children (events are NOT consumed).
+ * 当用户点击被修饰容器的任意位置时，自动清除文本选择并关闭浮动工具栏，
+ * 同时保留：
+ * 1. 用于文本选择的长按手势（时长 >= longPressTimeout）。
+ * 2. 拖拽 / 滚动手势（距离 > touchSlop）。
+ * 3. 对子元素的普通点击（事件不会被消费）。
  */
 fun Modifier.clearSelectionOnTap(
     focusManager: FocusManager,
@@ -56,10 +56,10 @@ fun Modifier.clearSelectionOnTap(
 }
 
 /**
- * Automatically clears selection and hides the copy toolbar when exiting the screen:
- * - When [isActive] becomes false (e.g. switching tabs).
- * - When the composable leaves the composition (e.g. back navigation).
- * - When the activity enters [Lifecycle.Event.ON_PAUSE] or [Lifecycle.Event.ON_STOP] (e.g. leaving the app or opening another activity).
+ * 离开界面时自动清除选择并隐藏复制工具栏：
+ * - 当 [isActive] 变为 false 时（例如切换标签页）。
+ * - 当该 composable 离开组合时（例如返回导航）。
+ * - 当 Activity 进入 [Lifecycle.Event.ON_PAUSE] 或 [Lifecycle.Event.ON_STOP] 时（例如离开应用或打开另一个 Activity）。
  */
 @Composable
 fun AutoClearSelectionOnExit(

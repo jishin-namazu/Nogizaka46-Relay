@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // The launch theme mirrors the official app splash until Compose draws its first frame.
+        // 启动主题模拟官方 App 的闪屏，直到 Compose 绘制出第一帧。
         setTheme(R.style.Theme_NogiRelay)
         AppGraph.initialize(this)
         val current = AppGraph.settings.read()

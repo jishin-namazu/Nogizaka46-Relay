@@ -65,7 +65,8 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
                     .onFailure { error -> Log.w("NogiRelay", "Media prefetch failed for ${message.id}", error) }
             }, "media-prefetch").start()
         }
-        TranslationManager.enqueue(this)
+        // 刚到的这条一定要翻；历史积压是否顺带处理由"消息全量翻译"开关决定。
+        TranslationManager.enqueueAfterSync(this, listOf(message.id))
     }
 
     private fun startCallPreparation(message: RelayMessage) {
@@ -75,8 +76,8 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
         runCatching { ContextCompat.startForegroundService(this, intent) }
             .onFailure { error ->
                 Log.w("NogiRelay", "Unable to start call preparation service", error)
-                // High-priority FCM normally permits the foreground service;
-                // retain a best-effort fallback for OEM restrictions.
+                // 高优先级 FCM 通常允许前台服务；
+                // 针对 OEM 限制保留一个尽力而为的兜底方案。
                 Thread({
                     val downloaded = runCatching { MediaDownloader.enqueueIfNeeded(this, message) }.getOrNull()
                     Handler(Looper.getMainLooper()).post {

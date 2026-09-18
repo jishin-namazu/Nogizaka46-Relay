@@ -80,6 +80,14 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- 「补齐媒体」的前台服务：dataSync 类型（权限已在上面声明），
+             stopWithTask=false 让它在用户从最近任务划掉 App 后仍然继续下载。 -->
+        <service
+            android:name=".data.transfer.MediaBackfillService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
     </application>
 
 </manifest>

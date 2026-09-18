@@ -12,7 +12,7 @@
 
 **Nogi Relay** 是专为乃木坂46 message和 BLOG 打造的中继推送与管理系统。
 
-系统通过无头浏览器会话自动监听乃木坂message消息与公开博客，实现媒体资源的本地持久化归档与 SHA-256 去重；通过 Firebase Cloud Messaging (FCM) 发送纯数据高优先级推送；配合原生 Android 客户端，提供模拟全屏语音呼叫、11 家大模型上下文自动翻译、全文检索及博客和消息原图下载。
+系统通过无头浏览器会话自动监听乃木坂message消息与公开博客，实现媒体资源的本地持久化归档与 SHA-256 去重；通过 Firebase Cloud Messaging (FCM) 发送纯数据高优先级推送；配合原生 Android 客户端，提供模拟全屏语音呼叫、11 家大模型上下文自动翻译、全文检索、博客和消息原图下载，以及消息/博客归档的导入导出与媒体补齐。
 
 ---
 
@@ -107,13 +107,21 @@
 - **图片下载**：网格视图支持全选/单选一键批量下载全篇博客原图至系统相册。
 - **界面参考**：[博客列表与搜索](docs/images/05_blog_list.jpg) ｜ [期别与时间多维筛选](docs/images/06_blog_filter_modal.jpg) ｜ [双语段落下嵌阅读](docs/images/07_blog_detail_reading.jpg) ｜ [原图下载管理器](docs/images/08_blog_images_batch_download.jpg)
 
+### 7. 归档导入导出与媒体补齐 (Data Transfer)
+- **单向归档格式**：一次导出只覆盖消息或博客一种内容，产物为 `manifest.json` + `data/*.jsonl` + 内容寻址的 `media/<sha256>.<ext>`，可选 `data/skipped.jsonl` 列出本地未缓存的媒体。
+- **逐条回写导入**：导入时每解析一条记录就在独立事务里落库；重复 id 只在归档显式列出的链接值确实不同时更新，译文只在本地缺失时补写；单行解析失败不影响整次导入。
+- **离线导出 + 后台补齐**：导出只打包本地已缓存的媒体，缺失项由前台服务后台下载补齐，404 写入永久标记不再重试。
+- **成员目录与期别归一化**：归档携带成员目录行；期别分类统一折回 `6/5/4/3/2/1期生 + 運営スタッフ`，筛选按分类字符串分组不再出现重复分区；头像优先取成员表，为空时回落到博客表。
+
 ---
 
 ## 📁 目录结构
 
 ```text
 Nogizaka46-Relay/
-├── docs/images/                # App 运行界面截图
+├── docs/
+│   ├── architecture/           # 架构图 (HTML / PNG)
+│   └── images/                 # App 运行界面截图
 ├── app/                        # Android 原生客户端代码
 │   ├── src/main/java/com/nogirelay/app/
 │   │   ├── MainActivity.kt     # 轻量 Activity 入口 (生命周期、传感器、Intent 分发)
@@ -121,7 +129,9 @@ Nogizaka46-Relay/
 │   │   ├── blog/               # 博客解析、详情阅读、多图下载与通知
 │   │   ├── call/               # 拟真来电、全屏呼叫、距离传感器与振动
 │   │   ├── data/               # SQLite 数据库 (MessageDatabase)、API 客户端
-│   │   │   └── sync/           # 内容同步中枢 (ContentSyncManager)
+│   │   │   ├── sync/           # 内容同步中枢 (ContentSyncManager)
+│   │   │   └── transfer/       # 归档格式、导入导出、媒体补齐
+│   │   │                       #   (ExportFormat / DataExporter / DataImporter)
 │   │   ├── media/              # 媒体后台下载器、前台语音播放服务
 │   │   ├── notification/       # Android 5 套专用通知渠道定义
 │   │   ├── push/               # FCM 接收器 (NogiFirebaseMessagingService)
@@ -130,7 +140,8 @@ Nogizaka46-Relay/
 │   │       ├── home/           # 主页仪表盘与权限状态 (HomeScreen)
 │   │       ├── messages/       # 消息列表、会话抽屉与卡片 (MessagesScreen)
 │   │       ├── navigation/     # 全局三 Tab 导航与脚手架 (RelayApp)
-│   │       └── settings/       # 大模型配置与推送设置面板 (SettingsSection)
+│   │       ├── settings/       # 大模型配置与推送设置面板 (SettingsSection)
+│   │       └── transfer/       # 归档导入导出抽屉与成员选择器
 │   └── build.gradle.kts        # 客户端依赖与构建配置
 ├── server/                     # Node.js 中继服务端代码
 │   ├── src/

@@ -18,7 +18,7 @@ class DisplayTextTest {
         assertEquals(6, span.start)
         assertEquals(10, span.end)
         assertEquals(Color.Red, span.item.color)
-        // Ensure background is NOT set to prevent Android's asymmetric line-height box
+        // 确保未设置 background，以避免 Android 不对称的行高盒
         assertEquals(Color.Unspecified, span.item.background)
     }
 
@@ -67,7 +67,7 @@ class DisplayTextTest {
     fun testSearchSnippetsOverlappingMerged() {
         val text = "ライブとライブが連続する場合のテストです。"
         val snippets = searchSnippets(text, "ライブ")
-        // Overlapping/adjacent occurrences should merge into 1 snippet
+        // 重叠/相邻的出现位置应合并为 1 个片段
         assertEquals(1, snippets.size)
         assertTrue(snippets[0].contains("ライブとライブ"))
     }

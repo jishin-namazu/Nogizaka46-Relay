@@ -11,6 +11,7 @@ import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.data.api.ApiConfig
 import com.nogirelay.app.media.MediaDownloader
+import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
 
 data class SyncOutcome(val messages: Int, val blogs: Int)
@@ -30,7 +31,20 @@ object ContentSyncManager {
         return SyncOutcome(messageResult.getOrDefault(0), blogResult.getOrDefault(0))
     }
 
+    /**
+     * 包装 BLOG 遍历，使这一轮写入的 id 能送达翻译器：新的 BLOG
+     * 总是会被翻译，而历史积压只有在"博客全量翻译"打开时才会推进。
+     */
     private fun syncBlogsFromOfficial(context: Context): Int {
+        val newBlogIds = linkedSetOf<String>()
+        return try {
+            syncBlogPages(context, newBlogIds)
+        } finally {
+            if (newBlogIds.isNotEmpty()) BlogTranslationManager.enqueueAfterSync(context, newBlogIds)
+        }
+    }
+
+    private fun syncBlogPages(context: Context, newBlogIds: MutableSet<String>): Int {
         val pageSize = 100
         runCatching {
             AppGraph.database.replaceBlogMembers(AppGraph.blogClient.fetchMembers())
@@ -57,7 +71,10 @@ object ContentSyncManager {
                 val boundaryReached = page.posts.any { it.id == syncBoundaryId }
                 page.posts.forEach { post ->
                     val isUnread = !BlogReadTracker.isViewing(post.id)
-                    if (AppGraph.database.upsertBlog(post, isUnread = isUnread)) inserted += 1
+                    if (AppGraph.database.upsertBlog(post, isUnread = isUnread)) {
+                        inserted += 1
+                        newBlogIds += post.id
+                    }
                     BlogMediaDownloader.enqueue(context, post)
                 }
                 offset += page.posts.size
@@ -94,6 +111,7 @@ object ContentSyncManager {
                 }
                 page.posts.forEach { post ->
                     seenIds += post.id
+                    // 全量回填属于历史内容，不当作"新博客"，只有增量分支才会喂给翻译器。
                     if (AppGraph.database.upsertBlog(post)) inserted += 1
                     BlogMediaDownloader.enqueue(context, post)
                 }
@@ -125,22 +143,32 @@ object ContentSyncManager {
 
         val fullSyncComplete = AppGraph.database.isMessageFullSyncComplete()
         val syncBoundaryId = AppGraph.database.messageSyncHeadId()
-        val inserted = if (fullSyncComplete && syncBoundaryId != null) {
-            syncNewMessages(context, settings, syncBoundaryId)
-        } else {
-            syncMessageHistory(context, settings)
+        // 只有增量同步抓到的那批算"新消息"；首次全量回填属于历史积压，
+        // 交给"消息全量翻译"开关（打开时 [TranslationManager.enqueueAfterSync] 会整批扫）。
+        val newMessageIds = linkedSetOf<String>()
+        return try {
+            if (fullSyncComplete && syncBoundaryId != null) {
+                syncNewMessages(context, settings, syncBoundaryId, newMessageIds)
+            } else {
+                syncMessageHistory(context, settings)
+            }
+        } finally {
+            TranslationManager.enqueueAfterSync(context, newMessageIds)
         }
-        TranslationManager.enqueue(context)
-        return inserted
     }
 
     /**
-     * Message sync after the first successful backfill, built like [syncBlogsFromOfficial]: the server
-     * lists newest first, so the walk starts at offset 0 and stops the moment the previous head shows
-     * up. The boundary only moves once the total and the head are confirmed unchanged; if the list moved
-     * under us the walk is discarded so the next sync repeats it and picks up whatever arrived.
+     * 首次成功回填之后的消息同步，构建方式类似 [syncBlogsFromOfficial]：服务器
+     * 按最新优先列出，因此遍历从 offset 0 开始，并在上一批头部出现的那一刻停止。
+     * 只有在总数和头部都被确认未变时边界才会移动；如果列表在遍历过程中
+     * 发生了变化，遍历结果会被丢弃，以便下次同步重复执行并抓取新到的内容。
      */
-    private fun syncNewMessages(context: Context, settings: AppSettings, syncBoundaryId: String): Int {
+    private fun syncNewMessages(
+        context: Context,
+        settings: AppSettings,
+        syncBoundaryId: String,
+        newMessageIds: MutableSet<String>,
+    ): Int {
         val pageSize = 200
         val expectedCount = messageCountOrNull(settings)
         var offset = 0
@@ -150,8 +178,8 @@ object ContentSyncManager {
         while (true) {
             val page = AppGraph.relayClient.fetchMessages(settings, limit = pageSize, offset = offset)
             if (page.isEmpty()) {
-                // Reaching the end is only trustworthy when the count agrees that we are at the end;
-                // the previous head can also be gone after a server-side prune, which recovers here.
+                // 只有在计数与"已到末尾"一致时，到达末尾才可信；
+                // 上一批头部也可能在服务器端清理后消失，这里会恢复。
                 if (expectedCount == null || offset >= expectedCount) completed = true
                 break
             }
@@ -159,7 +187,10 @@ object ContentSyncManager {
             val boundaryReached = page.any { it.id == syncBoundaryId }
             page.forEach {
                 val isUnread = !MessageReadTracker.isViewing(it.memberKey)
-                if (storeSyncedMessage(context, it, isUnread = isUnread)) inserted++
+                if (storeSyncedMessage(context, it, isUnread = isUnread)) {
+                    inserted++
+                    newMessageIds += it.id
+                }
             }
             offset += page.size
             if (boundaryReached || (expectedCount != null && offset >= expectedCount) || page.size < pageSize) {
@@ -169,7 +200,7 @@ object ContentSyncManager {
         }
         val finalCount = messageCountOrNull(settings)
         val finalHeadId = AppGraph.relayClient.fetchMessages(settings, limit = 1, offset = 0).firstOrNull()?.id
-        // A null total only drops the count half of the check; the head comparison always runs.
+        // total 为 null 只会去掉校验中的计数那一半；头部比较始终执行。
         val countCovered = expectedCount == null || finalCount == null || expectedCount == finalCount
         if (!completed) {
             error("消息增量同步未能完整到达同步边界或末尾；未移动同步边界，下次将安全重试")
@@ -185,10 +216,10 @@ object ContentSyncManager {
     }
 
     /**
-     * One-off message backfill, built like the BLOG full sync: page through everything and record the
-     * full-sync marker only when the snapshot was identical from start to finish — the total must not
-     * move, a stable list hands every row out exactly once, and the newest page must be covered by this
-     * pass. Anything else is retried rather than leaving a hole the boundary would then hide forever.
+     * 一次性消息回填，构建方式类似 BLOG 全量同步：逐页遍历全部内容，并且
+     * 仅当快照从开始到结束完全一致时才记录全量同步标记——总数不能
+     * 变动，稳定的列表会让每一行恰好出现一次，且最新一页必须被这一轮
+     * 遍历覆盖。任何其他情况都会重试，而不是留下一个随后会被边界永久掩盖的缺口。
      */
     private fun syncMessageHistory(context: Context, settings: AppSettings): Int {
         val pageSize = 200
@@ -201,7 +232,7 @@ object ContentSyncManager {
             while (expectedCount == null || offset < expectedCount) {
                 val page = AppGraph.relayClient.fetchMessages(settings, limit = pageSize, offset = offset)
                 if (page.isEmpty()) {
-                    // Reading nothing while the total still promises rows means the list moved under us.
+                    // 在 total 仍承诺有行的情况下什么都没读到，意味着列表在遍历过程中发生了变化。
                     if (expectedCount != null && offset < expectedCount) stable = false
                     break
                 }
@@ -218,8 +249,8 @@ object ContentSyncManager {
             val countCovered = if (expectedCount != null && finalCount != null) {
                 expectedCount == finalCount && seenIds.size == finalCount
             } else {
-                // Older relay without /v1/messages/stats/summary: fall back to "no row came back twice",
-                // which is what a shifted list produces.
+                // 较旧的 relay 没有 /v1/messages/stats/summary：退回到"没有任何行重复出现"的
+                // 判定，这正是列表发生偏移时产生的结果。
                 seenIds.size == offset
             }
             if (stable && countCovered && headCovered) {
@@ -236,8 +267,8 @@ object ContentSyncManager {
     }
 
     /**
-     * Message total from the relay, or null when the server predates /v1/messages/stats/summary or is
-     * briefly unreachable. Callers treat null as "total unknown" and verify with the head alone.
+     * 来自 relay 的消息总数；当服务器早于 /v1/messages/stats/summary 或
+     * 短暂不可达时为 null。调用方将 null 视为"总数未知"，并仅用头部进行校验。
      */
     private fun messageCountOrNull(settings: AppSettings): Int? =
         runCatching { AppGraph.relayClient.fetchMessageCount(settings) }

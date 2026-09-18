@@ -1,6 +1,6 @@
 package com.nogirelay.app.data
 
-/** Process-local visibility used to avoid marking an already-open BLOG unread. */
+/** 进程内可见性状态，用于避免把已经打开的 BLOG 标记为未读。 */
 object BlogReadTracker {
     @Volatile
     private var appVisible = false

@@ -21,22 +21,22 @@ class GeminiProvider : BaseAIProvider() {
         "Content-Type" to "application/json",
     )
 
-    override fun buildTranslateRequest(model: String, text: String, nickname: String): String =
+    override fun buildTranslateRequest(model: String, text: String): String =
         JSONObject().apply {
             put("contents", JSONArray().apply {
                 put(JSONObject().apply {
                     put("role", "user")
                     put("parts", JSONArray().apply {
-                        put(JSONObject().put("text", createPrompt(text, nickname)))
+                        put(JSONObject().put("text", createPrompt(text)))
                     })
                 })
             })
             put("generationConfig", JSONObject().apply {
                 put("maxOutputTokens", TRANSLATION_MAX_OUTPUT_TOKENS)
                 val id = model.lowercase()
-                // Structured output is documented for the text Gemini models (2.5 and 3.x). Image,
-                // audio, Live, transcription, robotics and non-Gemini models either reject
-                // responseSchema or ignore it, so they keep the prompt-only contract.
+                // 结构化输出仅针对文本类 Gemini 模型（2.5 和 3.x）有文档说明。图像、
+                // 音频、Live、转写、机器人以及非 Gemini 模型要么拒绝 responseSchema，
+                // 要么忽略它，因此它们只保留仅提示词的约定。
                 if (jsonOutputSupport(model).isSupported) {
                     put("responseMimeType", "application/json")
                     put("responseSchema", IndexedSegmentTranslations.geminiSchema)
@@ -90,8 +90,8 @@ class GeminiProvider : BaseAIProvider() {
     override fun filterChatModels(models: List<AIModel>): List<AIModel> = models
 
     /**
-     * Documented for the text Gemini models (2.5 and 3.x). Image, audio, Live, transcription,
-     * robotics and non-Gemini models either reject `responseSchema` or ignore it.
+     * 仅针对文本类 Gemini 模型（2.5 和 3.x）有文档说明。图像、音频、Live、转写、
+     * 机器人以及非 Gemini 模型要么拒绝 `responseSchema`，要么忽略它。
      */
     override fun jsonOutputSupport(model: String): JsonOutputSupport {
         val id = model.lowercase()
@@ -107,13 +107,11 @@ class GeminiProvider : BaseAIProvider() {
         apiKey: String,
         model: String,
         text: String,
-        nickname: String,
     ): Result<String> = TranslationNetworkHelper.translate(
         this,
         apiKey,
         model,
         text,
-        nickname,
         "$baseUrl/v1beta/models/$model:generateContent",
     )
 }
@@ -127,7 +125,7 @@ class GrokProvider : OpenAIResponsesProvider() {
     override val responsesEndpoint = "$baseUrl/v1/responses"
 
     override fun applyReasoningControls(request: JSONObject, model: String) {
-        // Grok reasoning cannot be disabled; "low" is the lowest documented effort level.
+        // Grok 的推理无法禁用；"low" 是文档中记录的最低思考强度。
         if (model.startsWith("grok-4", ignoreCase = true)) {
             request.put("reasoning", JSONObject().put("effort", "low"))
         }

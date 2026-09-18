@@ -24,7 +24,7 @@ class KimiProvider : AnthropicMessagesProvider() {
     override fun applyReasoningControls(request: JSONObject, model: String) {
         val id = model.lowercase()
         if (id.contains("thinking") || id.startsWith("kimi-k3")) {
-            // Thinking cannot be turned off on these models; use the lowest adaptive effort.
+            // 这些模型无法关闭 Thinking；使用最低的自适应 effort。
             request.put("output_config", JSONObject().put("effort", "low"))
         } else {
             request.put("thinking", JSONObject().put("type", "disabled"))
@@ -32,10 +32,9 @@ class KimiProvider : AnthropicMessagesProvider() {
     }
 
     /**
-     * Moonshot documents `output_config.format` in the OpenAPI description of the
-     * `/anthropic/v1/messages` endpoint this provider calls: the response then follows the given
-     * JSON Schema strictly. It shares `output_config` with `effort`, so the existing value is
-     * merged instead of overwritten.
+     * Moonshot 在本 provider 调用的 `/anthropic/v1/messages` 端点的 OpenAPI 描述中记录了
+     * `output_config.format`：响应随后会严格遵循给定的 JSON Schema。它与 `effort`
+     * 共用 `output_config`，因此合并已有值而不是覆盖。
      */
     override fun jsonOutputSupport(model: String) = JsonOutputSupport.JSON_SCHEMA
 

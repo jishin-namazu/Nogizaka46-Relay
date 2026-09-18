@@ -162,9 +162,10 @@ fun MessageCard(
                         ),
                     )
                 }
-                val canTranslate = remember(message.text, userNickname) {
-                    val text = substituteNickname(message.text, userNickname) ?: message.text
-                    TranslationManager.shouldTranslate(text)
+                // 与翻译器看到的一致：它现在接收原始文本（含占位符），
+                // 因此对于管理器会跳过的文本，按钮不应亮起。
+                val canTranslate = remember(message.text) {
+                    TranslationManager.shouldTranslate(message.text)
                 }
                 if (translationEnabled && canTranslate) {
                     IconButton(onClick = onRetranslate, modifier = Modifier.size(38.dp)) {
@@ -203,7 +204,10 @@ fun MessageCard(
                 }
             }
             if (translationEnabled) {
-                normalizeTranslationText(substituteNickname(message.text, userNickname), message.translation)?.let { transText ->
+                normalizeTranslationText(
+                    substituteNickname(message.text, userNickname),
+                    substituteNickname(message.translation, userNickname),
+                )?.let { transText ->
                     Spacer(Modifier.height(6.dp))
                     SelectionContainer {
                         SearchHighlightText(

@@ -17,8 +17,8 @@ const MIME_BY_EXTENSION = {
   webm: 'video/webm',
 };
 
-// services/media.js publicUrl() emits phone_image URLs for incoming-call
-// backgrounds, so the media server has to serve that kind too.
+// services/media.js 的 publicUrl() 会为来电背景生成 phone_image URL，
+// 因此媒体服务器也必须提供该类型。
 const SERVED_MEDIA_KINDS = ['media', 'thumbnail', 'phone_image'];
 
 function parseMediaRequest(pathname) {

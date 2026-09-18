@@ -50,10 +50,10 @@ import java.time.YearMonth
 import java.time.ZoneId
 
 /**
- * Inclusive start / exclusive end epoch-millisecond bounds used to narrow messages and BLOGs by
- * time. Both bounds are null while the user has not picked a range, so unfiltered queries stay
- * unchanged. Bounds are epoch based because the two tables store ISO timestamps with different
- * offsets ("...Z" for messages, "+09:00" for BLOGs).
+ * 用于按时间筛选消息和 BLOG 的包含起点 / 排除终点的 epoch 毫秒边界。
+ * 用户未选择范围时两个边界都为 null，因此未筛选的查询保持原样。
+ * 边界基于 epoch，因为两张表存储的 ISO 时间戳带有不同偏移
+ * （消息为 "...Z"，BLOG 为 "+09:00"）。
  */
 data class TimeFilter(
     val startMillis: Long? = null,
@@ -65,8 +65,8 @@ data class TimeFilter(
 enum class TimePreset { ALL, TODAY, LAST_7_DAYS, CUSTOM }
 
 /**
- * True when the end day is before the start day. Such a range matches nothing, so the filter dialogs
- * keep 确定 disabled until the user fixes or clears one of the two dates.
+ * 当结束日期早于开始日期时为 true。这样的范围匹配不到任何内容，因此筛选对话框会保持「确定」
+ * 不可用，直到用户修正或清空两个日期之一。
  */
 fun TimeFilter.hasInvertedRange(): Boolean =
     startMillis != null && endMillisExclusive != null && endMillisExclusive <= startMillis
@@ -92,7 +92,7 @@ internal fun customBounds(startDay: LocalDate?, endDay: LocalDate?, zone: ZoneId
     endMillisExclusive = endDay?.plusDays(1)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli(),
 )
 
-/** Maps stored bounds back to a preset so a reopened dialog shows the current choice selected. */
+/** 把已存储的边界映射回预设，使重新打开的对话框显示当前选中的选项。 */
 internal fun matchingPreset(filter: TimeFilter, now: Instant, zone: ZoneId): TimePreset {
     if (!filter.isActive) return TimePreset.ALL
     return listOf(TimePreset.TODAY, TimePreset.LAST_7_DAYS)
@@ -108,9 +108,9 @@ internal fun presetLabel(preset: TimePreset): String = when (preset) {
 }
 
 /**
- * Time part of a filter dialog: one row of preset chips plus a "自定义" calendar icon button that
- * matches their size, and the chosen date range below. The caller owns the draft value, so cancelling
- * the surrounding dialog discards the change.
+ * 筛选对话框的时间部分：一行预设 chip 加一个与它们尺寸一致的「自定义」日历图标按钮，
+ * 下方是所选的日期范围。
+ * 草稿值由调用方持有，因此取消外层对话框会丢弃这次修改。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -120,8 +120,8 @@ fun TimeFilterSection(
     modifier: Modifier = Modifier,
 ) {
     val zone = remember { ZoneId.systemDefault() }
-    // Only initialised when the dialog opens: clearing both dates must keep the custom mode selected
-    // instead of snapping the row back to 全部时间.
+    // 仅在对话框打开时初始化：清空两个日期必须保持自定义模式选中，
+    // 而不是把这一行弹回「全部时间」。
     var preset by remember {
         mutableStateOf(matchingPreset(filter, Instant.now(), zone))
     }
@@ -150,8 +150,8 @@ fun TimeFilterSection(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            // Every item is wrapped in one fixed-height, centre-aligned slot so the preset chips and
-            // the icon button line up whatever internal touch-target padding each component adds.
+            // 每个项目都包在一个固定高度、居中对齐的槽位里，这样无论各组件内部添加多少
+            // 触摸目标内边距，预设 chip 和图标按钮都能对齐。
             TimePreset.values()
                 .filter { it != TimePreset.CUSTOM }
                 .forEach { option ->
@@ -209,7 +209,7 @@ fun TimeFilterSection(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                // Same 32dp height as the preset chips so both rows have the same rhythm.
+                // 与预设 chip 同为 32dp 高度，使两行的节奏一致。
                 Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
                     RangeDateChip(
                         text = startDay?.let(::formatDay) ?: "开始日期",
@@ -232,7 +232,7 @@ fun TimeFilterSection(
 
     picking?.let { target ->
         DayPickerDialog(
-            // No default date: an unset side opens with empty 年 / 月 / 日 selectors.
+            // 没有默认日期：未设置的一侧打开时 年 / 月 / 日 选择器为空。
             initialDay = when (target) {
                 PickTarget.START -> startDay
                 PickTarget.END -> endDay
@@ -240,7 +240,7 @@ fun TimeFilterSection(
             title = if (target == PickTarget.START) "选择开始日期" else "选择结束日期",
             onDismiss = { picking = null },
             onClear = {
-                // Clearing one side keeps the other bound, so the filter becomes open ended.
+                // 清空一侧会保留另一侧边界，因此筛选变为开放区间。
                 if (target == PickTarget.START) {
                     applyCustom(null, endDay)
                 } else {
@@ -260,7 +260,7 @@ fun TimeFilterSection(
     }
 }
 
-/** Preset chip for time filtering styled uniformly with the app filter system. */
+/** 时间筛选的预设 chip，与应用筛选系统保持统一的样式。 */
 @Composable
 private fun TimePresetChip(
     selected: Boolean,
@@ -305,7 +305,7 @@ private fun TimePresetChip(
     }
 }
 
-/** Date field of the custom range, built with the same 10dp / 32dp shape as the preset chips. */
+/** 自定义范围的日期字段，使用与预设 chip 相同的 10dp / 32dp 形状。 */
 @Composable
 private fun RangeDateChip(text: String, onClick: () -> Unit) {
     val shape = RoundedCornerShape(10.dp)
@@ -328,7 +328,7 @@ private fun RangeDateChip(text: String, onClick: () -> Unit) {
     }
 }
 
-/** Standalone 筛选 dialog for screens that only need a time filter. */
+/** 独立筛选对话框，供只需要时间筛选的界面使用。 */
 @Composable
 fun TimeFilterDialog(
     filter: TimeFilter,
@@ -364,8 +364,8 @@ fun TimeFilterDialog(
 }
 
 /**
- * Year / month / day picker built from the app's own Material theme components instead of the
- * platform date dialog, so the 筛选 dialog keeps one consistent look. Each part is chosen in order.
+ * 由应用自身的 Material 主题组件（而非平台日期对话框）构建的年 / 月 / 日选择器，使筛选对话框
+ * 保持统一外观。每个部分按顺序选择。
  */
 @Composable
 private fun DayPickerDialog(
@@ -477,7 +477,7 @@ private fun DayPartSelector(
             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            // Shows only the unit while nothing has been picked yet.
+            // 尚未选择任何值时只显示单位。
             Text(value?.let { "$it$unit" } ?: unit, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
             Icon(
                 Icons.Rounded.ArrowDropDown,
@@ -506,7 +506,7 @@ private fun DayPartSelector(
 
 private const val MIN_YEAR = 2010
 
-/** Shared height of the preset chips and the custom icon button so their centres line up. */
+/** 预设 chip 与自定义图标按钮共用的高度，使它们的中心对齐。 */
 private val FILTER_ROW_HEIGHT = 34.dp
 
 private fun formatDay(day: LocalDate): String = "%04d-%02d-%02d".format(day.year, day.monthValue, day.dayOfMonth)

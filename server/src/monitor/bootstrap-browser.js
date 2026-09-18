@@ -36,7 +36,7 @@ context.on('request', request => {
       authorizationObserved = true;
     }
   } catch {
-    // Ignore non-HTTP requests.
+    // 忽略非 HTTP 请求。
   }
 });
 const page = await context.newPage();

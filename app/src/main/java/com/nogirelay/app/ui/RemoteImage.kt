@@ -2,9 +2,16 @@ package com.nogirelay.app.ui
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.Drawable
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.util.LruCache
+import android.view.ViewGroup
+import android.widget.ImageView
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -29,25 +36,39 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.viewinterop.AndroidView
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.HttpNotFoundException
 import com.nogirelay.app.media.MediaDownloader
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileInputStream
 
-private sealed interface BitmapLoadResult {
-    data class Success(val bitmap: Bitmap) : BitmapLoadResult
-    data object NotFound : BitmapLoadResult
-    data object Error : BitmapLoadResult
+private sealed interface ImageLoadResult {
+    data class Static(val bitmap: Bitmap) : ImageLoadResult
+
+    /**
+     * 动图：BitmapFactory 只会解出第一帧，所以改由 [AnimatedImageDrawable] 播放。它不适合放进
+     * Bitmap LRU（同一个 drawable 自带播放状态，不能被两个 View 共享），因此这里直接带着它。
+     */
+    data class Animated(val drawable: Drawable, val width: Int, val height: Int) : ImageLoadResult {
+        fun aspectRatio(): Float? =
+            if (width > 0 && height > 0) width.toFloat() / height.toFloat() else null
+    }
+
+    data object NotFound : ImageLoadResult
+    data object Error : ImageLoadResult
 }
 
 /**
- * Blog and message photos are published up to ~3700x2800, which decodes to ~40 MB. Decoding that
- * costs tens of milliseconds and is evicted from the small LRU immediately, so every scroll pass
- * decodes again. Sampling down to a screen-sized bitmap keeps decode time and memory sane.
+ * 博客和消息图片最高发布到约 3700x2800，解码后约 40 MB。解码这样的图片要花几十毫秒，而且会
+ * 立刻被小型 LRU 淘汰，于是每次滚动都会重新解码。采样到屏幕大小的位图可让解码时间和内存保持
+ * 在合理范围。
  */
 private const val FALLBACK_DECODE_DIMENSION = 1024
 private const val SIZE_BUCKET_PX = 64
+private const val GIF_HEADER_BYTES = 6
 
 object ImageAspectRatioCache {
     private val cache = LruCache<String, Float>(500)
@@ -69,7 +90,7 @@ object RemoteImageMemoryCache {
         override fun sizeOf(key: String, value: Bitmap): Int =
             (value.allocationByteCount / 1024).coerceAtLeast(1)
     }
-    // Fast-path fallback using URL: retains recent bitmaps so transitions never show blank frames
+    // 使用 URL 的快速路径回退：保留最近的位图，使过渡时不会出现空白帧
     private val urlFallback = LruCache<String, Bitmap>(64)
 
     @Synchronized
@@ -83,6 +104,15 @@ object RemoteImageMemoryCache {
         cache.put(key, bitmap)
         urlFallback.put(url, bitmap)
     }
+}
+
+/**
+ * GIF87a / GIF89a 魔数。单独提取出来，使普通的 JVM 测试无需设备即可锁定该检测逻辑。
+ */
+internal fun isGifSignature(header: ByteArray): Boolean {
+    if (header.size < GIF_HEADER_BYTES) return false
+    val signature = String(header, 0, GIF_HEADER_BYTES, Charsets.US_ASCII)
+    return signature == "GIF87a" || signature == "GIF89a"
 }
 
 @Composable
@@ -116,6 +146,7 @@ fun RemoteImage(
     var bitmap by remember(cacheKey) {
         mutableStateOf(url?.let { RemoteImageMemoryCache.get(cacheKey) ?: RemoteImageMemoryCache.getForUrl(it) })
     }
+    var animated by remember(cacheKey) { mutableStateOf<ImageLoadResult.Animated?>(null) }
 
     LaunchedEffect(cacheKey, loadCachedImmediately, retryCount) {
         if (url != null && (isNotFound || MediaDownloader.isNotFound(context, url))) {
@@ -125,6 +156,7 @@ fun RemoteImage(
         }
         val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
         if (exactCached != null) {
+            animated = null
             bitmap = exactCached
             val ratio = exactCached.width.toFloat() / exactCached.height.toFloat()
             ImageAspectRatioCache.put(url, ratio)
@@ -134,9 +166,10 @@ fun RemoteImage(
         } else {
             url?.let { value ->
                 isError = false
-                when (val result = loadBitmap(context, value, messageType, message, bucketedDimension)) {
-                    is BitmapLoadResult.Success -> {
+                when (val result = loadImage(context, value, messageType, message, bucketedDimension)) {
+                    is ImageLoadResult.Static -> {
                         val loaded = result.bitmap
+                        animated = null
                         RemoteImageMemoryCache.put(cacheKey, value, loaded)
                         val ratio = loaded.width.toFloat() / loaded.height.toFloat()
                         ImageAspectRatioCache.put(value, ratio)
@@ -145,13 +178,26 @@ fun RemoteImage(
                         isError = false
                         isNotFound = false
                     }
-                    BitmapLoadResult.NotFound -> {
+                    is ImageLoadResult.Animated -> {
+                        // 动图不进 Bitmap 缓存；宽高比照样记下来，preserveAspectRatio 的布局才不跳。
                         bitmap = null
+                        animated = result
+                        result.aspectRatio()?.let { ratio ->
+                            ImageAspectRatioCache.put(value, ratio)
+                            knownAspectRatio = ratio
+                        }
+                        isError = false
+                        isNotFound = false
+                    }
+                    ImageLoadResult.NotFound -> {
+                        bitmap = null
+                        animated = null
                         isNotFound = true
                         isError = false
                     }
-                    BitmapLoadResult.Error -> {
+                    ImageLoadResult.Error -> {
                         bitmap = null
+                        animated = null
                         isNotFound = false
                         isError = true
                     }
@@ -160,20 +206,23 @@ fun RemoteImage(
         }
     }
 
-    val currentRatio = bitmap?.let { it.width.toFloat() / it.height.toFloat() } ?: knownAspectRatio
+    val currentRatio = bitmap?.let { it.width.toFloat() / it.height.toFloat() }
+        ?: animated?.aspectRatio()
+        ?: knownAspectRatio
     val boxModifier = if (preserveAspectRatio && currentRatio != null && currentRatio > 0f) {
         modifier.fillMaxWidth().aspectRatio(currentRatio)
     } else {
         modifier
     }
 
-    val finalModifier = if (bitmap == null && isError && !isNotFound) {
+    val hasContent = bitmap != null || animated != null
+    val finalModifier = if (!hasContent && isError && !isNotFound) {
         boxModifier
             .clickable { retryCount++ }
             .background(placeholderColor)
     } else {
         boxModifier.background(
-            if (bitmap != null || placeholderResId != null) Color.Transparent else placeholderColor,
+            if (hasContent || placeholderResId != null) Color.Transparent else placeholderColor,
         )
     }
 
@@ -181,8 +230,16 @@ fun RemoteImage(
         finalModifier,
         contentAlignment = Alignment.Center,
     ) {
+        val animatedImage = animated
         val image = bitmap
-        if (image != null) {
+        if (animatedImage != null) {
+            AnimatedRemoteImage(
+                drawable = animatedImage.drawable,
+                contentDescription = contentDescription,
+                contentScale = contentScale,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else if (image != null) {
             Image(
                 bitmap = image.asImageBitmap(),
                 contentDescription = contentDescription,
@@ -206,15 +263,52 @@ fun RemoteImage(
     }
 }
 
-private suspend fun loadBitmap(
+/**
+ * 博客图里的 GIF 以前只会显示第一帧，因为 BitmapFactory 不解动画。这里把 [AnimatedImageDrawable]
+ * 交给一个普通 ImageView：帧推进由 RenderThread / drawable 自己的 callback 驱动，不依赖按帧重组
+ * Compose，所以列表滚动时也不会额外产生重组。
+ */
+@Composable
+private fun AnimatedRemoteImage(
+    drawable: Drawable,
+    contentDescription: String?,
+    contentScale: ContentScale,
+    modifier: Modifier = Modifier,
+) {
+    AndroidView(
+        factory = { context ->
+            ImageView(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+            }
+        },
+        update = { view ->
+            view.contentDescription = contentDescription
+            view.scaleType = if (contentScale == ContentScale.Crop) {
+                ImageView.ScaleType.CENTER_CROP
+            } else {
+                ImageView.ScaleType.FIT_CENTER
+            }
+            if (view.drawable !== drawable) {
+                view.setImageDrawable(drawable)
+                (drawable as? AnimatedImageDrawable)?.start()
+            }
+        },
+        modifier = modifier,
+    )
+}
+
+private suspend fun loadImage(
     context: Context,
     url: String,
     messageType: MessageType = MessageType.IMAGE,
     message: RelayMessage? = null,
     maxDecodeDimension: Int = FALLBACK_DECODE_DIMENSION,
-): BitmapLoadResult = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
+): ImageLoadResult = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
     if (MediaDownloader.isNotFound(context, url)) {
-        return@withContext BitmapLoadResult.NotFound
+        return@withContext ImageLoadResult.NotFound
     }
     try {
         if (messageType == MessageType.VIDEO && message != null) {
@@ -222,41 +316,77 @@ private suspend fun loadBitmap(
                 ?: MediaDownloader.generateVideoThumbnail(context, message)
             if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
                 val bmp = decodeSampled(thumbFile, maxDecodeDimension)
-                return@withContext if (bmp != null) BitmapLoadResult.Success(bmp) else BitmapLoadResult.Error
+                return@withContext if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
             }
             val explicitThumb = message.thumbnailUrl?.takeIf { it.isNotBlank() }
             if (explicitThumb != null) {
                 if (MediaDownloader.isNotFound(context, explicitThumb)) {
-                    return@withContext BitmapLoadResult.NotFound
+                    return@withContext ImageLoadResult.NotFound
                 }
                 val cached = MediaDownloader.cachedFileForUrl(context, explicitThumb, MessageType.IMAGE)
                 val file = cached ?: MediaDownloader.downloadUrl(context, explicitThumb, MessageType.IMAGE)
                 val bmp = decodeSampled(file, maxDecodeDimension)
-                return@withContext if (bmp != null) BitmapLoadResult.Success(bmp) else BitmapLoadResult.Error
+                return@withContext if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
             }
-            return@withContext BitmapLoadResult.Error
+            return@withContext ImageLoadResult.Error
         }
 
         val uri = Uri.parse(url)
-        val bmp = if (uri.scheme in setOf("android.resource", "content", "file")) {
-            context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+        if (uri.scheme in setOf("android.resource", "content", "file")) {
+            if (uri.scheme == "file") {
+                val file = uri.path?.takeIf { it.isNotBlank() }?.let(::File)
+                if (file != null && file.exists()) return@withContext decodeFileResult(file, maxDecodeDimension)
+            }
+            val bmp = context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+            if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
         } else if (uri.scheme?.lowercase() in setOf("https", "http")) {
             val cached = MediaDownloader.cachedFileForUrl(context, url, messageType)
             val file = cached ?: MediaDownloader.downloadUrl(context, url, messageType)
-            decodeSampled(file, maxDecodeDimension)
+            decodeFileResult(file, maxDecodeDimension)
         } else {
-            null
-        }
-        if (bmp != null) {
-            BitmapLoadResult.Success(bmp)
-        } else {
-            BitmapLoadResult.Error
+            ImageLoadResult.Error
         }
     } catch (e: HttpNotFoundException) {
-        BitmapLoadResult.NotFound
+        ImageLoadResult.NotFound
     } catch (e: Throwable) {
-        BitmapLoadResult.Error
+        ImageLoadResult.Error
     }
+}
+
+/**
+ * 磁盘上已经是本地的文件在这里分流：GIF 动图交给 ImageDecoder（API 28+，动图 / 动图 WebP 都能播），
+ * 其余仍走采样解码，避免大图一次性吃满内存。API 26/27 没有 ImageDecoder，退回第一帧的静态图。
+ */
+private fun decodeFileResult(file: File, maxDecodeDimension: Int): ImageLoadResult {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && looksLikeGif(file)) {
+        val drawable = decodeAnimatedDrawable(file)
+        if (drawable != null) {
+            return ImageLoadResult.Animated(
+                drawable = drawable,
+                width = drawable.intrinsicWidth,
+                height = drawable.intrinsicHeight,
+            )
+        }
+    }
+    val bmp = decodeSampled(file, maxDecodeDimension)
+    return if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
+}
+
+private fun looksLikeGif(file: File): Boolean {
+    return try {
+        val header = ByteArray(GIF_HEADER_BYTES)
+        val read = FileInputStream(file).use { input -> input.read(header) }
+        read == header.size && isGifSignature(header)
+    } catch (error: Throwable) {
+        false
+    }
+}
+
+@RequiresApi(Build.VERSION_CODES.P)
+private fun decodeAnimatedDrawable(file: File): Drawable? = try {
+    ImageDecoder.decodeDrawable(ImageDecoder.createSource(file))
+} catch (error: Throwable) {
+    null
 }
 
 private fun decodeSampled(file: java.io.File, maxDecodeDimension: Int): Bitmap? {

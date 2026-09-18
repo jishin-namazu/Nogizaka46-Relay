@@ -8,9 +8,9 @@ import { recordError } from './error-log.js';
 const DEFAULT_STORAGE_DIR = '/app/nogi-media';
 const MAX_MEDIA_BYTES = Number.parseInt(process.env.MEDIA_MAX_BYTES || `${100 * 1024 * 1024}`, 10);
 
-// Archived files are addressed by content, not by message. Members routinely
-// reuse the same call image across many calls, so identical bytes are stored
-// once and every message row points at that shared object.
+// 归档文件按内容寻址，而不是按消息。成员经常
+// 在多通来电中复用同一张通话图片，因此相同字节只存
+// 一份，每条消息记录都指向那个共享对象。
 const OBJECTS_DIR = 'objects';
 const TEMP_DIR = '.tmp';
 const URL_CACHE_LIMIT = 1000;
@@ -39,7 +39,7 @@ function extensionFor(url, kind, type) {
     const extension = path.extname(new URL(url).pathname).slice(1).toLowerCase();
     if (/^[a-z0-9]{2,5}$/.test(extension)) return extension;
   } catch {
-    // Fall through to a type-based extension.
+    // 退回到基于类型的扩展名。
   }
 
   if (kind === 'thumbnail' || kind === 'phone_image') return 'jpg';
@@ -54,8 +54,8 @@ class MediaArchive {
   constructor({ fetchImpl = globalThis.fetch, storageDir = process.env.MEDIA_STORAGE_DIR || DEFAULT_STORAGE_DIR } = {}) {
     this.fetchImpl = fetchImpl;
     this.storageDir = path.resolve(storageDir);
-    // A URL identifies stable bytes on the official CDN, so remembering the
-    // object per URL avoids re-fetching a member's call image for every call.
+    // 一个 URL 在官方 CDN 上对应稳定的字节，因此按 URL 记住
+    // 对象可以避免每通来电都重新抓取成员的通话图片。
     this.urlObjects = new Map();
   }
 

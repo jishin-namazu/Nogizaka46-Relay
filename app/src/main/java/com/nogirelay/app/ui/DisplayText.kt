@@ -28,12 +28,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 
 /**
- * VS15 (U+FE0E) requests the monochrome "text presentation" of the preceding
- * character. Member messages can contain it (for example "☺︎"), but Android font
- * stacks often have no monochrome glyph for the base character, so the pair is
- * rendered as a tofu box while the plain or emoji-presentation form ("☺" / "☺️")
- * displays fine. The selector is invisible, so dropping it only relaxes the
- * requested presentation; stored messages and translation input stay untouched.
+ * VS15 (U+FE0E) 请求前一个字符使用单色的“文本呈现”形式。
+ * 成员消息中可能包含它（例如 "☺︎"），但 Android 字体栈通常没有
+ * 该基础字符的单色字形，因此这一组合会渲染成豆腐块，而普通形式
+ * 或 emoji 呈现形式（"☺" / "☺️"）却能正常显示。
+ * 该选择符不可见，去掉它只会放宽所请求的呈现方式；
+ * 已存储的消息和翻译输入保持不变。
  */
 private const val TEXT_PRESENTATION_SELECTOR = "\uFE0E"
 
@@ -44,15 +44,15 @@ fun String.withoutTextPresentationSelector(): String =
         this
     }
 
-/** Longest extra characters the excerpt may borrow to start or end on a word boundary. */
+/** 摘录在单词边界处开始或结束时最多可额外借用的字符数。 */
 private const val SNIPPET_WORD_EXTENSION_LIMIT = 10
-/** Maximum gap between adjacent matches to merge them into a single excerpt. */
+/** 相邻匹配之间合并为单个摘录的最大间隔。 */
 private const val SNIPPET_MERGE_GAP = 10
 
 /**
- * Short excerpts around all case-insensitive matches of [query] in [text], or empty when the text
- * does not contain the query. Matches occurring within [mergeGap] characters of each other are
- * merged into a single excerpt so nearby occurrences do not produce duplicate snippets.
+ * 返回 [text] 中所有不区分大小写的 [query] 匹配附近的简短摘录；文本不包含
+ * 查询时返回空列表。彼此间距在 [mergeGap] 个字符以内的匹配会合并为单个摘录，
+ * 避免相邻出现位置产生重复片段。
  */
 fun searchSnippets(
     text: String,
@@ -126,13 +126,13 @@ fun searchSnippets(
 }
 
 /**
- * Short excerpt around the first case-insensitive match of [query] in [text], or null when the text
- * does not contain the query.
+ * 返回 [text] 中第一个不区分大小写的 [query] 匹配附近的简短摘录；文本不
+ * 包含查询时返回 null。
  *
- * Only a little text is kept before the match so the matched term itself is always inside the first
- * line the list can display; the cut points are then moved to the nearest word boundary so the
- * excerpt never starts or ends in the middle of a word. Search results use it as a summary so a list
- * never expands the whole BLOG body.
+ * 匹配之前只保留少量文本，确保匹配词本身始终位于列表
+ * 可显示的第一行内；随后把截断点移到最近的单词边界，
+ * 使摘录绝不会从单词中间开始或结束。搜索结果用它作为
+ * 摘要，因此列表永远不会展开整篇 BLOG 正文。
  */
 fun searchSnippet(text: String, query: String, leading: Int = 12, trailing: Int = 28): String? =
     searchSnippets(text, query, leading, trailing, maxSnippets = 1).firstOrNull()
@@ -229,11 +229,11 @@ fun DrawScope.drawSearchHighlightBoxes(
             } else {
                 (result.getLineBottom(line) - result.getLineTop(line)) * 0.72f
             }
-            // Visual center of character body: baseline - 0.38 * fontSize.
-            // Total height: 1.14 * fontSize (0.76 glyph body + 0.19 top whitespace + 0.19 bottom whitespace).
-            // Top = baseline - 0.95 * fontSize (whitespace = 0.19 * fontSize).
-            // Bottom = baseline + 0.19 * fontSize (whitespace = 0.19 * fontSize).
-            // This guarantees exact 1:1 symmetrical whitespace above and below the text for all font sizes.
+            // 字符主体的视觉中心：baseline - 0.38 * fontSize。
+            // 总高度：1.14 * fontSize（0.76 字形主体 + 0.19 上方空白 + 0.19 下方空白）。
+            // 顶部 = baseline - 0.95 * fontSize（空白 = 0.19 * fontSize）。
+            // 底部 = baseline + 0.19 * fontSize（空白 = 0.19 * fontSize）。
+            // 这保证了所有字号下文本上下方空白都精确地 1:1 对称。
             val top = baseline - 0.95f * lineFontSizePx
             val bottom = baseline + 0.19f * lineFontSizePx
 

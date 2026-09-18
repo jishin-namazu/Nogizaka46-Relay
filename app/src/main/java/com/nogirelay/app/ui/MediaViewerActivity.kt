@@ -402,7 +402,7 @@ private fun ImageViewer(
 
         val currentMessage = messages[pagerState.currentPage]
 
-        // Top bar
+        // 顶栏
         AnimatedVisibility(
             visible = controlsVisible,
             enter = fadeIn(animationSpec = tween(200)),
@@ -567,7 +567,7 @@ private fun VideoPlayer(
         }
     }
 
-    // Load / cache local video file
+    // 加载 / 缓存本地视频文件
     LaunchedEffect(message.id, message.mediaUrl) {
         val path = withContext(Dispatchers.IO) {
             runCatching {
@@ -577,7 +577,7 @@ private fun VideoPlayer(
         videoPath = path
     }
 
-    // Auto-hide controls after 2 seconds when playing
+    // 播放时 2 秒后自动隐藏控制栏
     LaunchedEffect(controlsVisible, videoPlaying, lastInteractionTime) {
         if (controlsVisible && videoPlaying) {
             delay(2000)
@@ -585,7 +585,7 @@ private fun VideoPlayer(
         }
     }
 
-    // Keep duration updated if not populated initially
+    // 如果初始未填充，保持时长更新
     LaunchedEffect(isPrepared) {
         while (isPrepared && duration <= 0) {
             videoView?.let { vv ->
@@ -622,7 +622,7 @@ private fun VideoPlayer(
     ) {
         val path = videoPath
 
-        // Scalable Video Content Layer
+        // 可缩放的视频内容层
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -645,7 +645,7 @@ private fun VideoPlayer(
                 }
                 .transformable(videoTransformState),
         ) {
-            // Video View Layer
+            // VideoView 层
             if (path != null) {
                 AndroidView(
                     factory = { viewContext ->
@@ -684,7 +684,7 @@ private fun VideoPlayer(
                 )
             }
 
-            // Thumbnail cover shown only before prepared
+            // 仅在准备完成前显示的缩略图封面
             if (!isPrepared) {
                 RemoteImage(
                     url = message.thumbnailUrl ?: message.mediaUrl,
@@ -697,9 +697,9 @@ private fun VideoPlayer(
                 )
             }
 
-            // Transparent Gesture Layer over VideoView inside the transformed container
-            // Single tap: toggle controls
-            // Double tap: reset zoom if zoomed in, otherwise toggle play / pause
+            // 位于变换容器内、覆盖在 VideoView 之上的透明手势层
+            // 单击：切换控制栏
+            // 双击：已放大时重置缩放，否则切换播放 / 暂停
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -735,7 +735,7 @@ private fun VideoPlayer(
             )
         }
 
-        // Loading spinner when video is preparing or downloading
+        // 视频准备或下载中时的加载指示器
         if (path == null || !isPrepared) {
             CircularProgressIndicator(
                 color = Color.White,
@@ -743,7 +743,7 @@ private fun VideoPlayer(
             )
         }
 
-        // Controls Overlay Layer (Top Bar, Center Play/Pause/Replay, Bottom Bar)
+        // 控制栏覆盖层（顶栏、中央播放/暂停/重播、底栏）
         AnimatedVisibility(
             visible = controlsVisible && isPrepared,
             enter = fadeIn(animationSpec = tween(200)),
@@ -751,7 +751,7 @@ private fun VideoPlayer(
             modifier = Modifier.fillMaxSize(),
         ) {
             Box(Modifier.fillMaxSize()) {
-                // Top Bar
+                // 顶栏
                 MediaViewerTopBar(
                     title = message.memberName,
                     pageIndicator = null,
@@ -765,7 +765,7 @@ private fun VideoPlayer(
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
 
-                // Center Play/Pause/Replay Button
+                // 中央播放/暂停/重播按钮
                 IconButton(
                     onClick = {
                         togglePlayPause()
@@ -789,7 +789,7 @@ private fun VideoPlayer(
                     )
                 }
 
-                // Bottom Bar (Play/Pause, Time, Slider, Duration)
+                // 底栏（播放/暂停、时间、进度条、时长）
                 VideoBottomBar(
                     videoView = videoView,
                     videoPlaying = videoPlaying,

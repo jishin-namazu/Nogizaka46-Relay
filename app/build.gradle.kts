@@ -16,12 +16,12 @@ val relayAccessTokenLiteral = relayAccessToken
     .replace("\r", "\\r")
     .replace("\n", "\\n")
 
-// Opt-in simplified UI build: hides debug actions (such as test call) for a cleaner UI experience,
-// while preserving server address and token fields for user configuration.
-// Enabled with -PrelaySimpleUi=true; default builds are unchanged.
+// 可选的精简 UI 构建：隐藏调试操作（例如测试调用）以获得更清爽的 UI 体验，
+// 同时保留服务器地址和令牌字段供用户配置。
+// 通过 -PrelaySimpleUi=true 启用；默认构建不变。
 val relaySimpleUi = (project.findProperty("relaySimpleUi") as String?)?.trim()?.toBoolean() ?: false
-// Optional build-time default relay address. Empty (the default) means a plain
-// build prefills nothing, so no server address is baked into the APK.
+// 可选的构建时默认 relay 地址。为空（默认值）表示普通
+// 构建不会预填任何内容，因此不会把服务器地址固化进 APK。
 val relayBaseUrl = localProperties.getProperty("relay.baseUrl").orEmpty()
 val relayBaseUrlLiteral = relayBaseUrl
     .replace("\\", "\\\\")

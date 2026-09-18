@@ -39,8 +39,8 @@ class RelayClient {
     }
 
     /**
-     * Total number of messages the relay will hand out, from GET /v1/messages/stats/summary. The
-     * server counts with the same non-test predicate the list uses, so it lines up with [fetchMessages].
+     * relay 将给出的消息总数，来自 GET /v1/messages/stats/summary。服务器
+     * 使用与列表相同的非测试谓词计数，因此它与 [fetchMessages] 一致。
      */
     fun fetchMessageCount(settings: AppSettings): Int {
         val baseUrl = settings.relayUrl.ifEmpty { ApiConfig.BASE_URL }

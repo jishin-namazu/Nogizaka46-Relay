@@ -21,7 +21,7 @@ function parseTimestamp(value) {
 
 /**
  * GET /v1/admin/error-logs
- * Read sanitized, durable error logs from the mounted volume.
+ * 从挂载的卷中读取经过脱敏的持久化错误日志。
  */
 router.get('/error-logs', async (req, res) => {
   const requestedLimit = req.query.limit == null ? 100 : Number(req.query.limit);
@@ -84,7 +84,7 @@ router.get('/error-logs', async (req, res) => {
 
 /**
  * POST /v1/admin/browser-session
- * Upload new browser session state without redeployment
+ * 无需重新部署即可上传新的浏览器会话状态
  */
 router.post('/browser-session', async (req, res) => {
   try {
@@ -97,7 +97,7 @@ router.post('/browser-session', async (req, res) => {
       });
     }
 
-    // Validate session structure
+    // 校验会话结构
     if (!session.cookies || !Array.isArray(session.cookies)) {
       return res.status(400).json({
         success: false,
@@ -112,7 +112,7 @@ router.post('/browser-session', async (req, res) => {
       });
     }
 
-    // Get the state file path from environment or use default
+    // 从环境变量获取状态文件路径，否则使用默认值
     const stateFilePath = process.env.NOGI_BROWSER_STATE_FILE || '/data/nogi-browser-state.json';
     const { uploadStatusFilePath, activationStatusFilePath } = browserSessionPaths(stateFilePath);
     const serializedSession = JSON.stringify(session, null, 2);
@@ -156,7 +156,7 @@ router.post('/browser-session', async (req, res) => {
 
 /**
  * GET /v1/admin/browser-session/status
- * Check if browser session file exists and when it was last modified
+ * 检查浏览器会话文件是否存在以及最后修改时间
  */
 router.get('/browser-session/status', async (req, res) => {
   try {

@@ -87,7 +87,15 @@ class BlogClient {
                 val rawName = member.optString("name").trim()
                 val isStaff = id == "10001" || rawName == "乃木坂46" || rawName.contains("運営") || rawName.contains("スタッフ")
                 val name = if (isStaff) "運営スタッフ" else rawName.ifBlank { "乃木坂46" }
-                val category = if (isStaff) "運営スタッフ" else member.optString("cate").trim().ifBlank { "其他" }
+                val category = if (isStaff) {
+                    "運営スタッフ"
+                } else {
+                    BlogMemberCategories.normalizeCategory(
+                        id,
+                        rawName,
+                        member.optString("cate").trim().ifBlank { "其他" },
+                    )
+                }
                 add(
                     BlogMember(
                         id = id,
@@ -95,6 +103,7 @@ class BlogClient {
                         category = category,
                         avatarUrl = officialUrl(member.optString("img")),
                         displayOrder = if (isStaff) 9999 else index,
+                        graduated = !isStaff && member.optString("graduation").equals("YES", ignoreCase = true),
                     ),
                 )
             }

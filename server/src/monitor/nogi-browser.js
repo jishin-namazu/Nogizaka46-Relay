@@ -28,9 +28,9 @@ const DEFAULT_MACHINE_MEMORY_RESTART_MB = 700;
 const CGROUP_MEMORY_CURRENT_FILE = '/sys/fs/cgroup/memory.current';
 const CGROUP_MEMORY_MAX_FILE = '/sys/fs/cgroup/memory.max';
 export const TOKEN_RESTART_GUARD_MS = 3 * 60_000;
-// The official web TokenManager refreshes within roughly ten seconds of
-// expiry. Enter its window instead of navigating early and waiting for a
-// different token that the page is not ready to issue yet.
+// 官方 Web 端 TokenManager 大约会在过期前
+// 十秒内刷新。应进入它的刷新窗口，而不是提前跳转、等待一个
+// 页面尚未准备好签发的不同 token。
 export const ACCESS_TOKEN_REFRESH_SKEW_MS = 9_000;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -110,9 +110,9 @@ function memoryMegabytes(bytes) {
 }
 
 /**
- * Uses the official web app as the authentication client. The page owns the
- * refresh-token flow; this worker only observes the short-lived access token
- * on ordinary API requests and keeps it in memory for timeline polling.
+ * 使用官方 Web 应用作为认证客户端。页面负责
+ * refresh-token 流程；这个 worker 只在普通 API 请求上观察短时效的 access token，
+ * 并将其保存在内存中供时间线轮询使用。
  */
 class NogiBrowserMonitor {
   constructor({
@@ -165,8 +165,8 @@ class NogiBrowserMonitor {
       Number.parseInt(process.env.NOGI_BROWSER_REQUEST_TIMEOUT_SECONDS || '30', 10) * 1000,
       10_000,
     );
-    // The periodic restart is opt-in: unset, 0, negative or non-numeric all
-    // disable it, and the cgroup memory trigger stays active.
+    // 周期性重启是可选启用的：未设置、为 0、负数或非数值都会
+    // 将其禁用，而 cgroup 内存触发条件仍然生效。
     const restartIntervalSeconds = Number.parseInt(
       process.env.NOGI_BROWSER_RESTART_INTERVAL_SECONDS ?? '',
       10,
@@ -270,9 +270,9 @@ class NogiBrowserMonitor {
       const isNew = typeof saveResult === 'object' && saveResult !== null && 'isNew' in saveResult
         ? Boolean(saveResult.isNew)
         : Boolean(saveResult);
-      // Push the persisted row, not the normalized object: only the row carries
-      // media_local_path/thumbnail_local_path/phone_image_local_path, so the FCM
-      // payload points at the protected Relay archive instead of the upstream CDN.
+      // 推送已持久化的行，而不是规范化后的对象：只有该行才带有
+      // media_local_path/thumbnail_local_path/phone_image_local_path，因此 FCM
+      // 载荷指向受保护的 Relay 归档，而不是上游 CDN。
       const pushTarget = typeof saveResult === 'object' && saveResult !== null && saveResult.message
         ? saveResult.message
         : message;
@@ -762,9 +762,9 @@ class NogiBrowserMonitor {
 
     this.consecutiveAuthFailures = 0;
 
-    // The page commits the rotated refresh token asynchronously. Coalesce
-    // successful update responses and persist exactly once in the background;
-    // token refresh must not wait on Chromium storage serialization.
+    // 页面会异步提交轮转后的 refresh token。合并
+    // 成功的更新响应并在后台只持久化一次；
+    // token 刷新不必等待 Chromium 的存储序列化。
     this.scheduleTokenStoragePersistence();
   }
 
@@ -827,9 +827,9 @@ class NogiBrowserMonitor {
 
   async apiRequest(pathname, { retryAuth = true, sessionActivation = false } = {}) {
     this.assertBrowserActivityAllowed({ sessionActivation });
-    // Match the official web TokenManager: refresh near expiry when possible,
-    // but still try the current token if that proactive refresh cannot finish.
-    // A real 401 below remains the authoritative signal and gets one refresh + retry.
+    // 与官方 Web 端 TokenManager 保持一致：尽可能在临近过期时刷新，
+    // 但如果主动刷新无法完成，仍然尝试当前 token。
+    // 下面真正的 401 仍是权威信号，会获得一次刷新 + 重试。
     if (retryAuth && this.shouldRefreshAccessToken()) {
       try {
         await this.refreshFrontendSession({ requireNewToken: true });
@@ -1169,8 +1169,8 @@ class NogiBrowserMonitor {
     const uploadStatusFileName = path.basename(uploadStatusFilePath);
     await fs.mkdir(directory, { recursive: true });
 
-    // Establish a baseline before subscribing. The reconciliation pass below
-    // then catches changes in the small gap between this read and watch().
+    // 在订阅之前先建立基线。下面的对账流程
+    // 随后会捕获这次读取与 watch() 之间微小间隙中的变化。
     try {
       const initialSession = await readBrowserSession(this.storageStateFile);
       this.lastPersistedStorageVersion = initialSession.version;
@@ -1272,8 +1272,8 @@ class NogiBrowserMonitor {
         updatedAt: new Date().toISOString(),
       });
 
-      // Keep the uploaded snapshot in memory and prevent the old context from
-      // overwriting it while the browser is being replaced.
+      // 将上传的快照保留在内存中，并防止旧上下文在
+      // 浏览器被替换时覆盖它。
       this.suspendStoragePersistence = true;
 
       console.log('关闭当前浏览器实例...');
@@ -1288,9 +1288,9 @@ class NogiBrowserMonitor {
 
       console.log('使用新会话重新打开浏览器...');
       await this.openBrowser(newStorageState, { sessionActivation: true });
-      // Do not let a token persisted from the previous browser session make a
-      // newly uploaded session look valid. Activation must observe a request
-      // produced by the uploaded website state itself.
+      // 不要让上一个浏览器会话持久化的 token 使
+      // 新上传的会话看起来有效。激活必须观察到由上传的站点状态
+      // 自身产生的请求。
       this.accessToken = '';
       this.observedTokenAt = 0;
       await this.refreshFrontendSession({ sessionActivation: true });

@@ -69,25 +69,45 @@ object MediaDownloader {
         return File(File(context.filesDir, "media-cache"), "$digest.notfound")
     }
 
+    /** 清除缓存的 404 标记；存档导入可能提供此前缺失的字节。 */
+    fun clearNotFound(context: Context, url: String) {
+        if (url.isBlank()) return
+        notFoundUrls.remove(url)
+        runCatching { notFoundMarkerFile(context.applicationContext, url).delete() }
+    }
+
     data class SavedDownload(val uri: Uri, val displayName: String)
 
-    /** Downloads a message's media once and returns the private local file. */
+    /**
+     * 把一条消息所需的全部内容下载到本地：主媒体、生成的视频封面，
+     * 以及消息携带的来电全屏照片（若有）。
+     * 来电照片会提前缓存，使真实来电无需等待网络，并让存档导出能一并携带；
+     * 照片缺失绝不会导致消息本身失败。
+     */
     fun enqueueIfNeeded(context: Context, message: RelayMessage): File? {
-        val mediaUrl = mediaUrlFor(message) ?: return null
-        val file = downloadUrl(context.applicationContext, mediaUrl, message.type)
-        
+        val appContext = context.applicationContext
+        val mediaUrl = mediaUrlFor(message)
+        val file = mediaUrl?.let { downloadUrl(appContext, it, message.type) }
+
         // 如果是视频，下载完成后生成高清缩略图
         if (message.type == MessageType.VIDEO) {
-            generateVideoThumbnail(context.applicationContext, message)
+            generateVideoThumbnail(appContext, message)
         }
-        
+
+        // 只有语音消息会触发全屏来电，因此只有它需要缓存照片。
+        if (message.type == MessageType.AUDIO) {
+            message.phoneImageUrl?.takeIf { it.isNotBlank() }?.let { photo ->
+                runCatching { downloadUrl(appContext, photo, MessageType.IMAGE) }
+            }
+        }
+
         return file
     }
 
     /**
-     * Copies a cached/downloaded media file to the system Download directory.
-     * Background pre-fetches continue to use the private cache; only an explicit
-     * user download calls this method.
+     * 把已缓存/已下载的媒体文件复制到系统 Download 目录。
+     * 后台预取继续使用私有缓存；
+     * 只有用户显式下载才会调用此方法。
      */
     fun saveToDownloads(context: Context, message: RelayMessage): SavedDownload {
         require(message.type != MessageType.TEXT) { "文字消息没有可保存的媒体" }
@@ -106,7 +126,7 @@ object MediaDownloader {
         }
     }
 
-    /** Saves one image URL to the public Download directory with a caller-provided name. */
+    /** 把一个图片 URL 以调用方提供的名称保存到公共 Download 目录。 */
     fun saveImageUrlToDownloads(context: Context, url: String, baseName: String): SavedDownload {
         if (needsLegacyWritePermission(context)) error("请先允许存储权限")
         val source = downloadUrl(context.applicationContext, url, MessageType.IMAGE)
@@ -135,7 +155,7 @@ object MediaDownloader {
         return file.takeIf { it.isFile && it.length() > 0L }
     }
 
-    /** Returns whether a cached video contains an audio track, or null when it is not cached/readable. */
+    /** 返回已缓存视频是否包含音轨；未缓存或不可读时返回 null。 */
     fun cachedVideoHasAudioTrack(context: Context, message: RelayMessage): Boolean? {
         if (message.type != MessageType.VIDEO) return null
         val mediaUrl = mediaUrlFor(message) ?: return null
@@ -153,7 +173,7 @@ object MediaDownloader {
         }.getOrNull()
     }
 
-    /** Returns an existing private file or downloads the URL into one. */
+    /** 返回已有的私有文件，或把该 URL 下载为一个私有文件。 */
     fun downloadUrl(context: Context, url: String, type: MessageType): File {
         require(url.isNotBlank()) { "媒体地址为空" }
         val appContext = context.applicationContext
@@ -250,7 +270,7 @@ object MediaDownloader {
         }
     }
 
-    /** MediaStore.Downloads only exists from API 29; both callers guard with an SDK check. */
+    /** MediaStore.Downloads 从 API 29 起才存在；两个调用方都用 SDK 检查做保护。 */
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun saveWithMediaStore(
         context: Context,
@@ -359,13 +379,19 @@ object MediaDownloader {
         }
     }
 
-    private fun cacheFile(context: Context, url: String, type: MessageType): File {
+    /**
+     * [url] 的绝对缓存路径。与存档导入器共用，使恢复的媒体正好落在读取方查找的位置，
+     * 无需更改 schema 或进行网络往返。
+     */
+    fun cacheFileForUrl(context: Context, url: String, extension: String): File {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(url.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
-        val extension = extensionFor(url, type)
-        return File(File(context.filesDir, "media-cache"), "$digest.$extension")
+        return File(File(context.applicationContext.filesDir, "media-cache"), "$digest.$extension")
     }
+
+    private fun cacheFile(context: Context, url: String, type: MessageType): File =
+        cacheFileForUrl(context, url, extensionFor(url, type))
 
     private fun extensionFor(url: String, type: MessageType): String {
         val path = Uri.parse(url).path.orEmpty()
