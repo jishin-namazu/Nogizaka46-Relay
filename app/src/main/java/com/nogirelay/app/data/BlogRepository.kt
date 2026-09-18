@@ -1,7 +1,7 @@
 package com.nogirelay.app.data
 
 import com.nogirelay.app.blog.BlogContentParser
-import com.nogirelay.app.ui.searchSnippet
+import com.nogirelay.app.ui.searchSnippets
 import kotlinx.coroutines.withContext
 
 data class BlogPageRequest(
@@ -78,13 +78,20 @@ class BlogRepository(
     ): Map<String, List<BlogSearchPreview>> = database.blogSearchSources(posts.map(BlogSummary::id))
         .mapNotNull { source ->
             val excerpts = buildList {
-                searchSnippet(
+                val originalSnippets = searchSnippets(
                     BlogContentParser.plainText(BlogContentParser.blocks(source.bodyHtml)),
                     query,
-                )?.let { add(BlogSearchPreview("原文", it)) }
+                )
+                originalSnippets.forEachIndexed { index, snippet ->
+                    val label = if (originalSnippets.size > 1) "原文 ${index + 1}" else "原文"
+                    add(BlogSearchPreview(label, snippet))
+                }
                 if (translationEnabled) {
-                    searchSnippet(translationText(source.translation), query)
-                        ?.let { add(BlogSearchPreview("译文", it)) }
+                    val translatedSnippets = searchSnippets(translationText(source.translation), query)
+                    translatedSnippets.forEachIndexed { index, snippet ->
+                        val label = if (translatedSnippets.size > 1) "译文 ${index + 1}" else "译文"
+                        add(BlogSearchPreview(label, snippet))
+                    }
                 }
             }
             excerpts.takeIf { it.isNotEmpty() }?.let { source.id to it }

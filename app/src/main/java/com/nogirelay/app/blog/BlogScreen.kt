@@ -118,7 +118,7 @@ import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterSection
 import com.nogirelay.app.ui.hasInvertedRange
 import com.nogirelay.app.ui.highlightMatches
-import com.nogirelay.app.ui.searchSnippet
+import com.nogirelay.app.ui.searchSnippets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -247,13 +247,20 @@ fun BlogScreen(
                         // both excerpts are shown when both contain it. The label follows the source,
                         // so a translation-only match is never labelled as the original.
                         val excerpts = buildList {
-                            searchSnippet(
+                            val originalSnippets = searchSnippets(
                                 BlogContentParser.plainText(BlogContentParser.blocks(source.bodyHtml)),
                                 query,
-                            )?.let { add(BlogSearchPreview("原文", it)) }
+                            )
+                            originalSnippets.forEachIndexed { index, snippet ->
+                                val label = if (originalSnippets.size > 1) "原文 ${index + 1}" else "原文"
+                                add(BlogSearchPreview(label, snippet))
+                            }
                             if (translationEnabled) {
-                                searchSnippet(translatedBlogText(source.translation), query)
-                                    ?.let { add(BlogSearchPreview("译文", it)) }
+                                val translatedSnippets = searchSnippets(translatedBlogText(source.translation), query)
+                                translatedSnippets.forEachIndexed { index, snippet ->
+                                    val label = if (translatedSnippets.size > 1) "译文 ${index + 1}" else "译文"
+                                    add(BlogSearchPreview(label, snippet))
+                                }
                             }
                         }
                         excerpts.takeIf { it.isNotEmpty() }?.let { source.id to it }
@@ -861,6 +868,7 @@ private fun BlogSummaryCard(
 ) {
     val highlightBackground = MaterialTheme.colorScheme.primaryContainer
     val highlightText = MaterialTheme.colorScheme.onPrimaryContainer
+    var isPreviewsExpanded by remember(blog.id, searchQuery) { mutableStateOf(false) }
     Card(
         onClick = onClick,
         shape = RelayCardShape,
@@ -944,9 +952,15 @@ private fun BlogSummaryCard(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
-                // Excerpts around the matched term: the original body and, when it also matches,
-                // its translation are shown separately.
-                bodyPreviews.forEach { preview ->
+                // Excerpts around the matched term: all occurrences in original body and,
+                // when it also matches, its translation are shown.
+                val visiblePreviews = if (isPreviewsExpanded || bodyPreviews.size <= 3) {
+                    bodyPreviews
+                } else {
+                    bodyPreviews.take(3)
+                }
+
+                visiblePreviews.forEach { preview ->
                     // Baseline alignment keeps the smaller 原文/译文 label on the same line as the excerpt.
                     Row(modifier = Modifier.padding(top = 6.dp)) {
                         Text(
@@ -973,6 +987,34 @@ private fun BlogSummaryCard(
                             modifier = Modifier
                                 .weight(1f)
                                 .alignByBaseline(),
+                        )
+                    }
+                }
+
+                if (bodyPreviews.size > 3) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable { isPreviewsExpanded = !isPreviewsExpanded }
+                            .padding(vertical = 2.dp, horizontal = 4.dp),
+                    ) {
+                        Text(
+                            if (isPreviewsExpanded) "收起匹配项" else "展开剩余 ${bodyPreviews.size - 3} 处匹配",
+                            color = BrandPurple,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Icon(
+                            Icons.Rounded.ArrowDropDown,
+                            contentDescription = if (isPreviewsExpanded) "收起" else "展开",
+                            tint = BrandPurple,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .graphicsLayer {
+                                    rotationZ = if (isPreviewsExpanded) 180f else 0f
+                                },
                         )
                     }
                 }

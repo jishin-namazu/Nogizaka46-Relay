@@ -46,6 +46,84 @@ fun String.withoutTextPresentationSelector(): String =
 
 /** Longest extra characters the excerpt may borrow to start or end on a word boundary. */
 private const val SNIPPET_WORD_EXTENSION_LIMIT = 10
+/** Maximum gap between adjacent matches to merge them into a single excerpt. */
+private const val SNIPPET_MERGE_GAP = 10
+
+/**
+ * Short excerpts around all case-insensitive matches of [query] in [text], or empty when the text
+ * does not contain the query. Matches occurring within [mergeGap] characters of each other are
+ * merged into a single excerpt so nearby occurrences do not produce duplicate snippets.
+ */
+fun searchSnippets(
+    text: String,
+    query: String,
+    leading: Int = 12,
+    trailing: Int = 28,
+    mergeGap: Int = SNIPPET_MERGE_GAP,
+    maxSnippets: Int = Int.MAX_VALUE,
+): List<String> {
+    val needle = query.trim()
+    if (needle.isEmpty()) return emptyList()
+
+    val flattened = text.replace(Regex("\\s+"), " ").trim()
+    if (flattened.isEmpty()) return emptyList()
+
+    class Match(val start: Int, val end: Int)
+
+    val matches = mutableListOf<Match>()
+    var cursor = 0
+    while (cursor < flattened.length) {
+        val matchStart = flattened.indexOf(needle, startIndex = cursor, ignoreCase = true)
+        if (matchStart < 0) break
+        val matchEnd = matchStart + needle.length
+        matches.add(Match(matchStart, matchEnd))
+        cursor = matchStart + maxOf(1, needle.length)
+    }
+    if (matches.isEmpty()) return emptyList()
+
+    class MatchCluster(val start: Int, var end: Int)
+
+    val clusters = mutableListOf<MatchCluster>()
+    for (match in matches) {
+        if (clusters.isEmpty()) {
+            clusters.add(MatchCluster(match.start, match.end))
+        } else {
+            val last = clusters.last()
+            if (match.start - last.end <= mergeGap) {
+                last.end = maxOf(last.end, match.end)
+            } else {
+                clusters.add(MatchCluster(match.start, match.end))
+            }
+        }
+    }
+
+    val snippets = mutableListOf<String>()
+    for (cluster in clusters.take(maxSnippets)) {
+        var start = (cluster.start - leading).coerceAtLeast(0)
+        var end = (cluster.end + trailing).coerceAtMost(flattened.length)
+
+        if (start > 0) {
+            val boundary = flattened.lastIndexOf(' ', start)
+            if (boundary >= 0) {
+                val extended = boundary + 1
+                if (start - extended <= SNIPPET_WORD_EXTENSION_LIMIT) start = extended
+            }
+        }
+        if (end < flattened.length) {
+            val boundary = flattened.indexOf(' ', end)
+            if (boundary >= 0 && boundary - end <= SNIPPET_WORD_EXTENSION_LIMIT) end = boundary
+        }
+
+        val snippet = buildString {
+            if (start > 0) append("…")
+            append(flattened.substring(start, end))
+            if (end < flattened.length) append("…")
+        }
+        snippets.add(snippet)
+    }
+
+    return snippets
+}
 
 /**
  * Short excerpt around the first case-insensitive match of [query] in [text], or null when the text
@@ -56,35 +134,8 @@ private const val SNIPPET_WORD_EXTENSION_LIMIT = 10
  * excerpt never starts or ends in the middle of a word. Search results use it as a summary so a list
  * never expands the whole BLOG body.
  */
-fun searchSnippet(text: String, query: String, leading: Int = 12, trailing: Int = 28): String? {
-    val needle = query.trim()
-    if (needle.isEmpty()) return null
-
-    val flattened = text.replace(Regex("\\s+"), " ").trim()
-    val matchStart = flattened.indexOf(needle, ignoreCase = true)
-    if (matchStart < 0) return null
-
-    var start = (matchStart - leading).coerceAtLeast(0)
-    var end = (matchStart + needle.length + trailing).coerceAtMost(flattened.length)
-
-    if (start > 0) {
-        val boundary = flattened.lastIndexOf(' ', start)
-        if (boundary >= 0) {
-            val extended = boundary + 1
-            if (start - extended <= SNIPPET_WORD_EXTENSION_LIMIT) start = extended
-        }
-    }
-    if (end < flattened.length) {
-        val boundary = flattened.indexOf(' ', end)
-        if (boundary >= 0 && boundary - end <= SNIPPET_WORD_EXTENSION_LIMIT) end = boundary
-    }
-
-    return buildString {
-        if (start > 0) append("…")
-        append(flattened.substring(start, end))
-        if (end < flattened.length) append("…")
-    }
-}
+fun searchSnippet(text: String, query: String, leading: Int = 12, trailing: Int = 28): String? =
+    searchSnippets(text, query, leading, trailing, maxSnippets = 1).firstOrNull()
 
 fun highlightMatches(
     text: String,

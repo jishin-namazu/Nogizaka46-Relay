@@ -51,4 +51,38 @@ class DisplayTextTest {
         val snippet = searchSnippet(text, "ライブ")
         assertTrue(snippet != null && snippet.contains("ライブ"))
     }
+
+    @Test
+    fun testSearchSnippetsMultipleDisjoint() {
+        val text = "第1段落でライブが開催されました。その間にはとても長い文章が入ります。第2段落でもライブの感想を述べています。"
+        val snippets = searchSnippets(text, "ライブ")
+        assertEquals(2, snippets.size)
+        assertTrue(snippets[0].contains("第1段落"))
+        assertTrue(snippets[0].contains("ライブ"))
+        assertTrue(snippets[1].contains("第2段落"))
+        assertTrue(snippets[1].contains("ライブ"))
+    }
+
+    @Test
+    fun testSearchSnippetsOverlappingMerged() {
+        val text = "ライブとライブが連続する場合のテストです。"
+        val snippets = searchSnippets(text, "ライブ")
+        // Overlapping/adjacent occurrences should merge into 1 snippet
+        assertEquals(1, snippets.size)
+        assertTrue(snippets[0].contains("ライブとライブ"))
+    }
+
+    @Test
+    fun testSearchSnippetsMaxLimit() {
+        val text = "AライブB 12345678901234567890 CライブD 12345678901234567890 EライブF"
+        val snippets = searchSnippets(text, "ライブ", maxSnippets = 2)
+        assertEquals(2, snippets.size)
+    }
+
+    @Test
+    fun testSearchSnippetsNoMatchOrEmpty() {
+        assertEquals(0, searchSnippets("乃木坂46", "櫻坂").size)
+        assertEquals(0, searchSnippets("", "乃木坂").size)
+        assertEquals(0, searchSnippets("乃木坂46", "   ").size)
+    }
 }
