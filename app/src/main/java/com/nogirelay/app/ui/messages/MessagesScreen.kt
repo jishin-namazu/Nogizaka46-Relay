@@ -257,10 +257,16 @@ fun MessagesScreen(
     AutoClearSelectionOnExit(isActive = isActive)
 
     val selected = selectedMemberId
-    BackHandler(enabled = isActive && selected != null) {
+    BackHandler(enabled = isActive && (selected != null || searchQuery.isNotEmpty())) {
         focusManager.clearFocus()
         textToolbar.hide()
-        selectedMemberId = null
+        if (searchQuery.isNotEmpty()) {
+            searchQuery = ""
+            currentPage = 0
+            pageInput = "1"
+        } else if (selected != null) {
+            selectedMemberId = null
+        }
     }
     Crossfade(
         targetState = selected,
@@ -555,9 +561,15 @@ fun MessagesScreen(
                         IconButton(onClick = {
                             focusManager.clearFocus()
                             textToolbar.hide()
-                            selectedMemberId = null
+                            if (searchQuery.isNotEmpty()) {
+                                searchQuery = ""
+                                currentPage = 0
+                                pageInput = "1"
+                            } else {
+                                selectedMemberId = null
+                            }
                         }) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回成员列表", tint = MaterialTheme.colorScheme.onSurface)
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = if (searchQuery.isNotEmpty()) "清空搜索" else "返回成员列表", tint = MaterialTheme.colorScheme.onSurface)
                         }
                         Text(
                             text = thread?.name ?: "成员消息",

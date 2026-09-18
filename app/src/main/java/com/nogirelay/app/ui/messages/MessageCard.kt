@@ -68,6 +68,7 @@ import com.nogirelay.app.ui.BrandPurpleDark
 import com.nogirelay.app.ui.BrandPurpleLight
 import com.nogirelay.app.ui.RelayCardShape
 import com.nogirelay.app.ui.RemoteImage
+import com.nogirelay.app.ui.SearchHighlightText
 import com.nogirelay.app.ui.highlightMatches
 import com.nogirelay.app.ui.withoutTextPresentationSelector
 import kotlinx.coroutines.Dispatchers
@@ -146,11 +147,19 @@ fun MessageCard(
                         name = highlightMatches(message.memberName, searchQuery, highlightBackground, highlightText),
                         isUnread = isUnread,
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        searchQuery = searchQuery,
+                        highlightBackground = highlightBackground,
                     )
-                    Text(
-                        highlightMatches(formatMessageDateTime(message.sentAt), searchQuery, highlightBackground, highlightText),
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    SearchHighlightText(
+                        text = formatMessageDateTime(message.sentAt),
+                        query = searchQuery,
+                        highlightBackground = highlightBackground,
+                        highlightTextColor = highlightText,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
                     )
                 }
                 val canTranslate = remember(message.text, userNickname) {
@@ -180,8 +189,11 @@ fun MessageCard(
                 Spacer(Modifier.height(10.dp))
                 SelectionContainer {
                     val displayedText = (substituteNickname(it, userNickname) ?: it).withoutTextPresentationSelector()
-                    Text(
-                        text = highlightMatches(displayedText, searchQuery, highlightBackground, highlightText),
+                    SearchHighlightText(
+                        text = displayedText,
+                        query = searchQuery,
+                        highlightBackground = highlightBackground,
+                        highlightTextColor = highlightText,
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontSize = 15.sp,
                             lineHeight = 22.sp,
@@ -194,16 +206,16 @@ fun MessageCard(
                 normalizeTranslationText(substituteNickname(message.text, userNickname), message.translation)?.let { transText ->
                     Spacer(Modifier.height(6.dp))
                     SelectionContainer {
-                        Text(
-                            text = highlightMatches(
-                                transText.withoutTextPresentationSelector(),
-                                searchQuery,
-                                highlightBackground,
-                                highlightText,
+                        SearchHighlightText(
+                            text = transText.withoutTextPresentationSelector(),
+                            query = searchQuery,
+                            highlightBackground = highlightBackground,
+                            highlightTextColor = highlightText,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = BrandPurpleDark,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
                             ),
-                            color = BrandPurpleDark,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
                         )
                     }
                 }

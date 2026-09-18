@@ -11,9 +11,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
+import com.nogirelay.app.ui.drawSearchHighlightBoxes
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.PlatformTextStyle
@@ -69,7 +78,10 @@ fun NameWithUnreadTag(
     style: TextStyle,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    searchQuery: String = "",
+    highlightBackground: Color = Color.Unspecified,
 ) {
+    var textLayoutResult by remember(name, searchQuery) { mutableStateOf<TextLayoutResult?>(null) }
     val text = buildAnnotatedString {
         append(name)
         if (isUnread) appendInlineContent(UNREAD_INLINE_ID, " 未读")
@@ -103,6 +115,22 @@ fun NameWithUnreadTag(
         style = style,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
+        onTextLayout = { textLayoutResult = it },
+        modifier = modifier.then(
+            if (searchQuery.isNotBlank() && highlightBackground.isSpecified) {
+                Modifier.drawBehind {
+                    textLayoutResult?.let { layout ->
+                        drawSearchHighlightBoxes(
+                            result = layout,
+                            query = searchQuery,
+                            text = name.text,
+                            highlightColor = highlightBackground,
+                        )
+                    }
+                }
+            } else {
+                Modifier
+            }
+        ),
     )
 }

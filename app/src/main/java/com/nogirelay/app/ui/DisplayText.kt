@@ -1,10 +1,31 @@
 package com.nogirelay.app.ui
 
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 
 /**
  * VS15 (U+FE0E) requests the monochrome "text presentation" of the preceding
@@ -68,7 +89,6 @@ fun searchSnippet(text: String, query: String, leading: Int = 12, trailing: Int 
 fun highlightMatches(
     text: String,
     query: String,
-    backgroundColor: Color,
     textColor: Color,
 ): AnnotatedString {
     val needle = query.trim()
@@ -82,10 +102,150 @@ fun highlightMatches(
                 break
             }
             append(text.substring(cursor, matchStart))
-            withStyle(SpanStyle(background = backgroundColor, color = textColor)) {
+            withStyle(SpanStyle(color = textColor)) {
                 append(text.substring(matchStart, matchStart + needle.length))
             }
             cursor = matchStart + needle.length
         }
     }
+}
+
+fun highlightMatches(
+    text: String,
+    query: String,
+    backgroundColor: Color,
+    textColor: Color,
+): AnnotatedString = highlightMatches(text, query, textColor)
+
+fun DrawScope.drawSearchHighlightBoxes(
+    result: TextLayoutResult,
+    query: String,
+    text: String,
+    highlightColor: Color,
+) {
+    val needle = query.trim()
+    if (needle.isEmpty() || text.isEmpty()) return
+
+    val lineCount = result.lineCount
+    if (lineCount == 0) return
+
+    val baseFontSizePx = if (result.layoutInput.style.fontSize.isSpecified) {
+        result.layoutInput.style.fontSize.toPx()
+    } else {
+        (result.getLineBottom(0) - result.getLineTop(0)) * 0.72f
+    }
+    val cornerRadius = CornerRadius(minOf(baseFontSizePx * 0.12f, 2.dp.toPx()), minOf(baseFontSizePx * 0.12f, 2.dp.toPx()))
+
+    var cursor = 0
+    while (cursor < text.length) {
+        val matchStart = text.indexOf(needle, startIndex = cursor, ignoreCase = true)
+        if (matchStart < 0) break
+        val matchEnd = matchStart + needle.length
+        cursor = matchEnd
+
+        if (matchStart >= result.layoutInput.text.length) break
+
+        val startLine = result.getLineForOffset(matchStart)
+        if (startLine >= lineCount) continue
+        val endLine = result.getLineForOffset((matchEnd - 1).coerceAtLeast(matchStart)).coerceAtMost(lineCount - 1)
+
+        for (line in startLine..endLine) {
+            val lineStart = result.getLineStart(line)
+            val lineEnd = result.getLineEnd(line, visibleEnd = true)
+            val rangeStart = maxOf(matchStart, lineStart)
+            val rangeEnd = minOf(matchEnd, lineEnd)
+            if (rangeStart >= rangeEnd) continue
+
+            var minX = Float.MAX_VALUE
+            var maxX = Float.MIN_VALUE
+            for (offset in rangeStart until rangeEnd) {
+                if (offset < result.layoutInput.text.length) {
+                    val box = result.getBoundingBox(offset)
+                    if (box.right > box.left && box.left < result.size.width && box.right > 0f) {
+                        minX = minOf(minX, box.left)
+                        maxX = maxOf(maxX, minOf(box.right, result.size.width.toFloat()))
+                    }
+                }
+            }
+            val left = minX
+            val right = maxX
+            if (right <= left) continue
+
+            val baselineDistance = result.firstBaseline - result.getLineTop(0)
+            val baseline = result.getLineTop(line) + baselineDistance
+            val lineFontSizePx = if (result.layoutInput.style.fontSize.isSpecified) {
+                baseFontSizePx
+            } else {
+                (result.getLineBottom(line) - result.getLineTop(line)) * 0.72f
+            }
+            // Visual center of character body: baseline - 0.38 * fontSize.
+            // Total height: 1.14 * fontSize (0.76 glyph body + 0.19 top whitespace + 0.19 bottom whitespace).
+            // Top = baseline - 0.95 * fontSize (whitespace = 0.19 * fontSize).
+            // Bottom = baseline + 0.19 * fontSize (whitespace = 0.19 * fontSize).
+            // This guarantees exact 1:1 symmetrical whitespace above and below the text for all font sizes.
+            val top = baseline - 0.95f * lineFontSizePx
+            val bottom = baseline + 0.19f * lineFontSizePx
+
+            drawRoundRect(
+                color = highlightColor,
+                topLeft = Offset(left, top),
+                size = Size(right - left, bottom - top),
+                cornerRadius = cornerRadius,
+            )
+        }
+    }
+}
+
+@Composable
+fun SearchHighlightText(
+    text: String,
+    query: String,
+    modifier: Modifier = Modifier,
+    highlightBackground: Color = MaterialTheme.colorScheme.primaryContainer,
+    highlightTextColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+    style: TextStyle = LocalTextStyle.current,
+    color: Color = Color.Unspecified,
+    fontWeight: FontWeight? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+    softWrap: Boolean = true,
+) {
+    val needle = query.trim()
+    val isSearching = needle.isNotEmpty()
+    val annotatedText = remember(text, query, highlightTextColor) {
+        if (!isSearching) {
+            AnnotatedString(text)
+        } else {
+            highlightMatches(text, query, textColor = highlightTextColor)
+        }
+    }
+
+    var textLayoutResult by remember(text, query) { mutableStateOf<TextLayoutResult?>(null) }
+
+    Text(
+        text = annotatedText,
+        modifier = modifier.then(
+            if (isSearching) {
+                Modifier.drawBehind {
+                    textLayoutResult?.let { layout ->
+                        drawSearchHighlightBoxes(
+                            result = layout,
+                            query = query,
+                            text = text,
+                            highlightColor = highlightBackground,
+                        )
+                    }
+                }
+            } else {
+                Modifier
+            }
+        ),
+        style = style,
+        color = color,
+        fontWeight = fontWeight,
+        maxLines = maxLines,
+        overflow = overflow,
+        softWrap = softWrap,
+        onTextLayout = { textLayoutResult = it },
+    )
 }

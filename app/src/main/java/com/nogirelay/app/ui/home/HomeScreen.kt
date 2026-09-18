@@ -54,7 +54,6 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -612,27 +611,29 @@ fun RecentMembersSection(
                         .clickable { onSelectMember(member.id) }
                         .padding(vertical = 4.dp),
                 ) {
-                    BadgedBox(
-                        badge = {
-                            if (member.unreadCount > 0) {
-                                Badge(containerColor = MaterialTheme.colorScheme.error) {
-                                    Text(if (member.unreadCount > 99) "99+" else member.unreadCount.toString())
-                                }
-                            }
-                        },
+                    Box(
+                        modifier = Modifier.size(56.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Box(
+                        RemoteImage(
+                            url = member.avatarUrl,
+                            contentDescription = member.name,
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(56.dp)
+                                .fillMaxSize()
                                 .clip(CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            RemoteImage(
-                                url = member.avatarUrl,
-                                contentDescription = member.name,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
+                        )
+                        if (member.unreadCount > 0) {
+                            Badge(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.align(Alignment.TopEnd),
+                            ) {
+                                Text(
+                                    text = if (member.unreadCount > 99) "99+" else member.unreadCount.toString(),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(4.dp))

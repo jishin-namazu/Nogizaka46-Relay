@@ -28,7 +28,6 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -96,28 +95,30 @@ fun MemberInbox(
                                 .width(74.dp)
                                 .clickable { onSelect(thread) },
                         ) {
-                            BadgedBox(
-                                badge = {
-                                    if (thread.unreadCount > 0) {
-                                        Badge(containerColor = MaterialTheme.colorScheme.error) {
-                                            Text(unreadBadgeLabel(thread.unreadCount))
-                                        }
-                                    }
-                                },
+                            Box(
+                                modifier = Modifier.size(62.dp),
+                                contentAlignment = Alignment.Center,
                             ) {
-                                Box(
+                                RemoteImage(
+                                    url = thread.avatarUrl,
+                                    contentDescription = thread.name,
+                                    contentScale = ContentScale.Crop,
                                     modifier = Modifier
-                                        .size(62.dp)
+                                        .fillMaxSize()
                                         .clip(CircleShape),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    RemoteImage(
-                                        url = thread.avatarUrl,
-                                        contentDescription = thread.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize(),
-                                        loadCachedImmediately = true,
-                                    )
+                                    loadCachedImmediately = true,
+                                )
+                                if (thread.unreadCount > 0) {
+                                    Badge(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.align(Alignment.TopEnd),
+                                    ) {
+                                        Text(
+                                            text = unreadBadgeLabel(thread.unreadCount),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                    }
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
@@ -193,26 +194,14 @@ fun MemberInbox(
                     Spacer(Modifier.width(12.dp))
 
                     Column(Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                text = thread.name,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            val time = formatThreadTime(thread.latest.sentAt)
-                            if (time.isNotBlank()) {
-                                Text(
-                                    text = time,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
+                        Text(
+                            text = thread.name,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
 
                         Spacer(Modifier.height(4.dp))
 
@@ -257,21 +246,35 @@ fun MemberInbox(
                                 overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 13.sp,
-                                modifier = Modifier.weight(1f, fill = false),
                             )
+                        }
+                    }
 
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(start = 8.dp),
+                    ) {
+                        val time = formatThreadTime(thread.latest.sentAt)
+                        if (time.isNotBlank()) {
+                            Text(
+                                text = time,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                             if (thread.unreadCount > 0) {
-                                Spacer(Modifier.width(8.dp))
-                                Badge(
-                                    containerColor = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.align(Alignment.CenterVertically),
-                                ) {
-                                    Text(
-                                        text = unreadBadgeLabel(thread.unreadCount),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
+                                Spacer(Modifier.height(4.dp))
+                            }
+                        }
+                        if (thread.unreadCount > 0) {
+                            Badge(
+                                containerColor = MaterialTheme.colorScheme.error,
+                            ) {
+                                Text(
+                                    text = unreadBadgeLabel(thread.unreadCount),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
                             }
                         }
                     }

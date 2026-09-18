@@ -7,6 +7,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -33,7 +35,7 @@ val RelayBubbleShape = RoundedCornerShape(16.dp)
 
 private val defaultLineHeightStyle = LineHeightStyle(
     alignment = LineHeightStyle.Alignment.Center,
-    trim = LineHeightStyle.Trim.Both,
+    trim = LineHeightStyle.Trim.None,
 )
 
 @Suppress("DEPRECATION")
@@ -41,7 +43,7 @@ private val defaultPlatformTextStyle = PlatformTextStyle(
     includeFontPadding = false,
 )
 
-private fun TextStyle.withFixes(): TextStyle = this.copy(
+fun TextStyle.withFixes(): TextStyle = this.copy(
     platformStyle = defaultPlatformTextStyle,
     lineHeightStyle = defaultLineHeightStyle,
 )
@@ -96,6 +98,10 @@ fun NogiRelayTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) 
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
         typography = AppTypography,
-        content = content,
-    )
+    ) {
+        CompositionLocalProvider(
+            LocalTextStyle provides AppTypography.bodyMedium,
+            content = content,
+        )
+    }
 }

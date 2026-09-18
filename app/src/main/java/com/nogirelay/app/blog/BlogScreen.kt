@@ -112,6 +112,7 @@ import com.nogirelay.app.ui.RelayCardShape
 import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.RelaySearchField
 import com.nogirelay.app.ui.RemoteImage
+import com.nogirelay.app.ui.SearchHighlightText
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterSection
@@ -184,10 +185,16 @@ fun BlogScreen(
     AutoClearSelectionOnExit(isActive = isActive)
 
     val selected = selectedBlogId
-    BackHandler(enabled = isActive && selected != null) {
+    BackHandler(enabled = isActive && (selected != null || searchQuery.isNotEmpty())) {
         focusManager.clearFocus()
         textToolbar.hide()
-        selectedBlogId = null
+        if (selected != null) {
+            selectedBlogId = null
+        } else {
+            searchQuery = ""
+            currentPage = 0
+            pageInput = "1"
+        }
     }
     LaunchedEffect(members) {
         selectedMemberIds?.let { selectedIds ->
@@ -882,11 +889,19 @@ private fun BlogSummaryCard(
                             name = highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
                             isUnread = blog.isUnread,
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            searchQuery = searchQuery,
+                            highlightBackground = highlightBackground,
                         )
-                        Text(
-                            highlightMatches(formatBlogDate(blog.publishedAt), searchQuery, highlightBackground, highlightText),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        SearchHighlightText(
+                            text = formatBlogDate(blog.publishedAt),
+                            query = searchQuery,
+                            highlightBackground = highlightBackground,
+                            highlightTextColor = highlightText,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
                         )
                     }
                     if (translationEnabled) {
@@ -906,17 +921,26 @@ private fun BlogSummaryCard(
                     }
                 }
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    highlightMatches(blog.title, searchQuery, highlightBackground, highlightText),
+                SearchHighlightText(
+                    text = blog.title,
+                    query = searchQuery,
+                    highlightBackground = highlightBackground,
+                    highlightTextColor = highlightText,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
                 blog.translatedTitle?.takeIf { translationEnabled }?.let {
-                    Text(
-                        highlightMatches(it, searchQuery, highlightBackground, highlightText),
-                        color = BrandPurpleDark,
-                        fontSize = 14.5.sp,
-                        fontWeight = FontWeight.Bold,
+                    SearchHighlightText(
+                        text = it,
+                        query = searchQuery,
+                        highlightBackground = highlightBackground,
+                        highlightTextColor = highlightText,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = BrandPurpleDark,
+                            fontSize = 14.5.sp,
+                            lineHeight = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
@@ -934,10 +958,16 @@ private fun BlogSummaryCard(
                                 .padding(end = 6.dp)
                                 .alignByBaseline(),
                         )
-                        Text(
-                            highlightMatches(preview.text, searchQuery, highlightBackground, highlightText),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp,
+                        SearchHighlightText(
+                            text = preview.text,
+                            query = searchQuery,
+                            highlightBackground = highlightBackground,
+                            highlightTextColor = highlightText,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp,
+                            ),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
