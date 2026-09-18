@@ -1,0 +1,137 @@
+name: Build and Release APKs
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g. v1.0.0). Leave empty to use version from build.gradle'
+        required: false
+        type: string
+        default: ''
+      draft:
+        description: 'Create draft release'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Create prerelease'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Resolve Version and Release Tag
+        id: vars
+        run: |
+          VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+          VERSION_CODE=$(grep 'versionCode' app/build.gradle.kts | head -n1 | sed -E 's/.*= *([0-9]+).*/\1/')
+          echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+          echo "VERSION_CODE=${VERSION_CODE}" >> $GITHUB_ENV
+
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.tag_name }}" ]; then
+            TAG="${{ inputs.tag_name }}"
+          else
+            TAG="v${VERSION_NAME}"
+          fi
+          echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
+          echo "Resolved version: ${VERSION_NAME} (code ${VERSION_CODE}), Release tag: ${TAG}"
+
+      - name: Setup local.properties and secrets
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          RELAY_BASE_URL: ${{ secrets.RELAY_BASE_URL }}
+          RELAY_ACCESS_TOKEN: ${{ secrets.RELAY_ACCESS_TOKEN }}
+        run: |
+          touch local.properties
+          if [ -n "$RELAY_BASE_URL" ]; then
+            echo "relay.baseUrl=${RELAY_BASE_URL}" >> local.properties
+          fi
+          if [ -n "$RELAY_ACCESS_TOKEN" ]; then
+            echo "relay.access.token=${RELAY_ACCESS_TOKEN}" >> local.properties
+          fi
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          fi
+
+      - name: Prepare output directory
+        run: mkdir -p dist
+
+      - name: Build Full Version APK (完全版)
+        run: |
+          ./gradlew :app:assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk "dist/NogiRelay-${RELEASE_TAG}-full.apk"
+
+      - name: Build Simple Version APK (简易版)
+        run: |
+          ./gradlew :app:assembleRelease -PrelaySimpleUi=true --no-daemon
+          cp app/build/outputs/apk/release/app-simple-release.apk "dist/NogiRelay-${RELEASE_TAG}-simple.apk"
+
+      - name: Generate Checksums
+        run: |
+          cd dist
+          sha256sum *.apk > checksums-sha256.txt
+          cat checksums-sha256.txt
+          cd ..
+
+      - name: Upload APKs as Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NogiRelay-APKs-${{ env.RELEASE_TAG }}
+          path: dist/*
+          retention-days: 30
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Nogi Relay ${{ env.RELEASE_TAG }}"
+          body: |
+            ### 📦 Nogi Relay ${{ env.RELEASE_TAG }} 自动构建发布
+
+            | 安装包 | 说明 | 适用场景 |
+            | :--- | :--- | :--- |
+            | 📱 **`NogiRelay-${{ env.RELEASE_TAG }}-full.apk`** | **完全版** | 包含服务器地址与访问令牌配置项，支持测试来电与全部调试功能 |
+            | 🍃 **`NogiRelay-${{ env.RELEASE_TAG }}-simple.apk`** | **简易版** | 隐藏服务器地址与令牌输入界面，纯净简约体验 |
+
+            > 所有安装包均已完成 APK 签名，可直接在 Android 8.0+ 设备上安装运行。
+          draft: ${{ inputs.draft || false }}
+          prerelease: ${{ inputs.prerelease || false }}
+          files: |
+            dist/NogiRelay-${{ env.RELEASE_TAG }}-full.apk
+            dist/NogiRelay-${{ env.RELEASE_TAG }}-simple.apk
+            dist/checksums-sha256.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

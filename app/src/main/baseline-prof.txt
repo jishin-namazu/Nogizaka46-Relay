@@ -1,8 +1,8 @@
-HSPLcom/nogirelay/app/NogiRelayApplication;
-HSPLcom/nogirelay/app/MainActivity;
-HSPLcom/nogirelay/app/MainActivityKt;
-HSPLcom/nogirelay/app/blog/**;
-HSPLcom/nogirelay/app/data/BlogRepository;
-HSPLcom/nogirelay/app/data/MessageDatabase;
-HSPLcom/nogirelay/app/performance/**;
-HSPLcom/nogirelay/app/ui/RemoteImageKt;
+Lcom/nogirelay/app/NogiRelayApplication;
+Lcom/nogirelay/app/MainActivity;
+Lcom/nogirelay/app/MainActivityKt;
+Lcom/nogirelay/app/blog/**;
+Lcom/nogirelay/app/data/BlogRepository;
+Lcom/nogirelay/app/data/MessageDatabase;
+Lcom/nogirelay/app/performance/**;
+Lcom/nogirelay/app/ui/RemoteImageKt;
