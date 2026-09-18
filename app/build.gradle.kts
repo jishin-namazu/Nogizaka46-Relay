@@ -16,9 +16,9 @@ val relayAccessTokenLiteral = relayAccessToken
     .replace("\r", "\\r")
     .replace("\n", "\\n")
 
-// Opt-in simplified UI for a one-off personal build: hides the relay address,
-// access token fields, and test call button so the values injected through local.properties
-// are never displayed and debug actions are hidden. Enabled with -PrelaySimpleUi=true; default builds are unchanged.
+// Opt-in simplified UI build: hides debug actions (such as test call) for a cleaner UI experience,
+// while preserving server address and token fields for user configuration.
+// Enabled with -PrelaySimpleUi=true; default builds are unchanged.
 val relaySimpleUi = (project.findProperty("relaySimpleUi") as String?)?.trim()?.toBoolean() ?: false
 // Optional build-time default relay address. Empty (the default) means a plain
 // build prefills nothing, so no server address is baked into the APK.

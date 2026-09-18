@@ -910,7 +910,7 @@ relay.access.token=your-secret-access-token
 # 编译标准 Debug APK
 .\gradlew.bat :app:assembleDebug
 
-# 针对个人单机测试包编译（启用简易模式，隐藏 UI 中的地址、Token 输入框及测试全屏来电按钮，产物自动命名为 app-simple-debug.apk）
+# 针对个人单机测试包编译（启用简易模式，隐藏全屏来电测试等调试按钮，产物自动命名为 app-simple-debug.apk）
 .\gradlew.bat :app:assembleDebug -PrelaySimpleUi=true --no-daemon
 
 # 直接安装到连接的 Android 手机

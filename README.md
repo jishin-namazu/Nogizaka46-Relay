@@ -216,7 +216,7 @@ relay.access.token=YOUR_ACCESS_TOKEN
 # 标准 Debug 构建
 .\gradlew.bat :app:assembleDebug
 
-# 简易模式（隐藏界面中的地址、令牌输入框及测试全屏来电按钮）
+# 简易模式（隐藏全屏来电测试等调试按钮）
 .\gradlew.bat :app:assembleDebug -PrelaySimpleUi=true --no-daemon
 ```
 

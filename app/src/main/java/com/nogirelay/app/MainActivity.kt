@@ -48,11 +48,14 @@ class MainActivity : ComponentActivity() {
         // The launch theme mirrors the official app splash until Compose draws its first frame.
         setTheme(R.style.Theme_NogiRelay)
         AppGraph.initialize(this)
-        if (BuildConfig.SIMPLE_UI) {
-            // The simplified build hides the relay fields, so the values baked in
-            // at build time stay authoritative even if older settings existed.
-            val current = AppGraph.settings.read()
-            AppGraph.settings.save(current.copy(relayUrl = ApiConfig.BASE_URL, accessToken = ApiConfig.ACCESS_TOKEN))
+        val current = AppGraph.settings.read()
+        if (current.relayUrl.isBlank() && ApiConfig.BASE_URL.isNotBlank()) {
+            AppGraph.settings.save(
+                current.copy(
+                    relayUrl = ApiConfig.BASE_URL,
+                    accessToken = if (current.accessToken.isBlank()) ApiConfig.ACCESS_TOKEN else current.accessToken,
+                ),
+            )
         }
         NotificationChannels.create(this)
         AppGraph.database.deleteTestMessages().forEach { IncomingCallNotifier.cancel(this, it) }

@@ -123,8 +123,8 @@ jobs:
 
             | 安装包 | 说明 | 适用场景 |
             | :--- | :--- | :--- |
-            | 📱 **`NogiRelay-${{ env.RELEASE_TAG }}-full.apk`** | **完全版** | 包含服务器地址与访问令牌配置项，支持测试来电与全部调试功能 |
-            | 🍃 **`NogiRelay-${{ env.RELEASE_TAG }}-simple.apk`** | **简易版** | 隐藏服务器地址与令牌输入界面，纯净简约体验 |
+            | 📱 **`NogiRelay-${{ env.RELEASE_TAG }}-full.apk`** | **完全版** | 包含完整设置项，提供全屏来电测试等调试功能 |
+            | 🍃 **`NogiRelay-${{ env.RELEASE_TAG }}-simple.apk`** | **简易版** | 隐藏全屏来电测试等调试功能 |
 
             > 所有安装包均已完成 APK 签名，可直接在 Android 8.0+ 设备上安装运行。
           draft: ${{ inputs.draft || false }}

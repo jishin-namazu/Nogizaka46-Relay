@@ -205,28 +205,26 @@ fun SettingsSection(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text("FCM 推送服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                if (!BuildConfig.SIMPLE_UI) {
-                    OutlinedTextField(
-                        value = relayUrl,
-                        onValueChange = { relayUrl = it },
-                        label = { Text("同步服务地址") },
-                        placeholder = { Text("https://relay.example.com") },
-                        singleLine = true,
-                        shape = RelayControlShape,
-                        colors = textFieldColors,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = token,
-                        onValueChange = { token = it },
-                        label = { Text("访问令牌") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        shape = RelayControlShape,
-                        colors = textFieldColors,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                OutlinedTextField(
+                    value = relayUrl,
+                    onValueChange = { relayUrl = it },
+                    label = { Text("同步服务地址") },
+                    placeholder = { Text("https://relay.example.com") },
+                    singleLine = true,
+                    shape = RelayControlShape,
+                    colors = textFieldColors,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("访问令牌") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    shape = RelayControlShape,
+                    colors = textFieldColors,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Button(
                     onClick = {
                         AppGraph.settings.save(currentSettings())
@@ -246,7 +244,7 @@ fun SettingsSection(
                 ) {
                     Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.size(8.dp))
-                    Text(if (BuildConfig.SIMPLE_UI) "注册推送" else "保存并注册推送", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text("保存并注册推送", fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
                 if (pushStatusLabel.isNotBlank()) {
                     Text(
