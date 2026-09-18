@@ -87,6 +87,16 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                     "(SELECT MAX(published_at) FROM blog_posts WHERE blog_posts.member_id = blog_members.id)",
             )
         }
+        if (oldVersion < 10) {
+            // 旧爬虫镜像用补零 id（000295），官方接口用不补零的 id（295），
+            // 两者是同一篇。保留官方写法，删掉补零副本，避免 BLOG 列表里
+            // 同一篇出现两次、正文图片被重复下载。
+            db.execSQL(
+                "DELETE FROM blog_posts " +
+                    "WHERE id GLOB '[0-9]*' AND id LIKE '0%' AND length(id) > 1 " +
+                    "AND EXISTS (SELECT 1 FROM blog_posts p WHERE p.id = LTRIM(blog_posts.id, '0'))",
+            )
+        }
     }
 
     private fun createBlogTables(db: SQLiteDatabase) {
@@ -470,8 +480,9 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
     }
 
     fun upsertBlog(post: BlogPost, isUnread: Boolean = false): Boolean {
+        val id = canonicalBlogId(post.id)
         val values = ContentValues().apply {
-            put("id", post.id)
+            put("id", id)
             put("member_id", post.memberId)
             put("member_name", post.memberName)
             put("member_avatar_url", post.memberAvatarUrl)
@@ -498,7 +509,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             "blog_posts",
             arrayOf("body_html"),
             "id = ?",
-            arrayOf(post.id),
+            arrayOf(id),
             null,
             null,
             null,
@@ -520,7 +531,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                 }
             }
         }
-        writableDatabase.update("blog_posts", update, "id = ?", arrayOf(post.id))
+        writableDatabase.update("blog_posts", update, "id = ?", arrayOf(id))
         return false
     }
 
@@ -719,8 +730,9 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
      * 则会在正文变化时覆盖并清除译文。
      */
     fun insertBlogIfAbsent(post: BlogPost, isUnread: Boolean = false): Boolean {
+        val id = canonicalBlogId(post.id)
         val values = ContentValues().apply {
-            put("id", post.id)
+            put("id", id)
             put("member_id", post.memberId)
             put("member_name", post.memberName)
             put("member_avatar_url", post.memberAvatarUrl)
@@ -1472,9 +1484,16 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         return if (isNull(index)) null else getInt(index)
     }
 
+    /**
+     * 旧站/爬虫归档用补零 id（000295），官方接口用不补零的 id（295），
+     * 两者指向同一篇。写入前统一成官方写法，使重复导入幂等。
+     */
+    private fun canonicalBlogId(id: String): String =
+        if (id.length > 1 && id.all { it in '0'..'9' }) id.trimStart('0').ifEmpty { "0" } else id
+
     companion object {
         private const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 9
+        private const val DB_VERSION = 10
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
 
         /** 批量重译单次上限；常规入队仍然只取小分页。 */

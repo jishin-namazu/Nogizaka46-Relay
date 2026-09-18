@@ -141,7 +141,7 @@ flowchart TD
 | **消息推送** | Firebase Admin SDK (`sendEachForMulticast`) | 高优先级数据消息 |
 | **持久化媒体存储** | 本地文件系统 / Docker Volume，SHA-256 寻址 | 规避三方 CDN 授权失效问题，多成员多来电背景物理去重 |
 | **Android 开发框架** | Kotlin 1.9+, Jetpack Compose (BOM 2024.05) | 声明式响应式 UI，高度定制 Material 3 组件 |
-| **Android 离线存储** | 原生 `SQLiteOpenHelper` (8 次版本平滑迁移) | 零反射、无 Room 额外依赖，极低内存开销，针对 LIKE 与 strftime 深度定制 |
+| **Android 离线存储** | 原生 `SQLiteOpenHelper` (9 次版本平滑迁移) | 零反射、无 Room 额外依赖，极低内存开销，针对 LIKE 与 strftime 深度定制 |
 | **网络通信与流处理** | Java 原生 `HttpURLConnection` + Coroutines | 最小化 APK 体积，无 OkHttp/Retrofit 冗余运行时开销 |
 | **AI 翻译矩阵** | 兼容 11 家大模型厂商，覆盖 3 种协议标准 | 全文单次上下文推理，JSON Schema 结构化约束，抑制思考模式，保持原文结构 |
 
@@ -469,7 +469,7 @@ erDiagram
 
 ### 3.2 客户端 SQLite 本地数据库演化 (SQLite)
 
-客户端通过 `app/.../data/MessageDatabase.kt` 维护独立的本地 SQLite 数据库（`messages.db`，版本 `DB_VERSION = 9`），无缝兼容平滑升级：
+客户端通过 `app/.../data/MessageDatabase.kt` 维护独立的本地 SQLite 数据库（`messages.db`，版本 `DB_VERSION = 10`），无缝兼容平滑升级：
 
 1. **核心数据表设计**：
    - `messages`：私信消息主表（消息 ID、成员标识与姓名、消息类型、正文内容、媒体/写真 URL、发送时间戳、未读状态 `is_unread`、已播放状态 `is_played` 等）。
@@ -477,7 +477,7 @@ erDiagram
    - `blog_members`：官方成员花名册（成员 ID `id`、姓名 `name`、期别 `category`、头像 `avatar_url`、展示顺序 `display_order`、最新发文时间 `latest_post_at`、卒業标记 `graduated`）。
    - `sync_state`：同步游标表（保存博客增量同步头部 `blog_sync_head_id_v2`、消息增量同步头部 `message_sync_head_id_v1` 等同步基线）。
 
-2. **数据库版本演化路径 (v1 ~ v9)**：
+2. **数据库版本演化路径 (v1 ~ v10)**：
    - **v1 - v3**：基础消息与媒体本地存储模型。
    - **v4**：引入私信未读状态字段 `is_unread` 与高性能复合索引 `idx_messages_unread_member`。
    - **v5**：新增公开博客表 `blog_posts` 与同步状态表 `sync_state`。
@@ -485,6 +485,7 @@ erDiagram
    - **v7**：新增 `blog_members` 成员目录表；重置旧版翻译缓存以适配最新段落骨架回填算法。
    - **v8**：成员表增加 `latest_post_at` 字段并维护最新发帖时间索引，支撑期别分类与活跃度排序。
    - **v9**：成员表增加 `graduated` 卒業标记字段，卒業状态随名册刷新与归档导入单向保留。
+   - **v10**：清理早期导入遗留的补零博客 ID 重复行（旧爬虫镜像 `000295` 与官方接口 `295` 指向同一篇），并在写入前统一 ID 写法，避免重复导入再次产生重复文章与图片重复下载。
 
 3. **高效聚合查询设计 (`latestMessagePerMember`)**：
    - 会话抽屉与列表采用 SQLite 原生分组聚合（`CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END` 结合 `MAX(sent_at)`）；
