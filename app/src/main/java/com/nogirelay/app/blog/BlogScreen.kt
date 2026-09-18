@@ -1049,6 +1049,13 @@ private fun BlogDetail(
     val translationEnabled = detail.translationEnabled
     val titleTranslation = detail.titleTranslation
     val displayBlocks = detail.displayBlocks
+    val blogImageUrls = remember(displayBlocks) {
+        displayBlocks
+            .filterIsInstance<DisplayBlock.Image>()
+            .map(DisplayBlock.Image::url)
+            .filter(String::isNotBlank)
+            .distinct()
+    }
     val openImage: (String) -> Unit = { url ->
         context.startActivity(
             MediaViewerActivity.imageIntent(
@@ -1056,7 +1063,8 @@ private fun BlogDetail(
                 url = url,
                 title = blog.title,
                 ownerName = blog.memberName,
-                imageId = "blog-${blog.id}-${url.hashCode()}",
+                imageId = "blog-${blog.id}",
+                urls = blogImageUrls,
             ),
         )
     }

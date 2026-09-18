@@ -27,11 +27,13 @@
         <activity
             android:name=".ui.MediaViewerActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.NogiRelay.MediaViewer" />
 
         <activity
             android:name=".blog.BlogImageDownloadActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.NogiRelay" />
 
         <activity
@@ -49,6 +51,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.NogiRelay.Launch">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

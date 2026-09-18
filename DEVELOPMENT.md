@@ -782,6 +782,7 @@ sequenceDiagram
 #### 5.4.3 图片批量下载管理器 (`BlogImageDownloadActivity.kt`)
 针对下载照片的需求：
 - 解析博客 HTML 正文提取全部大图。
+- 博客详情将正文图片按原始顺序传给媒体查看器，支持左右滑动切换、双击缩放和当前图片单独下载。
 - 提供“全选 / 清空 / 单选”网格交互，逐张下载至系统公共目录 `Environment.DIRECTORY_DOWNLOADS`。
 - Android 10 及以上通过 MediaStore 写入，Android 9 及以下写入公共 Download 目录后触发媒体扫描。
 
