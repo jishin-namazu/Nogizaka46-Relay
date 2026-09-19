@@ -58,7 +58,6 @@ data class ExportEstimate(
  * `data/skipped.jsonl` 中。记录始终完整写出。
  */
 object DataExporter {
-    private const val PAGE_SIZE = 500
     private const val BUFFER = 64 * 1024
 
     private class ResolvedMedia(
@@ -187,6 +186,8 @@ object DataExporter {
         var recordCount = 0
 
         val rawOutput = resolver.openOutputStream(outputUri) ?: error("无法写入所选文件")
+        // 游标读取期间无法做挂起上下文检查，所以捕获 job 并轮询。
+        val job = coroutineContext[Job]
         try {
             ZipOutputStream(BufferedOutputStream(rawOutput, BUFFER)).use { zip ->
                 zip.putNextEntry(ZipEntry(ExportFormat.MANIFEST_ENTRY))
@@ -194,54 +195,55 @@ object DataExporter {
                 zip.closeEntry()
 
                 zip.putNextEntry(ZipEntry(request.kind.entryName))
-                var offset = 0
-                while (true) {
-                    coroutineContext.ensureActive()
-                    val page = page(database, request.kind, request.memberKeys, offset)
-                    if (page.isEmpty()) break
-                    page.forEach { item ->
-                        val refs = mutableListOf<MediaRef>()
-                        // 不含媒体时 refs 保持为空，记录本身照常写全，导入端会看到 includesMedia=false。
-                        if (request.includeMedia) {
-                            candidates(request.kind, item).forEach { candidate ->
-                                val key = candidate.role + "|" + candidate.url
-                                val media = if (resolvedByKey.containsKey(key)) {
-                                    resolvedByKey[key]
-                                } else {
-                                    resolve(context, candidate).also { resolvedByKey[key] = it }
+                // 单查询流式读取，不用 LIMIT/OFFSET 分页：分页会让 SQLite 为每一页重新
+                // 物化并排序整个结果集（本库 27k 条 BLOG 实测首页 0.2 s、末页 2.0 s），
+                // 记录恰好卡在 500 的整数倍上、逐个分页边界停顿，界面就成了每 500 条跳一格。
+                fun writeRecord(item: Any) {
+                    // 游标读取期间无法做挂起上下文检查，因此轮询捕获的 job。
+                    if (job?.isActive != true) throw CancellationException("导出已取消")
+                    val refs = mutableListOf<MediaRef>()
+                    // 不含媒体时 refs 保持为空，记录本身照常写全，导入端会看到 includesMedia=false。
+                    if (request.includeMedia) {
+                        candidates(request.kind, item).forEach { candidate ->
+                            val key = candidate.role + "|" + candidate.url
+                            val media = if (resolvedByKey.containsKey(key)) {
+                                resolvedByKey[key]
+                            } else {
+                                resolve(context, candidate).also { resolvedByKey[key] = it }
+                            }
+                            if (media == null) {
+                                skipped += JSONObject().apply {
+                                    put("kind", "media")
+                                    put("role", candidate.role)
+                                    put("url", candidate.url)
+                                    put("reason", "not-cached")
                                 }
-                                if (media == null) {
-                                    skipped += JSONObject().apply {
-                                        put("kind", "media")
-                                        put("role", candidate.role)
-                                        put("url", candidate.url)
-                                        put("reason", "not-cached")
-                                    }
-                                } else {
-                                    mediaPaths[media.path] = media
-                                    refs += MediaRef(candidate.role, candidate.url, media.path)
-                                }
+                            } else {
+                                mediaPaths[media.path] = media
+                                refs += MediaRef(candidate.role, candidate.url, media.path)
                             }
                         }
-                        val json = when (request.kind) {
-                            ExportKind.MESSAGES -> ExportFormat.messageToJson(
-                                item as RelayMessage,
-                                refs,
-                                request.includeTranslations,
-                            )
-                            ExportKind.BLOGS -> ExportFormat.blogToJson(
-                                item as BlogPost,
-                                refs,
-                                request.includeTranslations,
-                            )
-                        }
-                        zip.write((json.toString() + "\n").toByteArray(Charsets.UTF_8))
-                        recordCount += 1
-                        // 逐条回报，不再按页（500 条）跳。
-                        onProgress("读取记录", recordCount, totalRecords)
                     }
-                    offset += page.size
-                    if (page.size < PAGE_SIZE) break
+                    val json = when (request.kind) {
+                        ExportKind.MESSAGES -> ExportFormat.messageToJson(
+                            item as RelayMessage,
+                            refs,
+                            request.includeTranslations,
+                        )
+                        ExportKind.BLOGS -> ExportFormat.blogToJson(
+                            item as BlogPost,
+                            refs,
+                            request.includeTranslations,
+                        )
+                    }
+                    zip.write((json.toString() + "\n").toByteArray(Charsets.UTF_8))
+                    recordCount += 1
+                    // 逐条回报：记录随游标连续推进，不再按 500 条的分页边界跳。
+                    onProgress("读取记录", recordCount, totalRecords)
+                }
+                when (request.kind) {
+                    ExportKind.MESSAGES -> database.forEachMessageForMembers(request.memberKeys) { writeRecord(it) }
+                    ExportKind.BLOGS -> database.forEachBlogForMembers(request.memberKeys) { writeRecord(it) }
                 }
                 zip.closeEntry()
 
@@ -272,16 +274,6 @@ object DataExporter {
             skippedCount = skipped.size,
             outputName = request.outputName,
         )
-    }
-
-    private fun page(
-        database: com.nogirelay.app.data.MessageDatabase,
-        kind: ExportKind,
-        memberKeys: Set<String>,
-        offset: Int,
-    ): List<Any> = when (kind) {
-        ExportKind.MESSAGES -> database.messagePageForMembers(memberKeys, PAGE_SIZE, offset)
-        ExportKind.BLOGS -> database.blogPageForMembers(memberKeys, PAGE_SIZE, offset)
     }
 
     private fun candidates(kind: ExportKind, item: Any) = when (kind) {

@@ -826,7 +826,7 @@ data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
 1. `estimate()` 用 `countMessagesForMembers` / `countBlogsForMembers` 取总数，再遍历记录一次，经 `MediaDownloader.cachedFileForUrl` 判断每份媒体是否已缓存，产出 `ExportEstimate`：记录数、引用媒体数、已缓存数、字节数、按角色统计、缺失清单。
 2. `export()` 先写 `manifest.json`，再逐条写 `data/*.jsonl` 并逐条回调进度，然后逐条写入 `media/` 条目，最后写可选的 `data/skipped.jsonl`。
 3. 导出不联网：只打包本地已缓存的媒体，缺失项记入 `data/skipped.jsonl`，记录本身完整写出。
-4. 读库按 `PAGE_SIZE = 500` 分页（`messagePageForMembers` / `blogPageForMembers`）。
+4. 读库用单查询流式游标（`forEachMessageForMembers` / `forEachBlogForMembers`）逐条读取，与 `estimate()` 一致；**不用 `LIMIT/OFFSET` 分页** —— 分页会让 SQLite 为每一页重新用临时 B-tree 物化并排序整个结果集（本库 27k 条 BLOG 实测首页 0.20 s、末页 1.95 s，而一次性流式读完只要 0.96 s），记录会卡在 500 的整数倍上，进度显示因此每 500 条跳一格。
 
 #### 5.5.3 导入 (`DataImporter.kt`)
 
