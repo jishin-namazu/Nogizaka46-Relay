@@ -65,13 +65,30 @@ router.get('/:id', async (req, res) => {
  */
 router.get('/:id/media/:kind', async (req, res) => {
   try {
-    if (!['media', 'thumbnail', 'phone_image'].includes(req.params.kind)) return res.status(400).json({ error: 'Invalid media kind' });
+    if (!['media', 'thumbnail', 'phone_image'].includes(req.params.kind)) {
+      return res.status(400).json({ error: 'Invalid media kind' });
+    }
     const filePath = await messageService.getStoredMediaPath(req.params.id, req.params.kind);
-    if (!filePath) return res.status(404).json({ error: 'Media not archived' });
-    res.setHeader('Cache-Control', 'private, max-age=86400');
-    const mimeByExtension = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', m4a: 'audio/mp4', mp3: 'audio/mpeg', mp4: 'video/mp4', webm: 'video/webm' };
-    res.setHeader('Content-Type', mimeByExtension[path.extname(filePath).slice(1).toLowerCase()] || 'application/octet-stream');
-    return fs.createReadStream(filePath).pipe(res);
+    if (filePath && fs.existsSync(filePath)) {
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.sendFile(path.resolve(filePath), {
+        acceptRanges: true,
+      });
+    }
+
+    // 本地未落盘时回退至原始远程直链
+    const message = await messageService.getMessage(req.params.id);
+    const remoteUrl = {
+      media: message?.media_url,
+      thumbnail: message?.thumbnail_url,
+      phone_image: message?.phone_image_url,
+    }[req.params.kind];
+
+    if (remoteUrl) {
+      return res.redirect(remoteUrl);
+    }
+
+    return res.status(404).json({ error: 'Media not found or archived' });
   } catch (error) {
     console.error('Get stored media error:', error);
     return res.status(500).json({ error: 'Failed to get stored media' });

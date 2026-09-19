@@ -62,4 +62,10 @@ test('admin dashboard static files and router contract', async (t) => {
   assert.equal(authRes.status, 200);
   const statusJson = await authRes.json();
   assert.equal(statusJson.success, true);
+
+  // 5. 测试通过 query parameter (?token=...) 鉴权
+  const queryAuthRes = await fetch(`${baseUrl}/v1/admin/browser-session/status?token=test_secret_key_123`);
+  assert.equal(queryAuthRes.status, 200);
+  const queryStatusJson = await queryAuthRes.json();
+  assert.equal(queryStatusJson.success, true);
 });

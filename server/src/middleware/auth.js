@@ -4,12 +4,15 @@
 export function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   const xApiKey = req.headers['x-api-key'];
+  const queryToken = req.query?.token || req.query?.access_token || req.query?.api_key;
 
   let token = null;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7).trim();
   } else if (xApiKey) {
     token = String(xApiKey).trim();
+  } else if (queryToken) {
+    token = String(queryToken).trim();
   }
 
   const expectedToken = process.env.ACCESS_TOKEN || process.env.API_KEY;
@@ -17,7 +20,7 @@ export function authenticate(req, res, next) {
   if (!token) {
     return res.status(401).json({
       error: 'Unauthorized',
-      message: 'Missing Authorization header (Bearer token) or X-API-Key'
+      message: 'Missing Authorization header (Bearer token), X-API-Key, or token query parameter'
     });
   }
 

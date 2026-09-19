@@ -76,6 +76,14 @@ class DeviceService {
     }
     return rows.map(row => row.fcm_token);
   }
+
+  /**
+   * 根据设备 ID 获取单个 FCM token
+   */
+  async getTokenByDeviceId(deviceId) {
+    const row = await db.queryOne('SELECT fcm_token FROM devices WHERE id = $1', [deviceId]);
+    return row?.fcm_token || null;
+  }
 }
 
 export default new DeviceService();

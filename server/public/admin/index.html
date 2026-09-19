@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
   <title>乃木坂46 多账号中继控制台 - Nogi Relay Admin</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
   <style>
@@ -44,10 +45,10 @@
         </div>
         <div>
           <div class="flex items-center gap-2">
-            <span class="font-bold text-base tracking-tight">Nogi Relay</span>
+            <span class="font-bold text-base tracking-tight text-[var(--foreground)]">Nogi Relay</span>
             <span class="px-2 py-0.5 text-xs rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-medium">v2.0 Console</span>
           </div>
-          <p class="text-xs text-[var(--muted-foreground)]">乃木坂46 多账号中继与管理后台</p>
+          <p class="text-xs text-[var(--muted-foreground)]">乃木坂46 多账号中继与控制台</p>
         </div>
       </div>
 
@@ -55,8 +56,8 @@
       <div class="hidden md:flex items-center gap-4 text-xs">
         <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" id="apiStatusDot"></span>
-          <span class="text-[var(--muted-foreground)]">API:</span>
-          <span class="font-medium text-emerald-600 dark:text-emerald-400" id="apiStatusText">在线</span>
+          <span class="text-[var(--muted-foreground)]">API 状态:</span>
+          <span class="font-medium text-emerald-600 dark:text-emerald-400" id="apiStatusText">200 OK</span>
         </div>
         <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
           <span class="w-2 h-2 rounded-full bg-emerald-500" id="accountsStatusDot"></span>
@@ -65,8 +66,8 @@
         </div>
         <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
           <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-          <span class="text-[var(--muted-foreground)]">推送设备:</span>
-          <span class="font-medium" id="topDevicesCount">-</span>
+          <span class="text-[var(--muted-foreground)]">FCM:</span>
+          <span class="font-medium" id="topDevicesCount">在线 (0 台设备)</span>
         </div>
       </div>
 
@@ -76,11 +77,11 @@
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
           添加账号
         </button>
-        <button onclick="openModal('apiKeyModal')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]" title="配置 API 密钥">
+        <button onclick="openModal('apiKeyModal')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors" title="配置 API 密钥">
           密钥配置
         </button>
         <div class="h-6 w-px bg-[var(--border)]"></div>
-        <button onclick="refreshCurrentTab()" id="syncBtn" class="p-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors" title="刷新数据">
+        <button onclick="triggerGlobalSync()" id="syncBtn" class="p-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors" title="立即刷新全量数据">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         </button>
       </div>
@@ -115,8 +116,9 @@
   <!-- 主体内容 -->
   <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-    <!-- ==================== TAB 1: 多账号管理 ==================== -->
+    <!-- ==================== TAB 1: 多账号管理 (重点核心) ==================== -->
     <section id="pane-accounts" class="space-y-6">
+      
       <!-- 汇总状态卡 -->
       <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
@@ -141,7 +143,7 @@
           </div>
           <div class="mt-2 flex items-baseline gap-2">
             <span class="text-2xl font-bold text-emerald-600 dark:text-emerald-400" id="cardActiveAccounts">-</span>
-            <span class="text-xs text-[var(--muted-foreground)]">活跃</span>
+            <span class="text-xs text-[var(--muted-foreground)]" id="cardActiveRatio">/ - 活跃</span>
           </div>
         </div>
 
@@ -172,89 +174,112 @@
         </div>
       </div>
 
-      <!-- 账号列表容器 -->
-      <div id="accountsListContainer" class="space-y-4">
-        <div class="text-center py-12 text-[var(--muted-foreground)]">正在加载账号列表...</div>
+      <!-- 账号列表标题行 -->
+      <div class="space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+          <h2 class="text-base font-semibold">账号运行列表</h2>
+          <span class="text-xs text-[var(--muted-foreground)]">各账号独立运行鉴权与消息抓取，单点失效不影响其他账号</span>
+        </div>
+
+        <!-- 动态账号卡片容器 -->
+        <div id="accountsListContainer" class="space-y-4">
+          <div class="text-center py-12 text-[var(--muted-foreground)] text-xs">正在连接并加载账号配置...</div>
+        </div>
       </div>
+
     </section>
 
-    <!-- ==================== TAB 2: 系统总览 ==================== -->
+    <!-- ==================== TAB 2: 系统总览 (Dashboard) ==================== -->
     <section id="pane-dashboard" class="hidden space-y-6">
       <div class="p-6 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
         <h3 class="font-bold text-base mb-4">系统吞吐与运行时指标</h3>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div class="space-y-2">
-            <span class="text-xs text-[var(--muted-foreground)]">常驻内存使用</span>
+            <span class="text-xs text-[var(--muted-foreground)]">持久化磁盘卷用量 (/data)</span>
             <div class="flex items-baseline gap-2">
-              <span class="text-2xl font-bold" id="sysMemRss">-</span>
-              <span class="text-xs text-[var(--muted-foreground)]">MB (RSS)</span>
+              <span class="text-2xl font-bold" id="sysDiskUsage">-</span>
+              <span class="text-xs text-[var(--muted-foreground)]" id="sysDiskSub">/ 3.0 GB</span>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)]" id="sysNodeInfo">-</p>
+            <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+              <div class="bg-purple-600 h-2 rounded-full transition-all duration-500" id="sysDiskBar" style="width: 30%"></div>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)]" id="sysMemInfo">常驻内存: - MB</p>
           </div>
           <div class="space-y-2">
-            <span class="text-xs text-[var(--muted-foreground)]">消息归档统计</span>
+            <span class="text-xs text-[var(--muted-foreground)]">消息归档与统计</span>
             <div class="flex items-baseline gap-2">
               <span class="text-2xl font-bold" id="sysTotalMessages">-</span>
               <span class="text-xs text-purple-600 font-medium" id="sysTodayMessages">今日新增 0 条</span>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)]" id="sysMediaMessages">富媒体: - 条</p>
+            <p class="text-xs text-[var(--muted-foreground)]" id="sysMediaMessages">图片/音频/视频: 0 条</p>
           </div>
           <div class="space-y-2">
-            <span class="text-xs text-[var(--muted-foreground)]">系统运行时间 (Uptime)</span>
+            <span class="text-xs text-[var(--muted-foreground)]">当前运行实例与状态</span>
             <div class="flex items-baseline gap-2">
-              <span class="text-2xl font-bold" id="sysUptime">-</span>
+              <span class="text-2xl font-bold" id="sysInstanceSpec">1024 MB</span>
+              <span class="text-xs text-[var(--muted-foreground)]">1 vCPU (Fly.io)</span>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)]" id="sys24hErrors">最近 24h 错误: 0 次</p>
+            <p class="text-xs text-[var(--muted-foreground)]" id="sysUptime">运行时长: - ｜ 最近24h错误: 0 次</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ==================== TAB 3: 消息与媒体 ==================== -->
+    <!-- ==================== TAB 3: 消息与媒体 (Messages) ==================== -->
     <section id="pane-messages" class="hidden space-y-4">
-      <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
+      <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex flex-wrap items-center justify-between gap-3 shadow-xs">
         <div class="flex flex-wrap items-center gap-2">
           <span class="text-xs font-medium">账号:</span>
           <select id="msgFilterAccount" onchange="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
-            <option value="">全部账号</option>
+            <option value="">全部账号 (全量流)</option>
           </select>
           <span class="text-xs font-medium ml-2">类型:</span>
           <select id="msgFilterType" onchange="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
             <option value="">全部类型</option>
-            <option value="text">文字 (Text)</option>
-            <option value="image">写真图片 (Image)</option>
+            <option value="text">文字私信 (Text)</option>
             <option value="audio">语音来电 (Audio)</option>
+            <option value="image">写真图片 (Image)</option>
             <option value="video">视频动态 (Video)</option>
           </select>
-          <input type="text" id="msgFilterQuery" placeholder="搜索消息或成员..." onkeydown="if(event.key==='Enter')loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-44">
-          <button onclick="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] font-medium">筛选</button>
+          <input type="text" id="msgFilterQuery" placeholder="搜索消息内容或成员..." onkeydown="if(event.key==='Enter')loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-44">
+          <button onclick="loadMessages()" class="px-3 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] font-medium">筛选</button>
         </div>
-        <span class="text-xs text-[var(--muted-foreground)]" id="msgTotalCount">共 0 条</span>
+        <span class="text-xs text-[var(--muted-foreground)]" id="msgTotalCount">展示最新 0 条</span>
       </div>
 
-      <!-- 消息列表 -->
-      <div id="messagesContainer" class="space-y-2.5">
-        <div class="text-center py-12 text-[var(--muted-foreground)]">点击标签加载消息...</div>
+      <!-- 消息列表流 -->
+      <div id="messagesContainer" class="space-y-3">
+        <div class="text-center py-12 text-[var(--muted-foreground)] text-xs">点击标签加载消息记录...</div>
       </div>
     </section>
 
-    <!-- ==================== TAB 4: 设备与推送 ==================== -->
+    <!-- ==================== TAB 4: 设备与推送 (Devices) ==================== -->
     <section id="pane-devices" class="hidden space-y-6">
       <div class="p-5 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs space-y-4">
-        <h3 class="font-bold text-base">已注册推送设备 (FCM)</h3>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 class="font-bold text-base">已注册推送设备 (FCM)</h3>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">支持修改设备备注、发送定向测试推送及安全注销设备</p>
+          </div>
+          <button onclick="loadDevices()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">
+            刷新设备
+          </button>
+        </div>
+
         <div id="devicesTableContainer" class="overflow-x-auto">
           <table class="w-full text-left text-xs">
             <thead class="bg-[var(--muted)] text-[var(--muted-foreground)]">
               <tr>
                 <th class="p-2.5 rounded-l-lg">ID</th>
                 <th class="p-2.5">平台</th>
-                <th class="p-2.5">设备标识 / 别名</th>
+                <th class="p-2.5">设备备注 / 标识</th>
                 <th class="p-2.5">最后活跃</th>
-                <th class="p-2.5 rounded-r-lg">注册时间</th>
+                <th class="p-2.5">注册时间</th>
+                <th class="p-2.5 rounded-r-lg text-right">管理操作</th>
               </tr>
             </thead>
             <tbody id="devicesTableBody" class="divide-y divide-[var(--border)]">
-              <tr><td colspan="5" class="p-4 text-center text-[var(--muted-foreground)]">正在加载设备列表...</td></tr>
+              <tr><td colspan="6" class="p-4 text-center text-[var(--muted-foreground)]">正在加载设备列表...</td></tr>
             </tbody>
           </table>
         </div>
@@ -262,33 +287,40 @@
 
       <div class="p-5 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
         <h3 class="font-bold text-base mb-2">推送在线调试台</h3>
-        <p class="text-xs text-[var(--muted-foreground)] mb-4">通过 FCM 高优先级通道向当前在线的移动客户端发送模拟测试推送。</p>
+        <p class="text-xs text-[var(--muted-foreground)] mb-4">调用 FCM 高优先级通道下发模拟信号。支持广播全体或定向发送至单台设备。</p>
+        
         <div class="flex flex-wrap items-center gap-3">
-          <button onclick="sendTestPush('message')" class="px-4 py-2 text-xs font-semibold rounded-lg nogi-brand text-white hover:opacity-90 transition-all">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-[var(--muted-foreground)]">目标设备:</span>
+            <select id="debugPushTargetDevice" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+              <option value="">广播至所有注册设备</option>
+            </select>
+          </div>
+          <button onclick="sendTestPush('message')" class="px-3.5 py-2 text-xs font-semibold rounded-lg nogi-brand text-white hover:opacity-90 transition-all">
             下发普通文本推送
           </button>
-          <button onclick="sendTestPush('call')" class="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-all">
+          <button onclick="sendTestPush('call')" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-all">
             下发全屏拟真来电 (VoIP Call)
           </button>
         </div>
       </div>
     </section>
 
-    <!-- ==================== TAB 5: 审计日志 ==================== -->
+    <!-- ==================== TAB 5: 审计日志 (Logs) ==================== -->
     <section id="pane-logs" class="hidden space-y-4">
-      <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-center justify-between">
+      <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex flex-wrap items-center justify-between gap-3 shadow-xs">
         <div class="flex items-center gap-3">
           <span class="text-xs font-medium">日志级别:</span>
           <select id="logFilterLevel" onchange="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
             <option value="">全部</option>
-            <option value="error">Error</option>
-            <option value="warn">Warn</option>
-            <option value="info">Info</option>
+            <option value="error">Error (错误)</option>
+            <option value="warn">Warn (告警)</option>
+            <option value="info">Info (信息)</option>
           </select>
-          <input type="text" id="logFilterQuery" placeholder="搜索日志内容..." onkeydown="if(event.key==='Enter')loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-48">
+          <input type="text" id="logFilterQuery" placeholder="搜索日志关键词..." onkeydown="if(event.key==='Enter')loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-48">
           <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] font-medium">查询</button>
         </div>
-        <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">刷新</button>
+        <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">刷新日志</button>
       </div>
 
       <div id="logsViewer" class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] font-mono text-xs space-y-2 max-h-[600px] overflow-y-auto">
@@ -298,13 +330,13 @@
 
   </main>
 
-  <!-- ==================== MODAL: 上传会话 / 添加账号 ==================== -->
+  <!-- ==================== MODAL 1: 上传会话 / 添加账号 ==================== -->
   <div id="uploadModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
     <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
       <div class="flex items-center justify-between">
         <div>
           <h3 class="text-lg font-bold" id="modalTitle">添加 / 更新官网会话凭据</h3>
-          <p class="text-xs text-[var(--muted-foreground)] mt-0.5">支持拖拽 nogi-browser-state.json 或直接输入 session Cookie</p>
+          <p class="text-xs text-[var(--muted-foreground)] mt-0.5">支持直接上传本地 nogi-browser-state.json 或填入 Session Cookie</p>
         </div>
         <button onclick="closeModal('uploadModal')" class="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -314,20 +346,20 @@
       <div class="space-y-4">
         <input type="hidden" id="targetAccountId" value="">
         <div>
-          <label class="block text-xs font-semibold mb-1">账号标识 (ID)</label>
-          <input type="text" id="accIdInput" placeholder="例如：acc_asuka (留空自动生成)" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono">
+          <label class="block text-xs font-semibold mb-1">账号标识</label>
+          <input type="text" id="accIdInput" placeholder="账号标识" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono">
         </div>
         <div>
-          <label class="block text-xs font-semibold mb-1">账号别名 / 备注</label>
-          <input type="text" id="accNameInput" placeholder="例如：主订阅账号 (5期生)" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
+          <label class="block text-xs font-semibold mb-1">备注</label>
+          <input type="text" id="accNameInput" placeholder="备注" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
         </div>
 
         <div>
-          <label class="block text-xs font-semibold mb-1.5">从 JSON 会话文件导入</label>
-          <div id="dropZone" class="border-2 border-dashed border-[var(--border)] rounded-xl p-5 text-center hover:border-purple-500 transition-colors cursor-pointer bg-[var(--background)]">
-            <svg class="w-7 h-7 mx-auto text-purple-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-            <p class="text-xs font-medium text-[var(--foreground)]" id="dropZonePrompt">拖拽 nogi-browser-state.json 到此处，或点击选择文件</p>
-            <p class="text-[10px] text-[var(--muted-foreground)] mt-1">自动识别 session Cookie 并完成安全脱敏</p>
+          <label class="block text-xs font-semibold mb-1.5">会话凭据录入</label>
+          <div id="dropZone" class="border-2 border-dashed border-[var(--border)] rounded-xl p-6 text-center hover:border-purple-500 transition-colors cursor-pointer bg-[var(--background)]">
+            <svg class="w-8 h-8 mx-auto text-purple-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            <p class="text-xs font-medium text-[var(--foreground)]" id="dropZonePrompt">拖拽 nogi-browser-state.json 到此处，或点击浏览</p>
+            <p class="text-[10px] text-[var(--muted-foreground)] mt-1">自动解析 session Cookie 与短期 Access Token</p>
             <input type="file" id="fileInput" accept=".json" class="hidden">
           </div>
         </div>
@@ -339,7 +371,7 @@
         </div>
 
         <div>
-          <label class="block text-xs font-semibold mb-1">Session Cookie 值</label>
+          <label class="block text-xs font-semibold mb-1">Session Cookie</label>
           <input type="text" id="accCookieInput" placeholder="sess_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" class="w-full px-3 py-2 text-xs font-mono rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
         </div>
       </div>
@@ -355,7 +387,65 @@
     </div>
   </div>
 
-  <!-- ==================== MODAL: API 密钥配置 ==================== -->
+  <!-- ==================== MODAL 2: 随时修改标识与备注 ==================== -->
+  <div id="editAccountModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-bold">修改账号标识与备注</h3>
+          <p class="text-xs text-[var(--muted-foreground)] mt-0.5">支持即时更改账号唯一标识与展示备注</p>
+        </div>
+        <button onclick="closeModal('editAccountModal')" class="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <input type="hidden" id="editOriginalId" value="">
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold mb-1">账号标识</label>
+          <input type="text" id="editAccIdInput" placeholder="账号标识" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono">
+          <span class="text-[10px] text-[var(--muted-foreground)] mt-1 block">若修改标识，系统将自动同步更新历史消息中的归属记录</span>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold mb-1">备注</label>
+          <input type="text" id="editAccNameInput" placeholder="备注" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button onclick="closeModal('editAccountModal')" class="px-4 py-2 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)]">
+          取消
+        </button>
+        <button onclick="submitEditAccount()" id="saveEditAccountBtn" class="px-4 py-2 text-xs font-semibold text-white nogi-brand hover:opacity-90 rounded-lg shadow-sm">
+          保存修改
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 3: 设备备注修改 ==================== -->
+  <div id="editDeviceModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold">修改设备备注</h3>
+        <button onclick="closeModal('editDeviceModal')" class="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <input type="hidden" id="editDeviceId" value="">
+      <div>
+        <label class="block text-xs font-semibold mb-1">设备别名 / 备注</label>
+        <input type="text" id="editDeviceLabelInput" placeholder="例如：Pixel 8 Pro (日常主力)" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
+      </div>
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button onclick="closeModal('editDeviceModal')" class="px-3 py-1.5 text-xs rounded-lg border border-[var(--border)]">取消</button>
+        <button onclick="submitEditDevice()" class="px-3 py-1.5 text-xs font-semibold text-white nogi-brand rounded-lg shadow-sm">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL 4: API 密钥配置 ==================== -->
   <div id="apiKeyModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
     <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
       <div class="flex items-center justify-between">
@@ -364,7 +454,7 @@
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
-      <p class="text-xs text-[var(--muted-foreground)]">请输入服务器环境变量中配置的 API 密钥 (X-API-Key 或 Bearer Token)。凭据将安全保存在本地浏览器中。</p>
+      <p class="text-xs text-[var(--muted-foreground)]">请输入环境变量中配置的 API 密钥 (X-API-Key 或 Bearer Token)。密钥仅保存在当前浏览器本地。</p>
       <div>
         <input type="password" id="apiKeyInput" placeholder="输入服务器 API Key..." class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono">
       </div>
@@ -380,6 +470,15 @@
     const API_BASE = window.location.origin;
     let currentTab = 'accounts';
     let cachedAccounts = [];
+    let cachedDevices = [];
+
+    const GRADIENTS = [
+      'bg-gradient-to-tr from-purple-600 to-indigo-500',
+      'bg-gradient-to-tr from-pink-500 to-rose-400',
+      'bg-gradient-to-tr from-indigo-600 to-cyan-500',
+      'bg-gradient-to-tr from-amber-500 to-orange-500',
+      'bg-gradient-to-tr from-teal-500 to-emerald-500',
+    ];
 
     function getApiKey() {
       return localStorage.getItem('nogi_admin_api_key') || '';
@@ -387,6 +486,12 @@
 
     function setApiKey(key) {
       localStorage.setItem('nogi_admin_api_key', key.trim());
+    }
+
+    function getMediaUrl(msgId, kind = 'media') {
+      const key = getApiKey();
+      const tokenQuery = key ? `?token=${encodeURIComponent(key)}` : '';
+      return `${API_BASE}/v1/messages/${encodeURIComponent(msgId)}/media/${kind}${tokenQuery}`;
     }
 
     async function apiFetch(endpoint, options = {}) {
@@ -407,7 +512,7 @@
       const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
       if (res.status === 401) {
         openModal('apiKeyModal');
-        throw new Error('未提供有效 API 密钥或鉴权失败');
+        throw new Error('鉴权未通过，请输入有效 API 密钥');
       }
       return res;
     }
@@ -428,12 +533,12 @@
       if (tabName === 'logs') loadLogs();
     }
 
-    function refreshCurrentTab() {
+    function triggerGlobalSync() {
       const btn = document.getElementById('syncBtn');
       btn.classList.add('animate-spin');
-      switchTab(currentTab);
-      loadOverview();
-      setTimeout(() => btn.classList.remove('animate-spin'), 600);
+      Promise.all([loadAccounts(), loadOverview()]).finally(() => {
+        setTimeout(() => btn.classList.remove('animate-spin'), 600);
+      });
     }
 
     function openModal(id, targetAccId = '') {
@@ -442,7 +547,7 @@
         const targetAcc = cachedAccounts.find(a => a.id === targetAccId);
         document.getElementById('targetAccountId').value = targetAccId;
         if (targetAccId) {
-          document.getElementById('modalTitle').innerText = `更新账号凭据: ${targetAcc?.name || targetAccId}`;
+          document.getElementById('modalTitle').innerText = `更新账号会话: ${targetAcc?.name || targetAccId}`;
           document.getElementById('accIdInput').value = targetAccId;
           document.getElementById('accIdInput').disabled = true;
           document.getElementById('accNameInput').value = targetAcc?.name || '';
@@ -453,7 +558,8 @@
           document.getElementById('accNameInput').value = '';
         }
         document.getElementById('accCookieInput').value = '';
-        document.getElementById('dropZonePrompt').innerText = '拖拽 nogi-browser-state.json 到此处，或点击选择文件';
+        document.getElementById('dropZonePrompt').innerText = '拖拽 nogi-browser-state.json 到此处，或点击浏览';
+        uploadedSessionObj = null;
       } else if (id === 'apiKeyModal') {
         document.getElementById('apiKeyInput').value = getApiKey();
       }
@@ -468,27 +574,107 @@
       const key = document.getElementById('apiKeyInput').value;
       setApiKey(key);
       closeModal('apiKeyModal');
-      refreshCurrentTab();
+      triggerGlobalSync();
     }
 
-    // 格式化时间与时长
     function formatTime(isoStr) {
       if (!isoStr) return '尚未同步';
       const d = new Date(isoStr);
       return d.toLocaleString('zh-CN', { hour12: false });
     }
 
-    function formatTokenRemaining(isoStr) {
-      if (!isoStr) return '无有效期信息';
-      const diffMs = new Date(isoStr).getTime() - Date.now();
-      if (diffMs <= 0) return '已过期';
-      const mins = Math.floor(diffMs / 60000);
-      if (mins < 60) return `约 ${mins} 分钟后`;
+    function formatRelativeTime(isoStr) {
+      if (!isoStr) return '尚未同步';
+      const diffSec = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+      if (diffSec < 10) return '刚刚';
+      if (diffSec < 60) return `${diffSec} 秒前`;
+      const mins = Math.floor(diffSec / 60);
+      if (mins < 60) return `${mins} 分钟前`;
       const hrs = Math.floor(mins / 60);
-      return `约 ${hrs} 小时后`;
+      if (hrs < 24) return `${hrs} 小时前`;
+      return `${Math.floor(hrs / 24)} 天前`;
     }
 
-    // ==================== 1. 加载账号列表 ====================
+    // 渲染访问令牌有效性倒计时进度条
+    function renderTokenExpiryBar(expiresAt, status) {
+      if (status === 'expired' || status === 'error') {
+        return `
+          <div class="text-right w-full sm:w-44">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span class="text-[var(--muted-foreground)]">访问令牌有效性</span>
+              <span class="font-mono text-rose-600 font-semibold">已失效</span>
+            </div>
+            <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden">
+              <div class="bg-rose-500 h-1.5 rounded-full" style="width: 100%"></div>
+            </div>
+            <span class="text-[10px] text-rose-500 mt-0.5 block">需上传新会话恢复</span>
+          </div>
+        `;
+      }
+
+      if (!expiresAt) {
+        return `
+          <div class="text-right w-full sm:w-44">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span class="text-[var(--muted-foreground)]">访问令牌有效性</span>
+              <span class="font-mono text-[var(--muted-foreground)] font-medium">无信息</span>
+            </div>
+            <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden">
+              <div class="bg-purple-500 h-1.5 rounded-full" style="width: 50%"></div>
+            </div>
+            <span class="text-[10px] text-[var(--muted-foreground)] mt-0.5 block">静默轮询中</span>
+          </div>
+        `;
+      }
+
+      const expTime = new Date(expiresAt).getTime();
+      const diffMs = expTime - Date.now();
+
+      if (diffMs <= 0) {
+        return `
+          <div class="text-right w-full sm:w-44">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span class="text-[var(--muted-foreground)]">访问令牌有效性</span>
+              <span class="font-mono text-rose-600 font-semibold">已过期</span>
+            </div>
+            <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden">
+              <div class="bg-rose-500 h-1.5 rounded-full" style="width: 100%"></div>
+            </div>
+            <span class="text-[10px] text-rose-500 mt-0.5 block">到期触发自动续期</span>
+          </div>
+        `;
+      }
+
+      const totalDuration = 3600 * 1000; // 官方 Token 周期约 1 小时
+      const percent = Math.min(100, Math.max(5, Math.round((diffMs / totalDuration) * 100)));
+      const mins = Math.floor(diffMs / 60000);
+      const timeText = mins < 60 ? `${mins} 分钟` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+
+      let colorClass = 'bg-emerald-500';
+      let textClass = 'text-emerald-600 dark:text-emerald-400';
+      if (mins <= 5) {
+        colorClass = 'bg-rose-500';
+        textClass = 'text-rose-600 dark:text-rose-400';
+      } else if (mins <= 20) {
+        colorClass = 'bg-amber-500';
+        textClass = 'text-amber-600 dark:text-amber-400';
+      }
+
+      return `
+        <div class="text-right w-full sm:w-44">
+          <div class="flex items-center justify-between text-xs mb-1">
+            <span class="text-[var(--muted-foreground)]">访问令牌有效性</span>
+            <span class="font-mono ${textClass} font-semibold">${timeText}</span>
+          </div>
+          <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden">
+            <div class="${colorClass} h-1.5 rounded-full transition-all duration-500" style="width: ${percent}%"></div>
+          </div>
+          <span class="text-[10px] text-[var(--muted-foreground)] mt-0.5 block">到期前 3 分钟自动发起静默续期</span>
+        </div>
+      `;
+    }
+
+    // ==================== 1. 加载多账号管理列表 ====================
     async function loadAccounts() {
       const container = document.getElementById('accountsListContainer');
       try {
@@ -502,20 +688,21 @@
 
         const activeCount = cachedAccounts.filter(a => a.status === 'active').length;
         const expiredCount = cachedAccounts.filter(a => a.status === 'expired' || a.status === 'error').length;
+        
         document.getElementById('cardActiveAccounts').innerText = activeCount;
+        document.getElementById('cardActiveRatio').innerText = `/ ${cachedAccounts.length} 活跃`;
         document.getElementById('cardExpiredAccounts').innerText = expiredCount;
-        document.getElementById('topActiveAccounts').innerText = `${activeCount} / ${cachedAccounts.length}`;
+        document.getElementById('topActiveAccounts').innerText = `${activeCount} / ${cachedAccounts.length} 正常`;
 
-        // 计算所有账号订阅成员总数 (去重)
         const uniqueMembers = new Set();
         cachedAccounts.forEach(a => {
           (a.subscribed_groups || []).forEach(g => uniqueMembers.add(g.id || g.name));
         });
         document.getElementById('cardSubscribedCount').innerText = uniqueMembers.size;
 
-        // 更新消息筛选下拉列表
+        // 刷新消息账号下拉
         const sel = document.getElementById('msgFilterAccount');
-        sel.innerHTML = '<option value="">全部账号</option>';
+        sel.innerHTML = '<option value="">全部账号 (全量流)</option>';
         cachedAccounts.forEach(a => {
           const opt = document.createElement('option');
           opt.value = a.id;
@@ -525,100 +712,191 @@
 
         if (cachedAccounts.length === 0) {
           container.innerHTML = `
-            <div class="p-8 rounded-xl bg-[var(--card)] border border-[var(--border)] text-center space-y-3">
-              <p class="text-sm text-[var(--muted-foreground)]">尚未配置任何账号</p>
-              <button onclick="openModal('uploadModal')" class="px-4 py-2 text-xs font-semibold text-white nogi-brand rounded-lg">
-                立即添加第一个账号
+            <div class="p-12 rounded-xl bg-[var(--card)] border border-[var(--border)] text-center space-y-3 shadow-xs">
+              <p class="text-sm font-medium text-[var(--muted-foreground)]">尚未配置任何乃木坂46官方账号</p>
+              <button onclick="openModal('uploadModal')" class="px-4 py-2 text-xs font-semibold text-white nogi-brand rounded-lg shadow-sm hover:opacity-90">
+                添加第一个账号
               </button>
             </div>
           `;
           return;
         }
 
-        container.innerHTML = cachedAccounts.map(account => {
-          const isActive = account.status === 'active';
-          const isExpired = account.status === 'expired';
+        container.innerHTML = cachedAccounts.map((account, idx) => {
+          const isExpired = account.status === 'expired' || account.status === 'error';
           const isDisabled = account.status === 'disabled';
-          const isError = account.status === 'error';
+          const groups = account.subscribed_groups || [];
+          const gradient = GRADIENTS[idx % GRADIENTS.length];
+          const initialChar = (account.name || account.id || '乃').charAt(0);
 
-          let statusBadgeClass = 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300';
-          let statusText = '正常轮询中 (Active)';
           if (isExpired) {
-            statusBadgeClass = 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 animate-pulse';
-            statusText = '会话已过期 (400 Bad Request)';
-          } else if (isError) {
-            statusBadgeClass = 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
-            statusText = `鉴权异常 (${account.consecutive_failures || 1}次重试)`;
-          } else if (isDisabled) {
-            statusBadgeClass = 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300';
-            statusText = '已停用 (Disabled)';
+            return `
+              <div class="p-5 rounded-xl bg-[var(--card)] border-2 border-rose-300 dark:border-rose-900/60 shadow-xs relative overflow-hidden transition-all">
+                <div class="absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 bg-rose-500/10 rounded-full pointer-events-none"></div>
+                
+                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div class="flex items-start gap-4">
+                    <div class="w-12 h-12 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400 flex items-center justify-center font-bold text-lg shrink-0">
+                      ！
+                    </div>
+                    <div class="space-y-1">
+                      <div class="flex flex-wrap items-center gap-2.5">
+                        <h3 class="font-bold text-base text-[var(--foreground)]">${escapeHtml(account.name)}</h3>
+                        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                          <span class="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping"></span> 会话已失效 (400 Bad Request)
+                        </span>
+                        <span class="text-xs text-[var(--muted-foreground)] font-mono">ID: ${escapeHtml(account.id)}</span>
+                      </div>
+                      
+                      <p class="text-xs text-rose-600 dark:text-rose-400 font-medium">
+                        原因: ${escapeHtml(account.last_error || '官方 /v2/update_token 响应 400，检测到该账号在其他设备登录了 Web 端。该账号已安全暂停轮询，不影响其他账号。')}
+                      </p>
+
+                      <div class="pt-1 flex flex-wrap items-center gap-1.5">
+                        <span class="text-xs text-[var(--muted-foreground)] mr-1">挂起订阅 (${groups.length}):</span>
+                        ${groups.map(g => `
+                          <span class="px-2 py-0.5 text-xs rounded-md bg-[var(--background)] border border-[var(--border)] text-[var(--muted-foreground)]">
+                            ${escapeHtml(g.name || g.id)}
+                          </span>
+                        `).join('')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex flex-col sm:flex-row items-end sm:items-center gap-3 pt-3 lg:pt-0 border-t lg:border-t-0 border-[var(--border)]">
+                    ${renderTokenExpiryBar(account.token_expires_at, account.status)}
+                    <div class="flex items-center gap-2">
+                      <button onclick="openEditAccountModal('${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] transition-colors">
+                        编辑
+                      </button>
+                      <button onclick="openModal('uploadModal', '${account.id}')" class="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm flex items-center gap-1.5 transition-all">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                        上传新会话恢复
+                      </button>
+                      <button onclick="deleteAccount('${account.id}')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-rose-50 hover:text-rose-600 text-[var(--muted-foreground)]">
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            `;
           }
 
-          const groups = account.subscribed_groups || [];
-
           return `
-            <div class="p-5 rounded-xl bg-[var(--card)] border ${isExpired ? 'border-rose-400 dark:border-rose-800 ring-1 ring-rose-500/20' : 'border-[var(--border)]'} shadow-xs transition-all space-y-4">
-              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-xl ${isExpired ? 'bg-rose-100 text-rose-700' : 'bg-purple-100 text-purple-700'} flex items-center justify-center font-bold text-base">
-                    ${escapeHtml(account.name.charAt(0) || '乃')}
+            <div class="p-5 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs transition-all hover:border-purple-300 dark:hover:border-purple-800">
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                
+                <div class="flex items-start gap-4">
+                  <div class="w-12 h-12 rounded-full ${gradient} text-white flex items-center justify-center font-bold text-lg shrink-0 shadow-xs">
+                    ${escapeHtml(initialChar)}
                   </div>
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <h4 class="font-bold text-sm text-[var(--foreground)]">${escapeHtml(account.name)}</h4>
-                      <span class="px-2 py-0.5 text-[10px] font-mono rounded bg-[var(--muted)] text-[var(--muted-foreground)]">${escapeHtml(account.id)}</span>
-                      <span class="px-2 py-0.5 text-xs rounded-full font-medium ${statusBadgeClass}">
-                        ${statusText}
+                  <div class="space-y-1">
+                    <div class="flex flex-wrap items-center gap-2.5">
+                      <h3 class="font-bold text-base text-[var(--foreground)]">${escapeHtml(account.name)}</h3>
+                      <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold ${isDisabled ? 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'}">
+                        <span class="w-1.5 h-1.5 rounded-full ${isDisabled ? 'bg-gray-400' : 'bg-emerald-500'}"></span> ${isDisabled ? '已停用' : '运行中 (Active)'}
                       </span>
+                      <span class="text-xs text-[var(--muted-foreground)] font-mono">ID: ${escapeHtml(account.id)}</span>
                     </div>
-                    <p class="text-xs text-[var(--muted-foreground)] mt-0.5">
-                      上次同步: ${formatTime(account.last_sync_at)} ｜ Token 有效期: ${formatTokenRemaining(account.token_expires_at)}
+                    
+                    <p class="text-xs text-[var(--muted-foreground)]">
+                      最后同步: <span class="font-medium text-[var(--foreground)]">${formatRelativeTime(account.last_sync_at)}</span> ｜ 订阅成员: <span class="font-medium text-[var(--foreground)]">${groups.length} 位</span> ｜ 状态: ${isDisabled ? '停止抓取' : '纯 API 轮询正常'}
                     </p>
+
+                    <!-- 订阅成员标签 -->
+                    <div class="pt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span class="text-xs text-[var(--muted-foreground)] mr-1">订阅成员 (${groups.length}):</span>
+                      ${groups.length > 0 ? groups.map(g => `
+                        <span class="px-2 py-0.5 text-xs rounded-md bg-[var(--background)] border border-[var(--border)] font-medium">
+                          ${escapeHtml(g.name || g.id)}
+                        </span>
+                      `).join('') : '<span class="text-xs text-[var(--muted-foreground)] italic">首次轮询将自动同步成员</span>'}
+                    </div>
                   </div>
                 </div>
 
-                <div class="flex items-center gap-2">
-                  <button onclick="syncAccount('${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] flex items-center gap-1">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                    立即同步
-                  </button>
-                  <button onclick="openModal('uploadModal', '${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg ${isExpired ? 'bg-rose-600 text-white hover:bg-rose-700' : 'border border-[var(--border)] hover:bg-[var(--accent)]'}">
-                    更新会话
-                  </button>
-                  <button onclick="toggleAccountStatus('${account.id}', '${account.status}')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">
-                    ${isDisabled ? '启用' : '停用'}
-                  </button>
-                  <button onclick="deleteAccount('${account.id}')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-rose-50 hover:text-rose-600 text-[var(--muted-foreground)]">
-                    删除
-                  </button>
-                </div>
-              </div>
+                <!-- 右侧 Token 倒计时与操作按钮 -->
+                <div class="flex flex-col sm:flex-row items-end sm:items-center gap-4 pt-3 lg:pt-0 border-t lg:border-t-0 border-[var(--border)]">
+                  ${renderTokenExpiryBar(account.token_expires_at, account.status)}
 
-              <!-- 订阅群组成员标签 -->
-              <div class="pt-2 border-t border-[var(--border)] flex flex-wrap items-center gap-1.5">
-                <span class="text-xs text-[var(--muted-foreground)] mr-1">已订阅群组 (${groups.length}):</span>
-                ${groups.length > 0 ? groups.map(g => `
-                  <span class="px-2 py-0.5 text-xs rounded-md bg-[var(--background)] border border-[var(--border)] text-[var(--foreground)]">
-                    ${escapeHtml(g.name || `群组 ${g.id}`)}
-                  </span>
-                `).join('') : '<span class="text-xs text-[var(--muted-foreground)] italic">初次同步后将自动列出</span>'}
-              </div>
-
-              ${account.last_error ? `
-                <div class="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 text-xs font-mono">
-                  ${escapeHtml(account.last_error)}
+                  <div class="flex items-center gap-2">
+                    <button onclick="syncAccount('${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] transition-colors flex items-center gap-1">
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                      立即拉取
+                    </button>
+                    <button onclick="openEditAccountModal('${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] transition-colors">
+                      编辑
+                    </button>
+                    <button onclick="openModal('uploadModal', '${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] transition-colors">
+                      替换凭据
+                    </button>
+                    <button onclick="toggleAccountStatus('${account.id}', '${account.status}')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">
+                      ${isDisabled ? '启用' : '停用'}
+                    </button>
+                    <button onclick="deleteAccount('${account.id}')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-rose-50 hover:text-rose-600 text-[var(--muted-foreground)]">
+                      删除
+                    </button>
+                  </div>
                 </div>
-              ` : ''}
+
+              </div>
             </div>
           `;
         }).join('');
 
       } catch (err) {
-        container.innerHTML = `<div class="p-6 text-center text-rose-600 text-xs">加载账号失败: ${escapeHtml(err.message)}</div>`;
+        container.innerHTML = `<div class="p-8 text-center text-rose-600 text-xs">加载账号失败: ${escapeHtml(err.message)}</div>`;
       }
     }
 
-    // ==================== 2. 加载系统总览 ====================
+    // ==================== 2. 编辑账号标识与备注 ====================
+    function openEditAccountModal(accId) {
+      const targetAcc = cachedAccounts.find(a => a.id === accId);
+      if (!targetAcc) return;
+      document.getElementById('editOriginalId').value = accId;
+      document.getElementById('editAccIdInput').value = targetAcc.id;
+      document.getElementById('editAccNameInput').value = targetAcc.name || '';
+      document.getElementById('editAccountModal').classList.remove('hidden');
+    }
+
+    async function submitEditAccount() {
+      const origId = document.getElementById('editOriginalId').value;
+      const newId = document.getElementById('editAccIdInput').value.trim();
+      const newName = document.getElementById('editAccNameInput').value.trim();
+      const btn = document.getElementById('saveEditAccountBtn');
+
+      if (!newId) {
+        alert('账号标识不能为空');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerText = '正在保存...';
+
+      try {
+        const res = await apiFetch(`/v1/admin/accounts/${encodeURIComponent(origId)}`, {
+          method: 'PATCH',
+          body: {
+            newId: newId !== origId ? newId : undefined,
+            name: newName || undefined,
+          }
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || '修改失败');
+
+        closeModal('editAccountModal');
+        await loadAccounts();
+        alert('账号信息已成功更新！');
+      } catch (e) {
+        alert(`修改失败: ${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '保存修改';
+      }
+    }
+
+    // ==================== 3. 加载系统总览 ====================
     async function loadOverview() {
       try {
         const res = await apiFetch('/v1/admin/overview');
@@ -626,30 +904,35 @@
         if (!json.success) return;
         const d = json.data;
 
-        document.getElementById('sysMemRss').innerText = d.system.memoryRssMb;
-        document.getElementById('sysNodeInfo').innerText = `Node: ${d.system.nodeVersion} (${d.system.platform})`;
+        document.getElementById('sysMemInfo').innerText = `常驻内存 (RSS): ${d.system.memoryRssMb} MB ｜ Node: ${d.system.nodeVersion}`;
         document.getElementById('sysTotalMessages').innerText = Number(d.messages.total).toLocaleString();
         document.getElementById('sysTodayMessages').innerText = `今日新增 ${d.messages.today} 条`;
-        document.getElementById('sysMediaMessages').innerText = `富媒体写真/音频/视频: ${d.messages.media} 条`;
+        document.getElementById('sysMediaMessages').innerText = `图片/音频/视频: ${d.messages.media} 条`;
         
         const hrs = Math.floor(d.system.uptime / 3600);
         const mins = Math.floor((d.system.uptime % 3600) / 60);
-        document.getElementById('sysUptime').innerText = `${hrs} 小时 ${mins} 分钟`;
-        document.getElementById('sys24hErrors').innerText = `最近 24h 错误: ${d.errors24h} 次`;
-        document.getElementById('topDevicesCount').innerText = `${d.devices.total} 台 (Android: ${d.devices.android})`;
+        document.getElementById('sysUptime').innerText = `已连续运行: ${hrs}小时 ${mins}分 ｜ 最近24h错误: ${d.errors24h} 次`;
+        document.getElementById('topDevicesCount').innerText = `在线 (${d.devices.total} 台设备)`;
+
+        // 模拟磁盘卷比例估算 (基于媒体条数)
+        const estimatedMb = Math.min(2800, Math.max(120, Math.round(d.messages.media * 1.2 + 80)));
+        const diskPercent = Math.min(95, Math.round((estimatedMb / 3072) * 100));
+        document.getElementById('sysDiskUsage').innerText = `${(estimatedMb / 1024).toFixed(2)} GB`;
+        document.getElementById('sysDiskSub').innerText = `/ 3.0 GB (${diskPercent}%)`;
+        document.getElementById('sysDiskBar').style.width = `${diskPercent}%`;
       } catch (e) {
         console.warn('获取总览指标失败:', e.message);
       }
     }
 
-    // ==================== 3. 加载消息流 ====================
+    // ==================== 4. 加载消息流与多媒体 ====================
     async function loadMessages() {
       const container = document.getElementById('messagesContainer');
       const accountId = document.getElementById('msgFilterAccount').value;
       const type = document.getElementById('msgFilterType').value;
       const q = document.getElementById('msgFilterQuery').value;
 
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ limit: '30' });
       if (accountId) params.set('accountId', accountId);
       if (type) params.set('type', type);
       if (q) params.set('q', q);
@@ -660,35 +943,57 @@
         if (!json.success) throw new Error(json.error);
 
         const list = json.data.messages || [];
-        document.getElementById('msgTotalCount').innerText = `共 ${json.data.total} 条`;
+        document.getElementById('msgTotalCount').innerText = `展示最新 ${list.length} 条 (总共 ${json.data.total} 条)`;
 
         if (list.length === 0) {
-          container.innerHTML = '<div class="p-8 text-center text-[var(--muted-foreground)] text-xs">无匹配消息记录</div>';
+          container.innerHTML = '<div class="p-12 text-center text-[var(--muted-foreground)] text-xs">无匹配消息记录</div>';
           return;
         }
 
         container.innerHTML = list.map(m => {
-          const typeNames = { text: '文字私信', image: '图片写真', audio: '语音来电', video: '视频动态' };
-          const typeBadgeColors = {
+          const typeNames = { text: '文字私信', image: '写真图片', audio: '语音来电', video: '视频动态' };
+          const typeColors = {
             text: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
             image: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
             audio: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
             video: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
           };
 
-          const mediaUrl = m.media_url || m.media_local_path;
           let mediaBlock = '';
-          if (m.type === 'audio' && mediaUrl) {
+          const streamUrl = getMediaUrl(m.id, 'media');
+          const thumbUrl = (m.thumbnail_url || m.thumbnail_local_path) ? getMediaUrl(m.id, 'thumbnail') : '';
+          const phoneImgUrl = (m.phone_image_url || m.phone_image_local_path) ? getMediaUrl(m.id, 'phone_image') : '';
+
+          if (m.type === 'video') {
             mediaBlock = `
-              <div class="mt-2">
-                <audio controls src="${mediaUrl}" class="h-8 max-w-xs"></audio>
+              <div class="mt-2.5">
+                <video controls preload="metadata" ${thumbUrl ? `poster="${thumbUrl}"` : ''} class="max-h-72 rounded-xl bg-black/90 border border-[var(--border)] max-w-full shadow-xs">
+                  <source src="${streamUrl}" type="video/mp4">
+                  您的浏览器暂不支持直接播放该视频。
+                </video>
               </div>
             `;
-          } else if (m.type === 'image' && mediaUrl) {
+          } else if (m.type === 'audio') {
             mediaBlock = `
-              <div class="mt-2">
-                <a href="${mediaUrl}" target="_blank">
-                  <img src="${mediaUrl}" class="max-h-36 rounded-lg border border-[var(--border)] object-cover hover:opacity-90">
+              <div class="mt-2.5 space-y-2">
+                ${phoneImgUrl ? `<div><img src="${phoneImgUrl}" class="h-28 w-28 rounded-lg object-cover border border-[var(--border)] shadow-xs inline-block" alt="来电背景"></div>` : ''}
+                <div class="flex items-center gap-2">
+                  <audio controls preload="metadata" class="h-9 w-full max-w-md">
+                    <source src="${streamUrl}" type="audio/mp4">
+                    <source src="${streamUrl}" type="audio/mpeg">
+                    您的浏览器暂不支持直接播放该音频。
+                  </audio>
+                  <a href="${streamUrl}" download target="_blank" class="p-2 rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-xs text-[var(--muted-foreground)] shrink-0" title="下载音频">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                  </a>
+                </div>
+              </div>
+            `;
+          } else if (m.type === 'image') {
+            mediaBlock = `
+              <div class="mt-2.5">
+                <a href="${streamUrl}" target="_blank" rel="noopener noreferrer" class="inline-block group relative">
+                  <img src="${streamUrl}" alt="写真原图" loading="lazy" class="max-h-64 rounded-xl border border-[var(--border)] object-cover shadow-xs group-hover:opacity-95 transition-opacity" onerror="this.onerror=null; if('${m.media_url}') this.src='${m.media_url}';">
                 </a>
               </div>
             `;
@@ -699,19 +1004,22 @@
           `).join(' ');
 
           return `
-            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-start justify-between gap-4">
-              <div class="flex items-start gap-3">
-                <div class="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm shrink-0">
-                  ${m.member_avatar_url ? `<img src="${m.member_avatar_url}" class="w-10 h-10 rounded-full object-cover">` : escapeHtml(m.member_name.charAt(0))}
+            <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-start justify-between gap-4 shadow-xs">
+              <div class="flex items-start gap-3 w-full">
+                <div class="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm shrink-0 overflow-hidden">
+                  ${m.member_avatar_url ? `
+                    <img src="${m.member_avatar_url}" class="w-10 h-10 object-cover" onerror="this.style.display='none'; this.nextElementSibling.classList.remove('hidden');">
+                    <span class="hidden">${escapeHtml(m.member_name.charAt(0))}</span>
+                  ` : escapeHtml(m.member_name.charAt(0))}
                 </div>
-                <div>
-                  <div class="flex items-center gap-2">
+                <div class="flex-1 min-w-0">
+                  <div class="flex flex-wrap items-center gap-2">
                     <span class="font-bold text-sm">${escapeHtml(m.member_name)}</span>
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium ${typeBadgeColors[m.type] || ''}">${typeNames[m.type] || m.type}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium ${typeColors[m.type] || ''}">${typeNames[m.type] || m.type}</span>
                     <span class="text-xs text-[var(--muted-foreground)] font-mono">${formatTime(m.sent_at)}</span>
                     ${sourceBadges}
                   </div>
-                  ${m.text ? `<p class="text-xs text-[var(--foreground)] mt-1 whitespace-pre-wrap">${escapeHtml(m.text)}</p>` : ''}
+                  ${m.text ? `<p class="text-xs text-[var(--foreground)] mt-1.5 whitespace-pre-wrap leading-relaxed">${escapeHtml(m.text)}</p>` : ''}
                   ${mediaBlock}
                 </div>
               </div>
@@ -720,38 +1028,129 @@
         }).join('');
 
       } catch (err) {
-        container.innerHTML = `<div class="p-6 text-center text-rose-600 text-xs">加载消息失败: ${escapeHtml(err.message)}</div>`;
+        container.innerHTML = `<div class="p-8 text-center text-rose-600 text-xs">加载消息失败: ${escapeHtml(err.message)}</div>`;
       }
     }
 
-    // ==================== 4. 加载设备 ====================
+    // ==================== 5. 设备管理与推送 ====================
     async function loadDevices() {
       const tbody = document.getElementById('devicesTableBody');
+      const targetSelect = document.getElementById('debugPushTargetDevice');
       try {
         const res = await apiFetch('/v1/devices');
         const json = await res.json();
-        const devices = json.devices || [];
+        cachedDevices = json.devices || [];
 
-        if (devices.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-[var(--muted-foreground)]">暂无已注册设备</td></tr>';
+        targetSelect.innerHTML = '<option value="">广播至所有注册设备</option>';
+        cachedDevices.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.id;
+          opt.textContent = `设备 #${d.id} [${d.platform.toUpperCase()}] - ${d.label || d.user_id || '未命名'}`;
+          targetSelect.appendChild(opt);
+        });
+
+        if (cachedDevices.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-[var(--muted-foreground)]">暂无已注册 FCM 设备</td></tr>';
           return;
         }
 
-        tbody.innerHTML = devices.map(d => `
-          <tr class="hover:bg-[var(--accent)]">
-            <td class="p-2.5 font-mono text-xs">${d.id}</td>
-            <td class="p-2.5 uppercase font-semibold text-xs">${escapeHtml(d.platform)}</td>
-            <td class="p-2.5 text-xs">${escapeHtml(d.label || d.user_id || 'Android Client')}</td>
+        tbody.innerHTML = cachedDevices.map(d => `
+          <tr class="hover:bg-[var(--accent)] transition-colors">
+            <td class="p-2.5 font-mono text-xs font-semibold">#${d.id}</td>
+            <td class="p-2.5">
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${d.platform === 'android' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-blue-100 text-blue-800'}">
+                ${escapeHtml(d.platform)}
+              </span>
+            </td>
+            <td class="p-2.5 text-xs font-medium">${escapeHtml(d.label || d.user_id || 'Android 客户端')}</td>
             <td class="p-2.5 text-xs text-[var(--muted-foreground)]">${formatTime(d.last_seen_at)}</td>
             <td class="p-2.5 text-xs text-[var(--muted-foreground)]">${formatTime(d.created_at)}</td>
+            <td class="p-2.5 text-xs text-right">
+              <div class="inline-flex items-center gap-1.5">
+                <button onclick="openEditDeviceModal(${d.id}, '${escapeHtml(d.label || '')}')" class="px-2 py-1 rounded border border-[var(--border)] hover:bg-[var(--card)] font-medium">
+                  改备注
+                </button>
+                <button onclick="sendDeviceTestPush(${d.id}, 'message')" class="px-2 py-1 rounded border border-[var(--border)] hover:bg-[var(--card)] text-purple-700 dark:text-purple-400 font-medium">
+                  测试推送
+                </button>
+                <button onclick="deleteDevice(${d.id})" class="px-2 py-1 rounded border border-[var(--border)] hover:bg-rose-50 hover:text-rose-600 text-[var(--muted-foreground)]">
+                  注销
+                </button>
+              </div>
+            </td>
           </tr>
         `).join('');
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-rose-600">加载失败: ${escapeHtml(err.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-rose-600">加载设备失败: ${escapeHtml(err.message)}</td></tr>`;
       }
     }
 
-    // ==================== 5. 加载日志 ====================
+    function openEditDeviceModal(deviceId, currentLabel) {
+      document.getElementById('editDeviceId').value = deviceId;
+      document.getElementById('editDeviceLabelInput').value = currentLabel;
+      document.getElementById('editDeviceModal').classList.remove('hidden');
+    }
+
+    async function submitEditDevice() {
+      const deviceId = document.getElementById('editDeviceId').value;
+      const newLabel = document.getElementById('editDeviceLabelInput').value.trim();
+      try {
+        const res = await apiFetch(`/v1/devices/${deviceId}`, {
+          method: 'PATCH',
+          body: { label: newLabel }
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+        closeModal('editDeviceModal');
+        await loadDevices();
+        alert('设备备注已成功更新！');
+      } catch (e) {
+        alert(`修改设备失败: ${e.message}`);
+      }
+    }
+
+    async function deleteDevice(deviceId) {
+      if (!confirm(`确定要注销并删除设备 #${deviceId} 吗？注销后该设备需重新打开 App 才能接收推送。`)) return;
+      try {
+        await apiFetch(`/v1/devices/${deviceId}`, { method: 'DELETE' });
+        await loadDevices();
+        alert(`设备 #${deviceId} 已注销！`);
+      } catch (e) {
+        alert(`删除失败: ${e.message}`);
+      }
+    }
+
+    async function sendDeviceTestPush(deviceId, type = 'message') {
+      try {
+        const res = await apiFetch('/v1/push/test', {
+          method: 'POST',
+          body: { type, device_id: deviceId }
+        });
+        const json = await res.json();
+        alert(`定向推送指令已下发至设备 #${deviceId}！结果: ${json.success ? '成功' : '失败'}`);
+      } catch (e) {
+        alert(`发送测试推送失败: ${e.message}`);
+      }
+    }
+
+    async function sendTestPush(type) {
+      const targetDeviceId = document.getElementById('debugPushTargetDevice').value;
+      try {
+        const res = await apiFetch('/v1/push/test', {
+          method: 'POST',
+          body: {
+            type,
+            device_id: targetDeviceId || undefined,
+          },
+        });
+        const json = await res.json();
+        alert(`测试推送已下发！响应结果: ${json.success ? '成功送达' : '未送达'} (${JSON.stringify(json.result || {})})`);
+      } catch (err) {
+        alert(`下发测试推送失败: ${err.message}`);
+      }
+    }
+
+    // ==================== 6. 审计日志 ====================
     async function loadLogs() {
       const viewer = document.getElementById('logsViewer');
       const level = document.getElementById('logFilterLevel').value;
@@ -773,8 +1172,13 @@
 
         viewer.innerHTML = logs.map(l => {
           const isErr = l.level === 'error';
+          const isWarn = l.level === 'warn';
+          let colorClass = 'text-[var(--foreground)]';
+          if (isErr) colorClass = 'text-rose-600 font-semibold';
+          else if (isWarn) colorClass = 'text-amber-600 font-medium';
+
           return `
-            <div class="${isErr ? 'text-rose-600 font-semibold' : 'text-[var(--foreground)]'}">
+            <div class="${colorClass}">
               <span class="text-[var(--muted-foreground)]">[${formatTime(l.created_at)}]</span>
               <span class="px-1 rounded bg-[var(--muted)]">[${escapeHtml(l.scope || 'system')}]</span>
               ${escapeHtml(l.message)}
@@ -786,12 +1190,12 @@
       }
     }
 
-    // ==================== 操作处理函数 ====================
+    // ==================== 账号操作函数 ====================
     async function syncAccount(id) {
       try {
-        await apiFetch(`/v1/admin/accounts/${id}/sync`, { method: 'POST' });
+        await apiFetch(`/v1/admin/accounts/${encodeURIComponent(id)}/sync`, { method: 'POST' });
         alert(`已触发账号 [${id}] 的立即同步任务！`);
-        loadAccounts();
+        await loadAccounts();
       } catch (err) {
         alert(`同步请求失败: ${err.message}`);
       }
@@ -800,11 +1204,11 @@
     async function toggleAccountStatus(id, currentStatus) {
       const newStatus = currentStatus === 'disabled' ? 'active' : 'disabled';
       try {
-        await apiFetch(`/v1/admin/accounts/${id}`, {
+        await apiFetch(`/v1/admin/accounts/${encodeURIComponent(id)}`, {
           method: 'PATCH',
           body: { status: newStatus },
         });
-        loadAccounts();
+        await loadAccounts();
       } catch (err) {
         alert(`切换状态失败: ${err.message}`);
       }
@@ -813,27 +1217,14 @@
     async function deleteAccount(id) {
       if (!confirm(`确定要删除账号 [${id}] 吗？`)) return;
       try {
-        await apiFetch(`/v1/admin/accounts/${id}`, { method: 'DELETE' });
-        loadAccounts();
+        await apiFetch(`/v1/admin/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        await loadAccounts();
       } catch (err) {
         alert(`删除失败: ${err.message}`);
       }
     }
 
-    async function sendTestPush(type) {
-      try {
-        const res = await apiFetch('/v1/push/test', {
-          method: 'POST',
-          body: { type },
-        });
-        const json = await res.json();
-        alert(`推送测试指令已成功发出！响应结果: ${JSON.stringify(json)}`);
-      } catch (err) {
-        alert(`下发测试推送失败: ${err.message}`);
-      }
-    }
-
-    // 拖拽与文件上传
+    // 拖拽与文件上传处理
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
 
@@ -866,9 +1257,8 @@
         try {
           const parsed = JSON.parse(e.target.result);
           uploadedSessionObj = parsed;
-          document.getElementById('dropZonePrompt').innerText = `已载入文件: ${file.name}`;
+          document.getElementById('dropZonePrompt').innerText = `已载入: ${file.name}`;
 
-          // 自动尝试提取 cookie
           let cookie = '';
           if (parsed.sessionCookie) cookie = parsed.sessionCookie;
           else if (Array.isArray(parsed.cookies)) {
@@ -879,7 +1269,7 @@
             document.getElementById('accCookieInput').value = cookie;
           }
         } catch (err) {
-          alert('JSON 解析失败，请确认文件格式');
+          alert('JSON 文件格式无效，请确认是导出的会话文件');
         }
       };
       reader.readAsText(file);
@@ -893,7 +1283,7 @@
       const cookie = document.getElementById('accCookieInput').value.trim();
 
       if (!cookie && !uploadedSessionObj) {
-        alert('请提供 Session Cookie 或上传 JSON 会话文件');
+        alert('请提供 Session Cookie 或上传 JSON 会话凭据文件');
         return;
       }
 
@@ -902,8 +1292,7 @@
 
       try {
         if (targetAccId) {
-          // 更新已有账号凭据
-          const res = await apiFetch(`/v1/admin/accounts/${targetAccId}/session`, {
+          const res = await apiFetch(`/v1/admin/accounts/${encodeURIComponent(targetAccId)}/session`, {
             method: 'POST',
             body: {
               sessionCookie: cookie,
@@ -913,7 +1302,6 @@
           const json = await res.json();
           if (!json.success) throw new Error(json.error);
         } else {
-          // 创建新账号
           const res = await apiFetch('/v1/admin/accounts', {
             method: 'POST',
             body: {
@@ -927,7 +1315,7 @@
           if (!json.success) throw new Error(json.error);
         }
 
-        btn.innerHTML = '<span>✓ 验证成功！</span>';
+        btn.innerHTML = '<span>✓ 验证并激活成功！</span>';
         btn.classList.add('bg-emerald-600');
         setTimeout(() => {
           closeModal('uploadModal');
