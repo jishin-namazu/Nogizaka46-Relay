@@ -23,6 +23,7 @@ import {
 import { queryOne, queryAll } from '../db/index.js';
 
 const router = express.Router();
+const SERVER_BOOT_TIME = new Date(Date.now() - Math.floor(process.uptime()) * 1000).toISOString();
 let sessionWriteQueue = Promise.resolve();
 
 function parseTimestamp(value) {
@@ -33,7 +34,7 @@ function parseTimestamp(value) {
 
 /**
  * GET /v1/admin/error-logs
- * 从挂载的卷中读取经过脱敏的持久化错误日志。
+ * 从挂载的卷中读取经过脱敏的持久化错误日志。默认仅展示当次部署之后的日志。
  */
 router.get('/error-logs', async (req, res) => {
   const requestedLimit = req.query.limit == null ? 100 : Number(req.query.limit);
@@ -44,7 +45,8 @@ router.get('/error-logs', async (req, res) => {
     });
   }
 
-  const since = parseTimestamp(req.query.since);
+  const sinceParam = parseTimestamp(req.query.since);
+  const since = sinceParam || (req.query.all === 'true' ? null : SERVER_BOOT_TIME);
   const before = parseTimestamp(req.query.before);
   if ((req.query.since && !since) || (req.query.before && !before)) {
     return res.status(400).json({
@@ -290,8 +292,10 @@ router.get('/overview', async (req, res) => {
         errors24h: recentErrors?.count || 0,
         system: {
           uptime: Math.floor(process.uptime()),
+          bootTime: SERVER_BOOT_TIME,
           memoryRssMb: Math.round(mem.rss / 1024 / 1024),
           memoryHeapMb: Math.round(mem.heapUsed / 1024 / 1024),
+          memoryHeapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
           nodeVersion: process.version,
           platform: process.platform,
         },
@@ -299,6 +303,25 @@ router.get('/overview', async (req, res) => {
     });
   } catch (error) {
     await recordError('server.admin.overview', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /v1/admin/members
+ * 获取所有有消息或订阅记录的成员列表，用于前端筛选
+ */
+router.get('/members', async (req, res) => {
+  try {
+    const rows = await queryAll(
+      `SELECT DISTINCT member_id AS id, member_name AS name
+       FROM messages
+       WHERE member_id IS NOT NULL AND member_name IS NOT NULL
+       ORDER BY member_name ASC`
+    );
+    res.json({ success: true, members: rows || [] });
+  } catch (error) {
+    await recordError('server.admin.members', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -542,7 +565,7 @@ router.get('/messages', async (req, res) => {
     const selectSql = `
       SELECT id, member_id, member_name, member_avatar_url, phone_image_url,
              type, text, media_url, thumbnail_url, duration_seconds, sent_at,
-             media_local_path, thumbnail_local_path, source_accounts, created_at
+             media_local_path, thumbnail_local_path, phone_image_local_path, source_accounts, created_at
       FROM messages
       ${whereClause}
       ORDER BY sent_at DESC

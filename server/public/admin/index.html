@@ -65,9 +65,14 @@
           <span class="font-semibold" id="topActiveAccounts">-</span>
         </div>
         <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
-          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span class="w-2 h-2 rounded-full bg-emerald-500" id="topDevicesDot"></span>
           <span class="text-[var(--muted-foreground)]">FCM:</span>
           <span class="font-medium" id="topDevicesCount">在线 (0 台设备)</span>
+        </div>
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
+          <span class="w-2 h-2 rounded-full bg-purple-500" id="topMemDot"></span>
+          <span class="text-[var(--muted-foreground)]">内存:</span>
+          <span class="font-semibold" id="topMemUsage">-</span>
         </div>
       </div>
 
@@ -191,11 +196,38 @@
 
     <!-- ==================== TAB 2: 系统总览 (Dashboard) ==================== -->
     <section id="pane-dashboard" class="hidden space-y-6">
-      <div class="p-6 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
-        <h3 class="font-bold text-base mb-4">系统吞吐与运行时指标</h3>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div class="space-y-2">
-            <span class="text-xs text-[var(--muted-foreground)]">持久化磁盘卷用量 (/data)</span>
+      <div class="p-6 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs space-y-5">
+        <div class="flex items-center justify-between">
+          <h3 class="font-bold text-base">系统吞吐与运行时指标</h3>
+          <span class="text-xs text-[var(--muted-foreground)]">实时容器监控与数据管道概览</span>
+        </div>
+        
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <!-- 卡片 1: 内存用量监控 -->
+          <div class="space-y-2.5 p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-2xs">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-[var(--muted-foreground)]">系统内存用量 (RAM)</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">1024 MB 限额</span>
+            </div>
+            <div class="flex items-baseline gap-2">
+              <span class="text-2xl font-bold" id="sysMemUsage">- MB</span>
+              <span class="text-xs text-[var(--muted-foreground)]" id="sysMemPercent">/ 1024 MB (0%)</span>
+            </div>
+            <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+              <div class="bg-emerald-500 h-2 rounded-full transition-all duration-500" id="sysMemBar" style="width: 10%"></div>
+            </div>
+            <div class="text-[11px] text-[var(--muted-foreground)] space-y-0.5" id="sysMemDetails">
+              <div>常驻内存 (RSS): - MB</div>
+              <div>堆已用: - MB ｜ 堆总量: - MB</div>
+            </div>
+          </div>
+
+          <!-- 卡片 2: 持久化磁盘卷 -->
+          <div class="space-y-2.5 p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-2xs">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-[var(--muted-foreground)]">持久化磁盘卷 (/data)</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">3.0 GB 挂载</span>
+            </div>
             <div class="flex items-baseline gap-2">
               <span class="text-2xl font-bold" id="sysDiskUsage">-</span>
               <span class="text-xs text-[var(--muted-foreground)]" id="sysDiskSub">/ 3.0 GB</span>
@@ -203,23 +235,35 @@
             <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
               <div class="bg-purple-600 h-2 rounded-full transition-all duration-500" id="sysDiskBar" style="width: 30%"></div>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)]" id="sysMemInfo">常驻内存: - MB</p>
+            <p class="text-[11px] text-[var(--muted-foreground)]" id="sysMemInfo">媒体文件、会话与 SQLite 数据库持久化</p>
           </div>
-          <div class="space-y-2">
-            <span class="text-xs text-[var(--muted-foreground)]">消息归档与统计</span>
+
+          <!-- 卡片 3: 消息归档与统计 -->
+          <div class="space-y-2.5 p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-2xs">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-[var(--muted-foreground)]">消息归档与统计</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">全局去重</span>
+            </div>
             <div class="flex items-baseline gap-2">
               <span class="text-2xl font-bold" id="sysTotalMessages">-</span>
               <span class="text-xs text-purple-600 font-medium" id="sysTodayMessages">今日新增 0 条</span>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)]" id="sysMediaMessages">图片/音频/视频: 0 条</p>
+            <p class="text-[11px] text-[var(--muted-foreground)]" id="sysMediaMessages">图片/音频/视频: 0 条</p>
+            <p class="text-[11px] text-[var(--muted-foreground)]">跨账号统一入库并全局先验去重</p>
           </div>
-          <div class="space-y-2">
-            <span class="text-xs text-[var(--muted-foreground)]">当前运行实例与状态</span>
+
+          <!-- 卡片 4: 实例运行环境与时长 -->
+          <div class="space-y-2.5 p-4 rounded-xl bg-[var(--background)] border border-[var(--border)] shadow-2xs">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-[var(--muted-foreground)]">当前运行实例与状态</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" id="sysBootBadge">本次部署在线</span>
+            </div>
             <div class="flex items-baseline gap-2">
               <span class="text-2xl font-bold" id="sysInstanceSpec">1024 MB</span>
               <span class="text-xs text-[var(--muted-foreground)]">1 vCPU (Fly.io)</span>
             </div>
-            <p class="text-xs text-[var(--muted-foreground)]" id="sysUptime">运行时长: - ｜ 最近24h错误: 0 次</p>
+            <p class="text-[11px] text-[var(--muted-foreground)]" id="sysUptime">运行时长: - ｜ 最近24h错误: 0 次</p>
+            <p class="text-[11px] text-[var(--muted-foreground)]" id="sysBootTime">当次部署时间: -</p>
           </div>
         </div>
       </div>
@@ -228,28 +272,55 @@
     <!-- ==================== TAB 3: 消息与媒体 (Messages) ==================== -->
     <section id="pane-messages" class="hidden space-y-4">
       <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex flex-wrap items-center justify-between gap-3 shadow-xs">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-xs font-medium">账号:</span>
-          <select id="msgFilterAccount" onchange="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+        <div class="flex flex-wrap items-center gap-2.5">
+          <span class="text-xs font-medium text-[var(--muted-foreground)]">账号:</span>
+          <select id="msgFilterAccount" onchange="resetMsgPageAndLoad()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
             <option value="">全部账号 (全量流)</option>
           </select>
-          <span class="text-xs font-medium ml-2">类型:</span>
-          <select id="msgFilterType" onchange="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+
+          <span class="text-xs font-medium text-[var(--muted-foreground)] ml-1">成员:</span>
+          <select id="msgFilterMember" onchange="resetMsgPageAndLoad()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] max-w-xs">
+            <option value="">全部成员 (无限制)</option>
+          </select>
+
+          <span class="text-xs font-medium text-[var(--muted-foreground)] ml-1">类型:</span>
+          <select id="msgFilterType" onchange="resetMsgPageAndLoad()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
             <option value="">全部类型</option>
             <option value="text">文字私信 (Text)</option>
             <option value="audio">语音来电 (Audio)</option>
             <option value="image">写真图片 (Image)</option>
             <option value="video">视频动态 (Video)</option>
           </select>
-          <input type="text" id="msgFilterQuery" placeholder="搜索消息内容或成员..." onkeydown="if(event.key==='Enter')loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-44">
-          <button onclick="loadMessages()" class="px-3 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] font-medium">筛选</button>
+
+          <input type="text" id="msgFilterQuery" placeholder="搜索消息内容或成员..." onkeydown="if(event.key==='Enter')resetMsgPageAndLoad()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-40">
+          
+          <button onclick="resetMsgPageAndLoad()" class="px-3 py-1 text-xs rounded-lg nogi-brand text-white hover:opacity-90 font-medium">筛选</button>
+          <button onclick="resetMsgFilters()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">重置</button>
         </div>
-        <span class="text-xs text-[var(--muted-foreground)]" id="msgTotalCount">展示最新 0 条</span>
+
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-medium text-[var(--muted-foreground)]">每页:</span>
+          <select id="msgPageSize" onchange="resetMsgPageAndLoad()" class="px-2 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+            <option value="20">20 条</option>
+            <option value="30" selected>30 条</option>
+            <option value="50">50 条</option>
+            <option value="100">100 条</option>
+          </select>
+          <span class="text-xs text-[var(--muted-foreground)]" id="msgTotalCount">展示第 1 页 (共 0 条)</span>
+        </div>
       </div>
 
       <!-- 消息列表流 -->
       <div id="messagesContainer" class="space-y-3">
         <div class="text-center py-12 text-[var(--muted-foreground)] text-xs">点击标签加载消息记录...</div>
+      </div>
+
+      <!-- 翻页控制条 -->
+      <div id="messagesPagination" class="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--border)] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-xs hidden">
+        <div class="text-[var(--muted-foreground)]" id="msgPaginationSummary">共 0 条消息 ｜ 第 1 / 1 页</div>
+        <div class="flex items-center gap-1.5" id="msgPaginationButtons">
+          <!-- 动态渲染翻页按钮 -->
+        </div>
       </div>
     </section>
 
@@ -272,7 +343,7 @@
               <tr>
                 <th class="p-2.5 rounded-l-lg">ID</th>
                 <th class="p-2.5">平台</th>
-                <th class="p-2.5">设备备注 / 标识</th>
+                <th class="p-2.5">设备备注</th>
                 <th class="p-2.5">最后活跃</th>
                 <th class="p-2.5">注册时间</th>
                 <th class="p-2.5 rounded-r-lg text-right">管理操作</th>
@@ -287,7 +358,7 @@
 
       <div class="p-5 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
         <h3 class="font-bold text-base mb-2">推送在线调试台</h3>
-        <p class="text-xs text-[var(--muted-foreground)] mb-4">调用 FCM 高优先级通道下发模拟信号。支持广播全体或定向发送至单台设备。</p>
+        <p class="text-xs text-[var(--muted-foreground)] mb-4">调用 FCM 高优先级通道下发模拟信号或向全网下发推送撤回指令。支持广播全体或定向发送至单台设备。</p>
         
         <div class="flex flex-wrap items-center gap-3">
           <div class="flex items-center gap-2">
@@ -296,11 +367,15 @@
               <option value="">广播至所有注册设备</option>
             </select>
           </div>
-          <button onclick="sendTestPush('message')" class="px-3.5 py-2 text-xs font-semibold rounded-lg nogi-brand text-white hover:opacity-90 transition-all">
+          <button onclick="sendTestPush('message')" class="px-3.5 py-2 text-xs font-semibold rounded-lg nogi-brand text-white hover:opacity-90 transition-all shadow-2xs">
             下发普通文本推送
           </button>
-          <button onclick="sendTestPush('call')" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-all">
+          <button onclick="sendTestPush('call')" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-2xs">
             下发全屏拟真来电 (VoIP Call)
+          </button>
+          <button onclick="revokePush()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-rose-600 hover:bg-rose-700 text-white transition-all flex items-center gap-1.5 shadow-2xs" title="向所有在线设备下发撤回上次推送的通知指令">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+            撤回上次推送
           </button>
         </div>
       </div>
@@ -309,21 +384,29 @@
     <!-- ==================== TAB 5: 审计日志 (Logs) ==================== -->
     <section id="pane-logs" class="hidden space-y-4">
       <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex flex-wrap items-center justify-between gap-3 shadow-xs">
-        <div class="flex items-center gap-3">
-          <span class="text-xs font-medium">日志级别:</span>
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="text-xs font-medium">范围:</span>
+          <select id="logFilterScope" onchange="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+            <option value="current">仅当次部署日志 (默认)</option>
+            <option value="all">显示历史全部日志</option>
+          </select>
+          <span class="text-xs font-medium ml-1">级别:</span>
           <select id="logFilterLevel" onchange="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
             <option value="">全部</option>
             <option value="error">Error (错误)</option>
             <option value="warn">Warn (告警)</option>
             <option value="info">Info (信息)</option>
           </select>
-          <input type="text" id="logFilterQuery" placeholder="搜索日志关键词..." onkeydown="if(event.key==='Enter')loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-48">
-          <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] font-medium">查询</button>
+          <input type="text" id="logFilterQuery" placeholder="搜索日志关键词..." onkeydown="if(event.key==='Enter')loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-44">
+          <button onclick="loadLogs()" class="px-3 py-1 text-xs rounded-lg nogi-brand text-white hover:opacity-90 font-medium">查询</button>
         </div>
-        <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">刷新日志</button>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-[var(--muted-foreground)]" id="logScopeHint">仅显示当次部署产生的运行日志</span>
+          <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">刷新日志</button>
+        </div>
       </div>
 
-      <div id="logsViewer" class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] font-mono text-xs space-y-2 max-h-[600px] overflow-y-auto">
+      <div id="logsViewer" class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] font-mono text-xs space-y-2 max-h-[600px] overflow-y-auto shadow-xs">
         <div class="text-[var(--muted-foreground)]">正在加载系统日志...</div>
       </div>
     </section>
@@ -435,7 +518,7 @@
       </div>
       <input type="hidden" id="editDeviceId" value="">
       <div>
-        <label class="block text-xs font-semibold mb-1">设备别名 / 备注</label>
+        <label class="block text-xs font-semibold mb-1">设备备注</label>
         <input type="text" id="editDeviceLabelInput" placeholder="例如：Pixel 8 Pro (日常主力)" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
       </div>
       <div class="flex items-center justify-end gap-2 pt-2">
@@ -471,6 +554,7 @@
     let currentTab = 'accounts';
     let cachedAccounts = [];
     let cachedDevices = [];
+    let msgCurrentPage = 1;
 
     const GRADIENTS = [
       'bg-gradient-to-tr from-purple-600 to-indigo-500',
@@ -528,7 +612,10 @@
 
       if (tabName === 'accounts') loadAccounts();
       if (tabName === 'dashboard') loadOverview();
-      if (tabName === 'messages') loadMessages();
+      if (tabName === 'messages') {
+        loadMembersFilter();
+        loadMessages();
+      }
       if (tabName === 'devices') loadDevices();
       if (tabName === 'logs') loadLogs();
     }
@@ -801,7 +888,7 @@
                     </div>
                     
                     <p class="text-xs text-[var(--muted-foreground)]">
-                      最后同步: <span class="font-medium text-[var(--foreground)]">${formatRelativeTime(account.last_sync_at)}</span> ｜ 订阅成员: <span class="font-medium text-[var(--foreground)]">${groups.length} 位</span> ｜ 状态: ${isDisabled ? '停止抓取' : '纯 API 轮询正常'}
+                      最后同步: <span class="font-medium text-[var(--foreground)]">${formatRelativeTime(account.last_sync_at)}</span> ｜ 订阅成员: <span class="font-medium text-[var(--foreground)]">${groups.length} 位</span> ｜ 状态: ${isDisabled ? '停止抓取' : ' API 轮询正常'}
                     </p>
 
                     <!-- 订阅成员标签 -->
@@ -904,17 +991,39 @@
         if (!json.success) return;
         const d = json.data;
 
-        document.getElementById('sysMemInfo').innerText = `常驻内存 (RSS): ${d.system.memoryRssMb} MB ｜ Node: ${d.system.nodeVersion}`;
+        // 内存监控卡片
+        const rssMb = d.system.memoryRssMb || 0;
+        const heapMb = d.system.memoryHeapMb || 0;
+        const heapTotalMb = d.system.memoryHeapTotalMb || 0;
+        const memPercent = Math.min(100, Math.round((rssMb / 1024) * 100));
+        document.getElementById('sysMemUsage').innerText = `${rssMb} MB`;
+        document.getElementById('sysMemPercent').innerText = `/ 1024 MB (${memPercent}%)`;
+        const memBar = document.getElementById('sysMemBar');
+        memBar.style.width = `${memPercent}%`;
+        memBar.className = memBar.className.replace(/bg-\w+-500/g, '');
+        memBar.classList.add(memPercent > 85 ? 'bg-rose-500' : memPercent > 60 ? 'bg-amber-500' : 'bg-emerald-500');
+        document.getElementById('sysMemDetails').innerHTML = `<div>常驻内存 (RSS): ${rssMb} MB ｜ Node: ${d.system.nodeVersion}</div><div>堆已用: ${heapMb} MB ｜ 堆总量: ${heapTotalMb} MB</div>`;
+        // 顶部内存指标
+        const topMem = document.getElementById('topMemUsage');
+        if (topMem) topMem.innerText = `${rssMb} / 1024 MB`;
+
+        // 消息统计
         document.getElementById('sysTotalMessages').innerText = Number(d.messages.total).toLocaleString();
         document.getElementById('sysTodayMessages').innerText = `今日新增 ${d.messages.today} 条`;
         document.getElementById('sysMediaMessages').innerText = `图片/音频/视频: ${d.messages.media} 条`;
         
+        // 运行时长
         const hrs = Math.floor(d.system.uptime / 3600);
         const mins = Math.floor((d.system.uptime % 3600) / 60);
         document.getElementById('sysUptime').innerText = `已连续运行: ${hrs}小时 ${mins}分 ｜ 最近24h错误: ${d.errors24h} 次`;
         document.getElementById('topDevicesCount').innerText = `在线 (${d.devices.total} 台设备)`;
 
-        // 模拟磁盘卷比例估算 (基于媒体条数)
+        // 当次部署时间
+        if (d.system.bootTime) {
+          document.getElementById('sysBootTime').innerText = `当次部署时间: ${formatTime(d.system.bootTime)}`;
+        }
+
+        // 磁盘卷估算
         const estimatedMb = Math.min(2800, Math.max(120, Math.round(d.messages.media * 1.2 + 80)));
         const diskPercent = Math.min(95, Math.round((estimatedMb / 3072) * 100));
         document.getElementById('sysDiskUsage').innerText = `${(estimatedMb / 1024).toFixed(2)} GB`;
@@ -926,16 +1035,76 @@
     }
 
     // ==================== 4. 加载消息流与多媒体 ====================
+    async function loadMembersFilter() {
+      const sel = document.getElementById('msgFilterMember');
+      if (!sel || sel.options.length > 1) return;
+      try {
+        const res = await apiFetch('/v1/admin/members');
+        const json = await res.json();
+        if (!json.success) return;
+        (json.members || []).forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.id;
+          opt.textContent = m.name;
+          sel.appendChild(opt);
+        });
+      } catch (e) { console.warn('加载成员筛选失败:', e.message); }
+    }
+
+    function resetMsgPageAndLoad() {
+      msgCurrentPage = 1;
+      loadMessages();
+    }
+
+    function resetMsgFilters() {
+      document.getElementById('msgFilterAccount').value = '';
+      document.getElementById('msgFilterType').value = '';
+      document.getElementById('msgFilterQuery').value = '';
+      document.getElementById('msgFilterMember').value = '';
+      document.getElementById('msgPageSize').value = '30';
+      msgCurrentPage = 1;
+      loadMessages();
+    }
+
+    function renderMsgPagination(total, limit, offset) {
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      const summaryEl = document.getElementById('msgPaginationSummary');
+      const buttonsEl = document.getElementById('msgPaginationButtons');
+      if (summaryEl) {
+        const from = total > 0 ? offset + 1 : 0;
+        const to = Math.min(offset + limit, total);
+        summaryEl.innerText = `${from}-${to} / 共 ${total} 条`;
+      }
+      if (!buttonsEl) return;
+      let html = '';
+      html += `<button onclick="msgCurrentPage=1;loadMessages()" ${msgCurrentPage<=1?'disabled':''} class="px-2 py-1 rounded text-xs border border-[var(--border)] ${msgCurrentPage<=1?'opacity-40 cursor-not-allowed':'hover:bg-[var(--accent)]'}">首页</button>`;
+      html += `<button onclick="msgCurrentPage--;loadMessages()" ${msgCurrentPage<=1?'disabled':''} class="px-2 py-1 rounded text-xs border border-[var(--border)] ${msgCurrentPage<=1?'opacity-40 cursor-not-allowed':'hover:bg-[var(--accent)]'}">上一页</button>`;
+      // Show page numbers
+      const start = Math.max(1, msgCurrentPage - 2);
+      const end = Math.min(totalPages, msgCurrentPage + 2);
+      for (let i = start; i <= end; i++) {
+        const active = i === msgCurrentPage;
+        html += `<button onclick="msgCurrentPage=${i};loadMessages()" class="px-2.5 py-1 rounded text-xs border ${active ? 'bg-purple-600 text-white border-purple-600' : 'border-[var(--border)] hover:bg-[var(--accent)]'}">${i}</button>`;
+      }
+      html += `<button onclick="msgCurrentPage++;loadMessages()" ${msgCurrentPage>=totalPages?'disabled':''} class="px-2 py-1 rounded text-xs border border-[var(--border)] ${msgCurrentPage>=totalPages?'opacity-40 cursor-not-allowed':'hover:bg-[var(--accent)]'}">下一页</button>`;
+      html += `<button onclick="msgCurrentPage=${totalPages};loadMessages()" ${msgCurrentPage>=totalPages?'disabled':''} class="px-2 py-1 rounded text-xs border border-[var(--border)] ${msgCurrentPage>=totalPages?'opacity-40 cursor-not-allowed':'hover:bg-[var(--accent)]'}">末页</button>`;
+      buttonsEl.innerHTML = html;
+    }
+
     async function loadMessages() {
       const container = document.getElementById('messagesContainer');
       const accountId = document.getElementById('msgFilterAccount').value;
       const type = document.getElementById('msgFilterType').value;
       const q = document.getElementById('msgFilterQuery').value;
+      const memberId = document.getElementById('msgFilterMember')?.value || '';
+      const pageSize = parseInt(document.getElementById('msgPageSize')?.value || '30', 10);
+      const offset = (msgCurrentPage - 1) * pageSize;
 
-      const params = new URLSearchParams({ limit: '30' });
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
       if (accountId) params.set('accountId', accountId);
       if (type) params.set('type', type);
       if (q) params.set('q', q);
+      if (memberId) params.set('memberId', memberId);
 
       try {
         const res = await apiFetch(`/v1/admin/messages?${params.toString()}`);
@@ -943,7 +1112,9 @@
         if (!json.success) throw new Error(json.error);
 
         const list = json.data.messages || [];
-        document.getElementById('msgTotalCount').innerText = `展示最新 ${list.length} 条 (总共 ${json.data.total} 条)`;
+        const total = json.data.total || 0;
+        document.getElementById('msgTotalCount').innerText = `第 ${msgCurrentPage} 页 ｜ 共 ${total} 条`;
+        renderMsgPagination(total, pageSize, offset);
 
         if (list.length === 0) {
           container.innerHTML = '<div class="p-12 text-center text-[var(--muted-foreground)] text-xs">无匹配消息记录</div>';
@@ -1068,7 +1239,7 @@
             <td class="p-2.5 text-xs text-right">
               <div class="inline-flex items-center gap-1.5">
                 <button onclick="openEditDeviceModal(${d.id}, '${escapeHtml(d.label || '')}')" class="px-2 py-1 rounded border border-[var(--border)] hover:bg-[var(--card)] font-medium">
-                  改备注
+                  修改备注
                 </button>
                 <button onclick="sendDeviceTestPush(${d.id}, 'message')" class="px-2 py-1 rounded border border-[var(--border)] hover:bg-[var(--card)] text-purple-700 dark:text-purple-400 font-medium">
                   测试推送
@@ -1150,15 +1321,32 @@
       }
     }
 
+    async function revokePush() {
+      if (!confirm('确定要撤回上次推送吗？已送达的通知将从设备端移除。')) return;
+      try {
+        const res = await apiFetch('/v1/push/revoke', { method: 'POST' });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || '撤回失败');
+        alert('推送撤回指令已下发！');
+      } catch (e) {
+        alert(`撤回失败: ${e.message}`);
+      }
+    }
+
     // ==================== 6. 审计日志 ====================
     async function loadLogs() {
       const viewer = document.getElementById('logsViewer');
       const level = document.getElementById('logFilterLevel').value;
       const q = document.getElementById('logFilterQuery').value;
+      const scope = document.getElementById('logFilterScope')?.value || 'deploy';
 
       const params = new URLSearchParams({ limit: '100' });
       if (level) params.set('level', level);
       if (q) params.set('q', q);
+      if (scope === 'all') params.set('all', 'true');
+
+      const scopeHint = document.getElementById('logScopeHint');
+      if (scopeHint) scopeHint.innerText = scope === 'all' ? '显示历史全部日志' : '仅显示当次部署以来的日志';
 
       try {
         const res = await apiFetch(`/v1/admin/error-logs?${params.toString()}`);
