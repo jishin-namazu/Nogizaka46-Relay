@@ -588,32 +588,6 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         return result
     }
 
-    /**
-     * 指定作者消息的一页，排序方式与成员时间线一致。导出器通过它分页，
-     * 而不是一直持有游标，从而使整个扫描的内存占用保持有界。
-     */
-    fun messagePageForMembers(memberKeys: Collection<String>, limit: Int, offset: Int): List<RelayMessage> {
-        if (memberKeys.isEmpty() || limit <= 0) return emptyList()
-        val placeholders = memberKeys.joinToString(",") { "?" }
-        val keyExpression = "CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END"
-        val safeLimit = limit.coerceAtLeast(1)
-        val safeOffset = offset.coerceAtLeast(0)
-        val result = mutableListOf<RelayMessage>()
-        readableDatabase.rawQuery(
-            """
-            SELECT * FROM messages
-            WHERE id NOT GLOB ? AND (text_content IS NOT NULL OR media_url IS NOT NULL)
-              AND $keyExpression IN ($placeholders)
-            ORDER BY sent_at DESC, received_at DESC, id DESC
-            LIMIT $safeLimit OFFSET $safeOffset
-            """.trimIndent(),
-            arrayOf(TEST_MESSAGE_GLOB, *memberKeys.toTypedArray()),
-        ).use { cursor ->
-            while (cursor.moveToNext()) result += cursor.toMessage()
-        }
-        return result
-    }
-
     fun countMessagesForMembers(memberKeys: Collection<String>): Int {
         if (memberKeys.isEmpty()) return 0
         val placeholders = memberKeys.joinToString(",") { "?" }
@@ -626,23 +600,6 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             """.trimIndent(),
             arrayOf(TEST_MESSAGE_GLOB, *memberKeys.toTypedArray()),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
-    }
-
-    /** 供导出器使用的一页完整 BLOG 行（包含正文与译文）。 */
-    fun blogPageForMembers(memberIds: Collection<String>, limit: Int, offset: Int): List<BlogPost> {
-        if (memberIds.isEmpty() || limit <= 0) return emptyList()
-        val placeholders = memberIds.joinToString(",") { "?" }
-        val safeLimit = limit.coerceAtLeast(1)
-        val safeOffset = offset.coerceAtLeast(0)
-        val result = mutableListOf<BlogPost>()
-        readableDatabase.rawQuery(
-            "SELECT * FROM blog_posts WHERE member_id IN ($placeholders) " +
-                "ORDER BY published_at DESC, id DESC LIMIT $safeLimit OFFSET $safeOffset",
-            memberIds.toTypedArray(),
-        ).use { cursor ->
-            while (cursor.moveToNext()) result += cursor.toBlogPost()
-        }
-        return result
     }
 
     /**
@@ -799,38 +756,16 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     /**
      * BLOG 上的对应实现。BLOG 的内联图片地址存放在 `body_html` 中，因此刷新这些
-     * 链接就意味着替换正文；当正文确实变化时，其译文不再对应，
-     * 因此会像 [upsertBlog] 在普通同步时那样被丢弃。
+     * 链接就意味着替换正文。但与 [upsertBlog] 在普通同步时的做法不同，导入**不会**
+     * 因为正文变化而清空译文：译文只由 [backfillBlogTranslation] 按
+     * "仅本地缺失/未完成时才填入"的规则处理，已有译文保持不动。
      *
      * `member_id` / `member_name` 也会被刷新：当归档现在携带官方成员
      * 编号（而非爬虫的 slug id）时，必须能把已导入的帖子移到
      * 官方成员上，否则新成员行的卒業标记与期数将永远不会被使用。
      */
-    fun refreshImportedBlogLinks(id: String, links: Map<String, String>): Boolean {
-        if (links.isEmpty()) return false
-        val refreshedBody = links["body_html"]
-        val bodyChanged = refreshedBody != null && currentBodyHtml(id) != refreshedBody
-        val refreshed = updateLinksIfDifferent("blog_posts", id, links)
-        if (refreshed && bodyChanged) {
-            val values = ContentValues().apply {
-                put("translation", null as String?)
-                put("translation_done", 0)
-            }
-            writableDatabase.update("blog_posts", values, "id = ?", arrayOf(id))
-        }
-        return refreshed
-    }
-
-    private fun currentBodyHtml(id: String): String? = readableDatabase.query(
-        "blog_posts",
-        arrayOf("body_html"),
-        "id = ?",
-        arrayOf(id),
-        null,
-        null,
-        null,
-        "1",
-    ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+    fun refreshImportedBlogLinks(id: String, links: Map<String, String>): Boolean =
+        updateLinksIfDifferent("blog_posts", id, links)
 
     /** 只写入给定的列，且仅当其中至少一列与已存储的值不同时才写入。 */
     private fun updateLinksIfDifferent(table: String, id: String, links: Map<String, String>): Boolean {
