@@ -1,31 +1,36 @@
-# Dockerignore for Fly.io deployment
+# Ignore massive zip archives
+*.zip
+*.zip.*
+*.baiduyun.*
 
-node_modules
-npm-debug.log
-.env
-.env.local
-.git
-.gitignore
-*.md
-.DS_Store
-
-# Analysis tools
-analyze-push-mechanism.js
-analyze-voice-push.js
-analysis/
-
-# Android app
+# Ignore Android app and build artifacts
 app/
+gradle/
+.gradle/
+gradlew
+gradlew.bat
+local.properties
+local.properties.example
+build.gradle.kts
+settings.gradle.kts
 
-# Documentation
+# Ignore heavy local data and docs
+_work/
+data/
 docs/
-*.md
-!server/README.md
+.git/
+.github/
+.idea/
+.vscode/
 
-# Local development files
-.vscode
-.idea
-*.log
+# Ignore server local dependencies and logs
+server/node_modules/
+server/logs/
+server/*.log
+server/.env
+server/.env.*
+
+# Ignore sensitive keys and tokens
 **/firebase-admin-key.json
 **/nogi-access-token.json
 **/nogi-browser-state.json

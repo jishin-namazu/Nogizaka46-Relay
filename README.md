@@ -2,7 +2,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Node.js-20+-68A063?logo=node.js&logoColor=white" alt="Node.js" />
-  <img src="https://img.shields.io/badge/Playwright-Chromium-2EAD33?logo=playwright&logoColor=white" alt="Playwright" />
   <img src="https://img.shields.io/badge/PostgreSQL-15+-336791?logo=postgresql&logoColor=white" alt="PostgreSQL" />
   <img src="https://img.shields.io/badge/Android-Kotlin%20%7C%20Compose-3DDC84?logo=android&logoColor=white" alt="Android" />
   <img src="https://img.shields.io/badge/Firebase-FCM%20High%20Priority-FFCA28?logo=firebase&logoColor=black" alt="Firebase" />
@@ -12,7 +11,7 @@
 
 **Nogi Relay** 是专为乃木坂46 message和 BLOG 打造的中继推送与管理系统。
 
-系统通过无头浏览器会话自动监听乃木坂message消息与公开博客，实现媒体资源的本地持久化归档与 SHA-256 去重；通过 Firebase Cloud Messaging (FCM) 发送纯数据高优先级推送；配合原生 Android 客户端，提供模拟全屏语音呼叫、11 家大模型上下文自动翻译、全文检索、博客和消息原图下载，以及消息/博客归档的导入导出与媒体补齐。
+系统通过官方 API 自动监听乃木坂 message 消息与公开博客，实现媒体资源的本地持久化归档与 SHA-256 去重；通过 Firebase Cloud Messaging (FCM) 发送纯数据高优先级推送；配合原生 Android 客户端，提供模拟全屏语音呼叫、11 家大模型上下文自动翻译、全文检索、博客和消息原图下载，以及消息/博客归档的导入导出与媒体补齐。
 
 ---
 
@@ -32,7 +31,7 @@
 
 [交互架构图](docs/architecture/architecture.html)
 
-- **双进程容器架构**：主 API 进程（提供 REST API、设备管理与 `/health` 探针）和 Monitor 进程（Chromium 会话轮询、博客监控与 8081 媒体服务）彼此独立运行。两者仍位于同一 Fly Machine 和 Linux cgroup 中，因此极端浏览器负载仍可能影响 API 延迟；Monitor 使用整机内存阈值主动回收 Chromium 来降低该风险。
+- **双进程容器架构**：主 API 进程（提供 REST API、设备管理与 `/health` 探针）和 Monitor 进程（API 会话轮询、博客监控与 8081 媒体服务）独立运行。
 - **正文分离同步设计**：Relay 服务端仅保存用于去重、防漏和推送通知的博客元数据，正文与高清图片由 Android 客户端直接从官网同步，节省服务端网络与存储开销。
 
 ---
@@ -70,15 +69,14 @@
 
 ## 🌟 核心特性
 
-### 1. 官网会话托管与智能生命周期状态机
-- **自动续期**：无头 Chromium 托管移动端官网前端并截获短效 JWT；进入官网约 9 秒续期窗口或遇到 `401 Unauthorized` 时驱动官网续期，并仅对原始失败请求重试一次。官网返回新 refresh token 后，完整浏览器状态会在后台保存一次。
-- **安全内存回收**：Monitor 读取 Linux cgroup 的整机内存，默认超过 700MB 时重启 Chromium。若 token 距离到期不超过 3 分钟，则等待新 token 截获并确认刷新后的浏览器状态落盘后再重启。
-- **故障隔离与状态机**：官网 `/v2/update_token` 明确响应 `400` 时，进入 `signedOut` 状态，立即挂断 Chromium 与轮询，并在日志中每 5 分钟输出一次标准化警告；其他鉴权失败按阈值隔离；主 API 保持常驻。
+### 1. 官网会话托管与生命周期状态机
+- **自动续期与会话轮转**：服务端通过官方 `/v2/update_token` API 定期刷新 JWT 访问令牌，同时接收并持久化保存轮转的 `session` Cookie，保持会话长期有效。
+- **故障隔离与状态机**：官网 `/v2/update_token` 响应 `400` 时，进入 `signedOut` 状态并暂停轮询，每 5 分钟在日志中输出一次警告；其他鉴权失败按阈值隔离；主 API 保持常驻。
 - **在线热更新**：支持通过 `upload-session.js` 脚本向服务端热上传新会话文件（以原子写入和 `0600` 私有文件权限保护），Monitor 监听变更后自动重载验证并恢复轮询，无需重启或重新部署容器。
-- **⚠️Web 端单会话互斥注意**：官方 Message Web 版**只允许一个活跃会话存在**。若在其他浏览器再次登录 Web 版，服务端的会话将被官方注销（提示 `[NOGI_SESSION_UPDATE_REQUIRED]`），日常请通过 Nogi Relay 原生 App 或 官方移动端 APP 查看，避免多端冲突。
-- **💡多端冲突恢复指引**：若因其他设备登录 Web 版导致服务端会话失效，**无需重启或重新部署云端容器**，只需两步热更新即可恢复：
-  1. **提取新会话**：在本地电脑 `server/` 目录下运行 `npm run bootstrap:browser`，在弹出的浏览器中重新登录乃木坂账号，确保看到订阅页面的消息后按回车，生成新 `nogi-browser-state.json`；
-  2. **上传并激活**：运行 `node upload-session.js ./nogi-browser-state.json <SERVER_URL> <ACCESS_TOKEN>`，终端提示 `✓ Session activated` 即表示云端已自动无缝重新接管并恢复消息轮询，且会自动补齐冲突断流期间错过的所有历史消息（详细操作与排查命令请查阅 [server/README.md](server/README.md#2-官网会话管理与热更新)）。
+- **Web 端单会话互斥说明**：官方 Message Web 版仅允许一个活跃会话存在。若在其他浏览器再次登录 Web 版，服务端的会话将被官方注销（提示 `[NOGI_SESSION_UPDATE_REQUIRED]`）。
+- **多端冲突恢复指引**：若服务端会话失效，可通过两步热更新恢复：
+  1. **提取新会话**：在本地电脑 `server/` 目录下运行 `npm run bootstrap:browser`，在弹出的浏览器中登录乃木坂账号，看到消息后按回车生成新 `nogi-browser-state.json`；
+  2. **上传并激活**：运行 `node upload-session.js ./nogi-browser-state.json <SERVER_URL> <ACCESS_TOKEN>`，终端提示 `✓ Session activated` 即完成更新。
 
 ### 2. 过去消息全量回填与增量轮询
 - **Continuation 游标遍历**：服务启动、新订阅成员出现或会话更新时，自动调用 `past_messages` 接口并完整遍历 timeline continuation 分页游标，历史消息全量回填入库且静默入库（不产生重复 FCM 推送）。
@@ -155,7 +153,7 @@ Nogizaka46-Relay/
 │   ├── upload-session.js       # 在线会话热更新与激活校验命令行
 │   ├── start-all.sh            # 生产双进程编排启动脚本
 │   └── package.json            # 服务端依赖配置
-├── Dockerfile                  # 基于 Playwright Noble 的生产镜像定义
+├── Dockerfile                  # 基于 Node.js Slim 的生产镜像定义
 ├── fly.toml.example            # Fly.io 生产配置模板 
 ├── local.properties.example    # Android 本地 SDK 路径与预填参数配置模板
 ├── DEVELOPMENT.md              # 深度开发文档

@@ -60,7 +60,7 @@ flowchart TD
     subgraph RelayServer["2. Nogi Relay 服务端 (Docker 容器)"]
         direction TB
         subgraph MonitorProc["Monitor 监控进程"]
-            Browser["Playwright 浏览器监控<br/>• 会话托管与 401 自动续期<br/>• Timeline 增量轮询与游标回填"]
+            Browser["API 消息监控器<br/>• 自动续期与 Session 轮转<br/>• Timeline 增量轮询与游标回填"]
             BlogMon["公开 BLOG 监控器<br/>• 增量追赶与 head_id 推进<br/>• 仅存元数据，不存博客正文"]
             MediaStore[("媒体内容归档<br/>• SHA-256 内容寻址<br/>• 多来电背景物理去重")]
             MediaSrv["专有受保护媒体服务 (:8081)<br/>• Bearer 鉴权流式直出"]
@@ -117,7 +117,7 @@ flowchart TD
     end
 
     %% 主干链路 (从上至下平滑推进，避免交叉重叠)
-    NogiMsg -->|"1. 监听请求 / 轮询时间线"| Browser
+    NogiMsg -->|"1. API 轮询时间线与续期"| Browser
     NogiBlog -->|"1. 定期轮询新博客元数据"| BlogMon
     FCMService -->|"2. 下发数据推送"| FCM
     FCM -->|"3. 唤醒客户端"| FCMReceiver
@@ -134,9 +134,9 @@ flowchart TD
 
 | 维度 | 组件 / 技术 | 关键用途 |
 | --- | --- | --- |
-| **服务端运行环境** | Node.js (ES Modules, >=20), Ubuntu Linux | 原生支持 Fetch、Async Iterators |
+| **服务端运行环境** | Node.js (ES Modules, >=20), Debian/Ubuntu Linux | 原生支持 Fetch、Async Iterators |
 | **服务端 Web 框架** | Express 4, Helmet, CORS, RateLimit | 极速冷启动 |
-| **浏览器自动化** | Playwright (Chromium / Headless Shell) | 精准接管并模拟官网 SPA 会话，自动获取 OAuth/Bearer 凭证与执行续期 |
+| **会话登录助手** | Playwright (桌面端交互登录) | 本地提取官方 Web 会话凭据 |
 | **数据库存储** | PostgreSQL 15+ (`pg` 连接池) | JSONB 支持、行级排他锁、时间序列排序与完整事务保证 |
 | **消息推送** | Firebase Admin SDK (`sendEachForMulticast`) | 高优先级数据消息 |
 | **持久化媒体存储** | 本地文件系统 / Docker Volume，SHA-256 寻址 | 规避三方 CDN 授权失效问题，多成员多来电背景物理去重 |
@@ -181,50 +181,51 @@ until node -e "fetch('http://127.0.0.1:${PORT:-8080}/health').then(r => { if (!r
 done
 
 echo "API health check passed; starting monitor services"
-# 3. API 进程健康后，再启动包含 Chromium 的 Monitor 进程
+# 3. API 进程健康后，再启动 Monitor 进程
 npm run monitor
 ```
-该编排策略有效避免了 Chromium 启动耗时导致的平台部署探针超时（如 Fly.io `grace_period` 期间的假死判定）。
+该编排策略确保外部流量接入前内部健康检查与数据表结构已完成就绪。
 
 ---
 
-### 2.2 官网浏览器监控与会话状态机 (`nogi-browser.js`)
+### 2.2 官网 API 监控与会话状态机 (`nogi-browser.js`)
 
-#### 2.2.1 认证凭据捕获机制
-乃木坂46官网移动端 Web 版采用 SPA 架构。用户登录态由浏览器 Cookie、`localStorage` 和 IndexedDB 中的会话数据共同维持，API 实际调用依赖短期 JWT Access Token。
+#### 2.2.1 认证凭据捕获与自动续期机制
+乃木坂46官网移动端 Web 版采用 SPA 架构。用户登录态由 `session` Cookie 维持，API 实际调用依赖短期 JWT Access Token。
 
-`NogiBrowserMonitor` 不会直接在 Node.js 中逆向模拟 OAuth/AWS Cognito 签名算法，而是**直接运行一个无头 Chromium 实例托管官网前端**：
-- Chromium 加载并持久化保存的 `nogi-browser-state.json` 会话（Cookies、LocalStorage 与 IndexedDB）。
-- 通过 `context.on('request')` 监听并拦截页面流出的网络请求，只要命中 `https://api.message.nogizaka46.com` 且携带 `Authorization: Bearer <token>`，即在内存中更新 `this.accessToken`。
-- 解码 JWT Payload 获得 `exp` 过期时间戳，并使用 `ACCESS_TOKEN_REFRESH_SKEW_MS = 9秒`，确保进入官网约 10 秒的刷新窗口后才要求新 token。
-- `/v2/update_token` 成功后只安排一次后台浏览器状态保存；刷新主流程不等待状态序列化。状态抓取默认 10 秒超时，并禁止重叠执行。
+`NogiBrowserMonitor` 直接使用官方 HTTP API 接口与服务端通信：
+- 服务端读取挂载卷中的 `nogi-browser-state.json` 会话凭据。
+- 每次刷新令牌时，通过 `POST https://api.message.nogizaka46.com/v2/update_token` 携带 `session` Cookie 发起请求。
+- 官网验证通过后返回新的 `access_token`，并在响应头 `Set-Cookie` 中轮转下发新的 `session` Cookie。
+- 解码 JWT Payload 获得 `exp` 过期时间戳，默认在到期前 3 分钟自动执行下一次续期。
+- 轮转得到的新凭据通过原子文件写入（`0600` 权限）自动持久化至磁盘。
 
 #### 2.2.2 状态机流转与容错隔离
 
 ```mermaid
 stateDiagram-v2
     [*] --> Starting: 进程初始化
-    Starting --> Authenticated: 加载会话并截获有效 Token
+    Starting --> Authenticated: 加载会话并验证 Token
     
     state Authenticated {
         [*] --> Polling: 轮询消息 / 导入历史
         Polling --> TokenExpiring: JWT 即将到期 / 接口 401
-        TokenExpiring --> PageRefresh: 驱动页面触发 /v2/update_token
-        PageRefresh --> Polling: 截获新 Token，重试原请求
+        TokenExpiring --> TokenRefresh: POST /v2/update_token 续期
+        TokenRefresh --> Polling: 获得新 Token 与 Cookie，继续轮询
     }
 
-    Authenticated --> SignedOut: /v2/update_token 返回 400 (凭据彻底失效)
-    Authenticated --> AuthPaused: 连续刷新失败 >= N 次 (网络/风控)
+    Authenticated --> SignedOut: /v2/update_token 返回 400 (凭据失效)
+    Authenticated --> AuthPaused: 连续刷新失败 >= N 次 (网络异常)
     
     state SignedOut {
-        CloseBrowser: 立即关闭 Chromium 并停机轮询
+        StopPolling: 暂停消息轮询
         PeriodicLog: 每 5 分钟输出一次会话更新警告
         WaitNewSession: 等待 Admin API 热上传会话
     }
 
     state AuthPaused {
         SleepWait: 暂停轮询
-        WaitRecovery: 等待手动干预或热更新
+        WaitRecovery: 等待重试或热更新
     }
 
     SignedOut --> Authenticated: POST /v1/admin/browser-session (激活并验证成功)
@@ -234,21 +235,18 @@ stateDiagram-v2
 1. **`authenticated`（正常态）**：
    - 保持每 60 秒（`NOGI_POLL_INTERVAL_SECONDS`）轮询一次已订阅成员的时间轴。
 2. **401 故障单次重试**：
-   - 若轮询时官方 API 突然返回 `401 Unauthorized`，立即触发 `refreshFrontendSession()`。
-   - 刷新后**仅允许针对当前失败的 API 重新发起单次重试**；若依旧 401，则向轮询状态机抛出鉴权错误。`consecutiveAuthFailures` 由 `/v2/update_token` 的失败响应累计。
+   - 若轮询时官方 API 返回 `401 Unauthorized`，立即触发 `refreshAccessToken()`。
+   - 刷新后重新发起单次重试；若依旧失败，累计鉴权失败次数。
 3. **`signedOut`（登出态）**：
-   - 若官方 `/v2/update_token` 接口明确响应 `400 Bad Request`，代表 Refresh Token 已被官方吊销或在其他设备登录被踢出。
-   - **⚠️ 官方单会话限制机制**：乃木坂46 官方 Message Web 平台存在严格的**单会话互斥策略**。如果用户在外部设备（日常电脑或手机浏览器）再次登录官网网页版，官方后台会很快将前一个会话（服务端所在设备）的凭据注销。
-   - **立即关闭 Chromium 实例并停止所有轮询**，阻止无意义的流量空耗；每 5 分钟在日志中输出一次标准提示：`[NOGI_SESSION_UPDATE_REQUIRED]`。
+   - 若官方 `/v2/update_token` 接口明确响应 `400 Bad Request`，代表该会话已在其他设备登录被踢出或注销。
+   - 暂停消息轮询；每 5 分钟在日志中输出一次提示：`[NOGI_SESSION_UPDATE_REQUIRED]`。
 4. **`authPaused`（鉴权冻结态）**：
-   - 若网络超时或非 400 异常导致连续失败达到阈值（默认 3 次），挂起轮询。
-   - 进入 `signedOut` 或 `authPaused` 后会关闭 Chromium 并停止私信轮询，API 进程、健康检查和会话上传接口继续运行。由于 API 与 Monitor 仍共享同一 Fly Machine/cgroup，极端整机资源压力仍可能影响响应延迟。
+   - 若网络超时等异常导致连续失败达到阈值（默认 3 次），暂停轮询。
+   - 进入 `signedOut` 或 `authPaused` 期间，主 API 进程、健康检查和会话上传接口保持运行。
 
-#### 2.2.3 内存守护与主动重启策略
-为防止 Headless Chromium 长期运行造成整机内存压力，Monitor 实行双重守护策略：
-- **Linux cgroup 整机内存阈值**：每轮轮询读取 `/sys/fs/cgroup/memory.current` 与 `memory.max`，默认在 `NOGI_MACHINE_MEMORY_RESTART_MB=700` 时触发浏览器回收，不再使用 `process.memoryUsage().rss`。
-- **Token 安全门**：token 剩余有效期超过 3 分钟时允许直接重启；不超过 3 分钟时等待进入 9 秒续期窗口，并依次确认新 access token 已截获、刷新后的浏览器状态已保存，之后才执行重启。保存失败或超时会暂缓重启。
-- **定时重启（默认关闭）**：`NOGI_BROWSER_RESTART_INTERVAL_SECONDS` 支持配置定时重启周期（设为 `0` 时禁用定时重启，仅保留 cgroup 内存自愈）。
+#### 2.2.3 会话持久化与原子写入策略
+- **原子文件写入**：状态持久化采用临时文件加原子重命名（`atomicWritePrivateFile`），防止进程并发或异常中断导致 JSON 文件损坏。
+- **文件监听热加载**：Monitor 通过文件监听器实时监控 `/data` 目录下的会话文件变动。管理接口收到新会话后无需重启进程，自动触发验证与激活。
 
 ---
 
@@ -636,17 +634,17 @@ Authorization: Bearer <ACCESS_TOKEN>
 ### 4.6 会话管理与运维接口 (`/v1/admin`)
 
 #### `POST /v1/admin/browser-session`
-在线热更新 Playwright 浏览器状态（无需重新部署应用即可恢复鉴权）。
-- **请求体**：
+在线热更新官网会话凭证（无需重新部署应用即可恢复鉴权）。
+- **请求体**：支持轻量凭证格式或完整浏览器快照格式。
 ```json
 {
   "session": {
-    "cookies": [...],
-    "origins": [...]
+    "sessionCookie": "...",
+    "accessToken": "..."
   }
 }
 ```
-- **机制**：原子写入临时文件并重命名为 `nogi-browser-state.json`（权限 `0600`），Monitor 监听文件变更后立即在无头浏览器中重载并校验。
+- **机制**：原子写入临时文件并重命名为 `nogi-browser-state.json`（权限 `0600`），Monitor 监听文件变更后立即调用官方 API 验证并激活。
 - **响应**：返回 `202 Accepted` 及对应的 `requestId` 与 `version`。
 
 #### `GET /v1/admin/browser-session/status`
@@ -926,17 +924,9 @@ MEDIA_STORAGE_DIR=./nogi-media
 NOGI_MEDIA_PORT=8081
 LOG_STORAGE_DIR=./logs
 
-# 浏览器会话配置
+# 会话与凭据配置
 NOGI_BROWSER_STATE_FILE=./nogi-browser-state.json
 NOGI_ACCESS_TOKEN_STATE_FILE=./nogi-access-token.json
-NOGI_BROWSER_HEADLESS=true
-NOGI_BROWSER_SETTLE_SECONDS=8
-NOGI_BROWSER_STORAGE_STATE_TIMEOUT_SECONDS=10
-NOGI_MACHINE_MEMORY_RESTART_MB=700
-NOGI_BROWSER_RESTART_INTERVAL_SECONDS=0
-
-# Windows 本地可直接复用系统自带 Edge
-# NOGI_BROWSER_EXECUTABLE_PATH=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
 ```
 
 ---
@@ -948,9 +938,9 @@ NOGI_BROWSER_RESTART_INTERVAL_SECONDS=0
 ```bash
 npm run bootstrap:browser
 ```
-- 脚本将调起带界面的 Chromium / Edge 浏览器并导航至乃木坂46消息官网。
-- 请在弹出的浏览器中手动完成登录，直到能正常看到已订阅成员的聊天消息。
-- 回到终端敲击 **回车**，脚本将校验是否成功监听到 `Authorization: Bearer` 令牌，并将完整 cookies 与 storage 状态以 `0600` 私有权限保存到 `./nogi-browser-state.json`。
+- 脚本将调起本地浏览器并导航至乃木坂46消息官网。
+- 请在弹出的浏览器中完成登录，直到能正常看到已订阅成员的聊天消息。
+- 回到终端敲击 **回车**，脚本将提取会话 Cookie 与访问令牌，以 `0600` 私有权限保存到 `./nogi-browser-state.json`。
 
 ---
 

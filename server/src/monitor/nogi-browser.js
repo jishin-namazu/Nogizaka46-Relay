@@ -1,8 +1,7 @@
 import dotenv from 'dotenv';
 import fs from 'node:fs/promises';
-import { watch } from 'node:fs';
+import { watch, existsSync } from 'node:fs';
 import path from 'node:path';
-import { chromium } from 'playwright';
 import messageService from '../services/message.js';
 import pushService from '../services/push.js';
 import { recordError } from '../services/error-log.js';
@@ -10,6 +9,7 @@ import {
   atomicWritePrivateFile,
   atomicWritePrivateJson,
   browserSessionPaths,
+  extractSessionCredentials,
   readBrowserSession,
   readJsonIfExists,
   sessionVersion,
@@ -23,15 +23,10 @@ const DEFAULT_APP_ID = 'jp.co.sonymusic.communication.nogizaka 2.5';
 const DEFAULT_PLATFORM = 'web';
 const DEFAULT_ORGANIZATION_ID = '1';
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
-const DEFAULT_BROWSER_STATE_FILE = '/data/nogi-browser-state.json';
-const DEFAULT_MACHINE_MEMORY_RESTART_MB = 700;
-const CGROUP_MEMORY_CURRENT_FILE = '/sys/fs/cgroup/memory.current';
-const CGROUP_MEMORY_MAX_FILE = '/sys/fs/cgroup/memory.max';
-export const TOKEN_RESTART_GUARD_MS = 3 * 60_000;
-// 官方 Web 端 TokenManager 大约会在过期前
-// 十秒内刷新。应进入它的刷新窗口，而不是提前跳转、等待一个
-// 页面尚未准备好签发的不同 token。
-export const ACCESS_TOKEN_REFRESH_SKEW_MS = 9_000;
+const DEFAULT_BROWSER_STATE_FILE = (process.platform === 'win32' || !existsSync('/data'))
+  ? (existsSync('./nogi-browser-state.json') ? './nogi-browser-state.json' : (existsSync('./server/nogi-browser-state.json') ? './server/nogi-browser-state.json' : './nogi-browser-state.json'))
+  : '/data/nogi-browser-state.json';
+export const ACCESS_TOKEN_REFRESH_SKEW_MS = 3 * 60_000; // 提前 3 分钟刷新
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -68,12 +63,6 @@ function firstNonEmpty(...values) {
   return values.find(value => value != null && String(value).trim() !== '') ?? null;
 }
 
-function browserExecutablePath() {
-  return process.env.NOGI_BROWSER_EXECUTABLE_PATH
-    || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-    || undefined;
-}
-
 function tokenExpiry(token) {
   try {
     const payload = token.split('.')[1];
@@ -85,46 +74,15 @@ function tokenExpiry(token) {
   }
 }
 
-export async function readCgroupMemory({
-  currentFile = CGROUP_MEMORY_CURRENT_FILE,
-  maxFile = CGROUP_MEMORY_MAX_FILE,
-} = {}) {
-  const [currentValue, maxValue] = await Promise.all([
-    fs.readFile(currentFile, 'utf8'),
-    fs.readFile(maxFile, 'utf8'),
-  ]);
-  const currentBytes = Number.parseInt(currentValue.trim(), 10);
-  const normalizedMax = maxValue.trim();
-  const maxBytes = normalizedMax === 'max' ? null : Number.parseInt(normalizedMax, 10);
-  if (!Number.isFinite(currentBytes) || currentBytes < 0) {
-    throw new Error(`Invalid cgroup memory.current value: ${currentValue.trim()}`);
-  }
-  if (maxBytes != null && (!Number.isFinite(maxBytes) || maxBytes <= 0)) {
-    throw new Error(`Invalid cgroup memory.max value: ${normalizedMax}`);
-  }
-  return { currentBytes, maxBytes };
-}
-
-function memoryMegabytes(bytes) {
-  return bytes == null ? null : Math.round(bytes / 1024 / 1024);
-}
-
 /**
- * 使用官方 Web 应用作为认证客户端。页面负责
- * refresh-token 流程；这个 worker 只在普通 API 请求上观察短时效的 access token，
- * 并将其保存在内存中供时间线轮询使用。
+ * 纯 API 监控服务：维护会话 Cookie，通过官方 API 自动轮询消息与续期 Token，
+ * 无需常驻无头 Chromium 实例。
  */
 class NogiBrowserMonitor {
   constructor({
-    browserType = chromium,
     messageStore = messageService,
     pusher = pushService,
-    storageStateTimeoutMs = null,
-    tokenStoragePersistDelayMs = null,
-    machineMemoryReader = readCgroupMemory,
-    machineMemoryRestartMB = null,
   } = {}) {
-    this.browserType = browserType;
     this.messageStore = messageStore;
     this.pusher = pusher;
     this.apiUrl = (process.env.NOGI_API_URL || DEFAULT_API_URL).replace(/\/$/, '');
@@ -137,83 +95,44 @@ class NogiBrowserMonitor {
       Number.parseInt(process.env.NOGI_POLL_INTERVAL_SECONDS || '60', 10) * 1000,
       15_000,
     ) || DEFAULT_POLL_INTERVAL_MS;
-    this.pageSettleMs = Math.max(
-      Number.parseInt(process.env.NOGI_BROWSER_SETTLE_SECONDS || '8', 10) * 1000,
-      2_000,
-    );
-    this.storageStateTimeoutMs = storageStateTimeoutMs ?? Math.max(
-      Number.parseInt(process.env.NOGI_BROWSER_STORAGE_STATE_TIMEOUT_SECONDS || '10', 10) * 1000,
-      1_000,
-    );
-    this.tokenStoragePersistDelayMs = tokenStoragePersistDelayMs == null
-      ? this.pageSettleMs
-      : Math.max(tokenStoragePersistDelayMs, 0);
-    const configuredMemoryRestartMB = Number.parseInt(
-      process.env.NOGI_MACHINE_MEMORY_RESTART_MB || `${DEFAULT_MACHINE_MEMORY_RESTART_MB}`,
-      10,
-    );
-    this.machineMemoryRestartMB = machineMemoryRestartMB
-      ?? (Number.isFinite(configuredMemoryRestartMB) && configuredMemoryRestartMB > 0
-        ? configuredMemoryRestartMB
-        : DEFAULT_MACHINE_MEMORY_RESTART_MB);
-    this.machineMemoryReader = machineMemoryReader;
-    this.authorizationWaitMs = Math.max(
-      Number.parseInt(process.env.NOGI_BROWSER_AUTH_WAIT_SECONDS || '30', 10) * 1000,
-      10_000,
-    );
+    this.backfillOnStart = parseBoolean(process.env.NOGI_BACKFILL_ON_START, true);
+    this.storageStateFile = process.env.NOGI_BROWSER_STATE_FILE || DEFAULT_BROWSER_STATE_FILE;
+    this.accessTokenStateFile = process.env.NOGI_ACCESS_TOKEN_STATE_FILE
+      || path.join(path.dirname(this.storageStateFile), 'nogi-access-token.json');
+
     this.requestTimeoutMs = Math.max(
       Number.parseInt(process.env.NOGI_BROWSER_REQUEST_TIMEOUT_SECONDS || '30', 10) * 1000,
       10_000,
     );
-    // 周期性重启是可选启用的：未设置、为 0、负数或非数值都会
-    // 将其禁用，而 cgroup 内存触发条件仍然生效。
-    const restartIntervalSeconds = Number.parseInt(
-      process.env.NOGI_BROWSER_RESTART_INTERVAL_SECONDS ?? '',
-      10,
-    );
-    this.browserRestartIntervalMs = Number.isFinite(restartIntervalSeconds) && restartIntervalSeconds > 0
-      ? Math.max(restartIntervalSeconds * 1000, 5 * 60_000)
-      : 0;
-    this.backfillOnStart = parseBoolean(process.env.NOGI_BACKFILL_ON_START, true);
-    this.headless = parseBoolean(process.env.NOGI_BROWSER_HEADLESS, true);
-    this.blockPageMedia = parseBoolean(process.env.NOGI_BROWSER_BLOCK_MEDIA, true);
-    this.storageStateFile = process.env.NOGI_BROWSER_STATE_FILE || DEFAULT_BROWSER_STATE_FILE;
-    this.accessTokenStateFile = process.env.NOGI_ACCESS_TOKEN_STATE_FILE
-      || path.join(path.dirname(this.storageStateFile), 'nogi-access-token.json');
-    this.pageUrl = `${this.webUrl}/organization/${encodeURIComponent(this.organizationId)}/talk?mode=normal`;
-    this.browser = null;
-    this.context = null;
-    this.page = null;
-    this.browserStartedAt = 0;
-    this.lastFrontendNavigationAt = 0;
-    this.statePersistTimer = null;
-    this.statePersistPromise = Promise.resolve();
-    this.storageStateCapturePromise = null;
-    this.tokenStoragePersistGeneration = 0;
-    this.lastPersistedTokenStorageGeneration = 0;
-    this.tokenStoragePersistPromise = Promise.resolve(false);
-    this.pendingTokenStoragePersist = null;
-    this.lastMachineMemory = null;
-    this.lastMemoryReadWarningAt = 0;
-    this.accessTokenWaiters = new Set();
-    this.refreshPromise = null;
-    this.loopPromise = null;
-    this.isRunning = false;
+
+    // 凭据与令牌状态
+    this.sessionCookie = '';
     this.accessToken = '';
     this.observedTokenAt = 0;
     this.lastPersistedAccessToken = '';
+
+    // 业务轮询与群组状态
     this.hasCompletedInitialPoll = false;
     this.backfilledGroupIds = new Set();
     this.historyBackfillReason = 'startup';
     this.groupMessageIds = new Map();
     this.groups = new Map();
+
+    // 循环控制与并发管理
+    this.isRunning = false;
+    this.loopPromise = null;
+    this.activePollingPromise = null;
+    this.refreshPromise = null;
+
+    // 文件监听与重载
     this.sessionFileWatcher = null;
     this.sessionReloadTimer = null;
     this.pendingSessionReload = false;
     this.isReloadingSession = false;
-    this.suspendStoragePersistence = false;
     this.lastPersistedStorageVersion = '';
     this.lastHandledUploadRequestId = '';
+
+    // 鉴权异常状态机
     this.consecutiveAuthFailures = 0;
     this.maxConsecutiveAuthFailures = Math.max(
       Number.parseInt(
@@ -229,7 +148,16 @@ class NogiBrowserMonitor {
     this.signedOutLogTimer = null;
     this.authResumeWaiters = new Set();
     this.sessionReloadWaiters = new Set();
-    this.activePollingPromise = null;
+  }
+
+  assertAuthAllowed({ sessionActivation = false } = {}) {
+    if (this.authPaused && !sessionActivation) {
+      throw new Error(`Monitor paused (${this.authState}): session update required`);
+    }
+  }
+
+  assertBrowserActivityAllowed(options) {
+    return this.assertAuthAllowed(options);
   }
 
   normalizeMessage(rawMessage, group) {
@@ -270,9 +198,7 @@ class NogiBrowserMonitor {
       const isNew = typeof saveResult === 'object' && saveResult !== null && 'isNew' in saveResult
         ? Boolean(saveResult.isNew)
         : Boolean(saveResult);
-      // 推送已持久化的行，而不是规范化后的对象：只有该行才带有
-      // media_local_path/thumbnail_local_path/phone_image_local_path，因此 FCM
-      // 载荷指向受保护的 Relay 归档，而不是上游 CDN。
+
       const pushTarget = typeof saveResult === 'object' && saveResult !== null && saveResult.message
         ? saveResult.message
         : message;
@@ -305,18 +231,27 @@ class NogiBrowserMonitor {
     if (this.isRunning) return this.loopPromise;
 
     try {
-      await this.openBrowser();
+      await this.loadStorageState();
+      await this.loadAccessTokenState();
       await this.startSessionFileWatcher();
+
+      if (!this.sessionCookie) {
+        console.warn('未检测到有效会话文件，请通过管理接口或脚本上传会话凭据');
+      } else {
+        try {
+          await this.refreshAccessToken({ sessionActivation: false });
+        } catch (error) {
+          console.warn('初始令牌刷新失败，等待新会话或重试:', error.message);
+        }
+      }
     } catch (error) {
-      await this.closeBrowser();
+      console.error('监控服务初始化失败:', error.message);
       throw error;
     }
 
-    console.log(this.browserRestartIntervalMs > 0
-      ? `Nogi browser restart policy: machine memory > ${this.machineMemoryRestartMB}MB, or every ${Math.round(this.browserRestartIntervalMs / 60_000)} min`
-      : `Nogi browser restart policy: machine memory > ${this.machineMemoryRestartMB}MB only (periodic restart disabled)`);
+    console.log(`Nogi monitor started (Pure API mode, poll interval: ${Math.round(this.pollIntervalMs / 1000)}s)`);
     this.isRunning = true;
-    this.authState = 'authenticated';
+    this.authState = this.accessToken ? 'authenticated' : 'starting';
     this.loopPromise = this.runLoop();
     return this.loopPromise;
   }
@@ -330,30 +265,24 @@ class NogiBrowserMonitor {
 
         try {
           const polling = (async () => {
-            if (!this.page || this.page.isClosed()) await this.openBrowser();
-            const restartReason = await this.shouldRestartBrowser();
-            if (restartReason) await this.restartBrowser(restartReason);
-            if (!this.accessToken) await this.refreshFrontendSession();
+            if (this.shouldRefreshAccessToken()) {
+              await this.refreshAccessToken();
+            }
             await this.poll();
           })();
           this.activePollingPromise = polling;
           await polling;
-          
+
           loopCount++;
-          if (loopCount % 10 === 0) {
-            const currentMB = memoryMegabytes(this.lastMachineMemory?.currentBytes);
-            const maxMB = memoryMegabytes(this.lastMachineMemory?.maxBytes);
-            console.log(`机器内存状态: current=${currentMB ?? 'unknown'}MB, max=${maxMB ?? 'unlimited'}MB, restart=${this.machineMemoryRestartMB}MB`);
-          }
         } catch (error) {
-          const isAuthError = error.message?.includes('官网页面没有发出带 Authorization 的 API 请求')
-            || error.message?.includes('官网页面尚未提供访问令牌')
-            || error.message?.includes('Nogi API 401');
-          
+          const isAuthError = error.message?.includes('Nogi API 401')
+            || error.message?.includes('400 Bad Request')
+            || error.message?.includes('未配置会话')
+            || error.message?.includes('会话已过期');
+
           await recordError('monitor.poll', error, {
-            mode: 'browser',
+            mode: 'pure_api',
             has_access_token: Boolean(this.accessToken),
-            browser_started_at: this.browserStartedAt || null,
             is_auth_error: isAuthError,
             consecutive_failures: this.consecutiveAuthFailures,
           });
@@ -364,13 +293,11 @@ class NogiBrowserMonitor {
               await this.waitForAuthenticationResume();
               continue;
             }
-            
+
             console.error(
               `认证请求失败；/v2/update_token 连续失败 `
               + `${this.consecutiveAuthFailures}/${this.maxConsecutiveAuthFailures} 次，继续重试。`,
             );
-            this.accessToken = '';
-            this.observedTokenAt = 0;
             await sleep(Math.max(60_000, this.pollIntervalMs));
             continue;
           }
@@ -392,7 +319,6 @@ class NogiBrowserMonitor {
     this.releaseSessionReloadWaiters();
     this.stopSessionFileWatcher();
     if (this.loopPromise) await this.loopPromise;
-    await this.closeBrowser();
   }
 
   async clearPersistedAccessToken() {
@@ -427,13 +353,12 @@ class NogiBrowserMonitor {
     this.accessToken = '';
     this.observedTokenAt = 0;
     await this.clearPersistedAccessToken();
-    await this.closeBrowser();
 
     if (!wasPaused) {
       const message = [
-        '[NOGI_AUTH_PAUSED] 官网 access token 已失效，且无法通过官网获取新 token。',
-        '已停止 Chromium、官网认证请求和消息轮询；HTTP 健康检查、管理接口、媒体服务及会话文件监听保持运行。',
-        '请上传新的浏览器会话文件；新会话通过官网 API 验证后，监控会自动恢复。',
+        '[NOGI_AUTH_PAUSED] 官网 access token 已失效，且无法通过 API 自动刷新。',
+        '已暂停消息轮询；HTTP 健康检查、管理接口、媒体服务及会话文件监听保持运行。',
+        '请上传新的会话文件；新会话验证通过后，监控将自动恢复。',
       ].join('\n');
       console.error(message);
       await recordError('monitor.auth_paused', cause || new Error(message), {
@@ -444,377 +369,131 @@ class NogiBrowserMonitor {
     }
   }
 
+  resumeAuthentication() {
+    this.authPaused = false;
+    this.authState = 'authenticated';
+    this.consecutiveAuthFailures = 0;
+    if (this.signedOutLogTimer) {
+      clearInterval(this.signedOutLogTimer);
+      this.signedOutLogTimer = null;
+    }
+    this.releaseAuthenticationWaiters();
+  }
+
   waitForAuthenticationResume() {
     if (!this.isRunning || !this.authPaused) return Promise.resolve();
     return new Promise(resolve => this.authResumeWaiters.add(resolve));
   }
 
   releaseAuthenticationWaiters() {
-    for (const resolve of this.authResumeWaiters) resolve();
+    for (const waiter of this.authResumeWaiters) waiter();
     this.authResumeWaiters.clear();
   }
 
-  waitForSessionReload() {
-    if (!this.isRunning || !this.isReloadingSession) return Promise.resolve();
-    return new Promise(resolve => this.sessionReloadWaiters.add(resolve));
+  async waitForPollingAllowed() {
+    if (this.isReloadingSession) {
+      await new Promise(resolve => this.sessionReloadWaiters.add(resolve));
+    }
+    if (this.authPaused) {
+      await this.waitForAuthenticationResume();
+    }
   }
 
   releaseSessionReloadWaiters() {
-    for (const resolve of this.sessionReloadWaiters) resolve();
+    for (const waiter of this.sessionReloadWaiters) waiter();
     this.sessionReloadWaiters.clear();
   }
 
-  async waitForPollingAllowed() {
-    while (this.isRunning && (this.authPaused || this.isReloadingSession)) {
-      if (this.authPaused) await this.waitForAuthenticationResume();
-      else await this.waitForSessionReload();
-    }
-  }
-
-  resumeAuthentication({ log = true } = {}) {
-    const wasPaused = this.authPaused;
-    if (this.signedOutLogTimer) clearInterval(this.signedOutLogTimer);
-    this.signedOutLogTimer = null;
-    this.authPaused = false;
-    this.consecutiveAuthFailures = 0;
-    this.authState = 'authenticated';
-    this.releaseAuthenticationWaiters();
-    if (wasPaused && log) {
-      console.log('[NOGI_AUTH_RESUMED] 新浏览器会话验证成功，官网消息轮询已恢复。');
-    }
-  }
-
-  assertBrowserActivityAllowed({ sessionActivation = false } = {}) {
-    if ((this.authPaused || this.authState === 'signedOut') && !sessionActivation) {
-      throw new Error('认证已暂停，等待新会话验证');
-    }
-  }
-
-  async openBrowser(storageStateOverride = undefined, { sessionActivation = false } = {}) {
-    this.assertBrowserActivityAllowed({ sessionActivation });
-    await this.closeBrowser();
-    let browserTimeout;
-    const timeoutPromise = new Promise((_, reject) => {
-      browserTimeout = setTimeout(() => reject(new Error('浏览器启动超时(90秒)')), 90_000);
-    });
-    
-    try {
-      await Promise.race([
-        (async () => {
-          const storageState = storageStateOverride === undefined
-            ? await this.loadStorageState()
-            : storageStateOverride;
-          const persistedAccessToken = await this.loadAccessTokenState();
-          const executablePath = browserExecutablePath();
-          this.browser = await this.browserType.launch({
-            headless: this.headless,
-            channel: executablePath ? undefined : 'chromium-headless-shell',
-            executablePath,
-            timeout: 60_000,
-            args: [
-              '--no-sandbox',
-              '--disable-dev-shm-usage',
-              '--disable-gpu',
-              '--disable-software-rasterizer',
-              '--disable-extensions',
-              '--disable-background-networking',
-              '--disable-sync',
-              '--disable-translate',
-              '--disable-features=TranslateUI',
-              '--disable-default-apps',
-              '--no-first-run',
-              '--no-zygote',
-              '--single-process',
-              '--disable-web-security',
-              '--js-flags=--max-old-space-size=256',
-            ],
-          });
-          this.assertBrowserActivityAllowed({ sessionActivation });
-          this.context = await this.browser.newContext(storageState ? { storageState } : {});
-          this.page = this.context.pages()[0] || await this.context.newPage();
-          if (persistedAccessToken) {
-            this.accessToken = persistedAccessToken;
-            this.observedTokenAt = Date.now();
-          }
-          this.page.on('request', request => this.observeRequest(request));
-          this.page.on('response', response => this.observeResponse(response));
-          if (this.blockPageMedia) {
-            await this.page.route('**/*', route => {
-              const resourceType = route.request().resourceType();
-              if (['image', 'media', 'font'].includes(resourceType)) {
-                return route.abort().catch(() => {});
-              }
-              return route.continue().catch(() => {});
-            });
-          }
-          this.browserStartedAt = Date.now();
-        })(),
-        timeoutPromise,
-      ]);
-    } catch (error) {
-      await this.closeBrowser();
-      throw error;
-    } finally {
-      clearTimeout(browserTimeout);
-    }
-  }
-
-  async closeBrowser() {
-    if (this.statePersistTimer) {
-      clearTimeout(this.statePersistTimer);
-      this.statePersistTimer = null;
-      this.pendingTokenStoragePersist?.resolve(false);
-      this.pendingTokenStoragePersist = null;
-    }
-    await this.statePersistPromise.catch(() => {});
-    await this.context?.close().catch(() => {});
-    await this.browser?.close().catch(() => {});
-    this.storageStateCapturePromise = null;
-    this.context = null;
-    this.browser = null;
-    this.page = null;
-    this.browserStartedAt = 0;
-    this.lastFrontendNavigationAt = 0;
-    this.accessToken = '';
-    this.observedTokenAt = 0;
-    for (const waiter of this.accessTokenWaiters) waiter.reject(new Error('浏览器上下文已关闭'));
-    this.accessTokenWaiters.clear();
-    
-    if (global.gc) {
-      global.gc();
-      console.log('强制垃圾回收已执行');
-    }
-  }
-
-  async shouldRestartBrowser() {
-    try {
-      this.lastMachineMemory = await this.machineMemoryReader();
-      const currentMB = memoryMegabytes(this.lastMachineMemory.currentBytes);
-      if (this.lastMachineMemory.currentBytes > this.machineMemoryRestartMB * 1024 * 1024) {
-        console.log(
-          `机器内存使用过高 (current: ${currentMB}MB, max: ${memoryMegabytes(this.lastMachineMemory.maxBytes) ?? 'unlimited'}MB), 触发浏览器重启`,
-        );
-        return { reason: 'memory', memory: this.lastMachineMemory };
-      }
-    } catch (error) {
-      if (Date.now() - this.lastMemoryReadWarningAt >= 60 * 60_000) {
-        this.lastMemoryReadWarningAt = Date.now();
-        console.warn('无法读取 Linux cgroup 机器内存:', error.message);
-      }
-    }
-
-    if (this.browserRestartIntervalMs > 0
-      && this.browserStartedAt > 0
-      && Date.now() - this.browserStartedAt >= this.browserRestartIntervalMs) {
-      return { reason: 'periodic', memory: this.lastMachineMemory };
-    }
-    return null;
-  }
-
   shouldRefreshAccessToken() {
+    if (!this.accessToken) return true;
     const expiresAt = tokenExpiry(this.accessToken);
-    return expiresAt != null && expiresAt.getTime() <= Date.now() + ACCESS_TOKEN_REFRESH_SKEW_MS;
+    return expiresAt == null || expiresAt.getTime() <= Date.now() + ACCESS_TOKEN_REFRESH_SKEW_MS;
   }
 
-  async prepareTokenForBrowserRestart() {
-    const expiresAt = tokenExpiry(this.accessToken);
-    if (!expiresAt) return true;
-    const remainingMs = expiresAt.getTime() - Date.now();
-    if (remainingMs > TOKEN_RESTART_GUARD_MS) return true;
-
-    const tokenBeforeWait = this.accessToken;
-    const persistenceGenerationBefore = this.tokenStoragePersistGeneration;
-    const waitMs = Math.max(0, remainingMs - ACCESS_TOKEN_REFRESH_SKEW_MS);
-    console.log(
-      `Token 将在 ${Math.max(0, Math.ceil(remainingMs / 1000))} 秒内到期，暂缓浏览器重启并等待续期`,
-    );
-    if (waitMs > 0) await sleep(waitMs);
-    if (!this.isRunning) return false;
-
-    if (this.accessToken === tokenBeforeWait) {
-      await this.refreshFrontendSession({ requireNewToken: true });
-    }
-    if (!this.accessToken || this.accessToken === tokenBeforeWait) {
-      throw new Error('浏览器重启已暂缓：未截获续期后的新 access token');
+  async refreshAccessToken({ sessionActivation = false } = {}) {
+    this.assertAuthAllowed({ sessionActivation });
+    if (!this.sessionCookie) {
+      throw new Error('未配置会话 Cookie (sessionCookie)，无法续期访问令牌');
     }
 
-    const persistenceGeneration = this.tokenStoragePersistGeneration;
-    if (persistenceGeneration <= persistenceGenerationBefore) {
-      throw new Error('浏览器重启已暂缓：未观察到 /v2/update_token 成功响应');
-    }
-    const storageSaved = await this.tokenStoragePersistPromise;
-    if (!storageSaved || this.lastPersistedTokenStorageGeneration < persistenceGeneration) {
-      throw new Error('浏览器重启已暂缓：刷新后的浏览器状态尚未成功保存');
-    }
-    console.log('新 access token 及刷新后的浏览器状态已保存，允许浏览器重启');
-    return true;
-  }
-
-  async restartBrowser(restartReason = { reason: 'manual' }) {
-    if (!await this.prepareTokenForBrowserRestart()) return false;
-    console.log(`Nogi browser monitor restarting browser context (${restartReason.reason})`);
-    const lastFrontendNavigationAt = this.lastFrontendNavigationAt;
-    await this.closeBrowser();
-    if (this.isRunning) {
-      await this.openBrowser();
-      this.lastFrontendNavigationAt = lastFrontendNavigationAt;
-    }
-    return true;
-  }
-
-  observeRequest(request) {
-    let url;
-    try {
-      url = new URL(request.url());
-    } catch {
-      return;
-    }
-    if (url.origin !== new URL(this.apiUrl).origin) return;
-
-    const authorization = request.headers().authorization || '';
-    if (!authorization.toLowerCase().startsWith('bearer ')) return;
-    const token = authorization.slice(7).trim();
-    if (!token) return;
-    this.accessToken = token;
-    this.observedTokenAt = Date.now();
-    void this.persistAccessToken();
-    for (const waiter of this.accessTokenWaiters) {
-      if (!waiter.accepts(token)) continue;
-      this.accessTokenWaiters.delete(waiter);
-      waiter.resolve(token);
-    }
-  }
-
-  waitForAccessToken({ excludeToken = '' } = {}) {
-    const accepts = token => Boolean(token) && (!excludeToken || token !== excludeToken);
-    if (accepts(this.accessToken)) return Promise.resolve(this.accessToken);
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.accessTokenWaiters.delete(waiter);
-        reject(new Error(excludeToken
-          ? '官网页面没有提供不同于失效令牌的新访问令牌'
-          : '官网页面没有发出带 Authorization 的 API 请求，请先在浏览器会话中登录'));
-      }, this.authorizationWaitMs);
-      const waiter = {
-        accepts,
-        resolve: token => {
-          clearTimeout(timer);
-          resolve(token);
-        },
-        reject: error => {
-          clearTimeout(timer);
-          reject(error);
-        },
-      };
-      this.accessTokenWaiters.add(waiter);
-    });
-  }
-
-  scheduleTokenStoragePersistence() {
-    if (!this.pendingTokenStoragePersist) {
-      const generation = ++this.tokenStoragePersistGeneration;
-      let resolve;
-      const promise = new Promise(settle => {
-        resolve = settle;
-      });
-      this.pendingTokenStoragePersist = { generation, promise, resolve, started: false };
-      this.tokenStoragePersistPromise = promise;
-    }
-    if (this.pendingTokenStoragePersist.started) {
-      return this.pendingTokenStoragePersist.promise;
-    }
-    if (this.statePersistTimer) clearTimeout(this.statePersistTimer);
-    const pending = this.pendingTokenStoragePersist;
-    this.statePersistTimer = setTimeout(async () => {
-      this.statePersistTimer = null;
-      pending.started = true;
-      const saved = await this.persistStorageState();
-      if (saved) this.lastPersistedTokenStorageGeneration = pending.generation;
-      pending.resolve(saved);
-      if (this.pendingTokenStoragePersist === pending) this.pendingTokenStoragePersist = null;
-    }, this.tokenStoragePersistDelayMs);
-    return pending.promise;
-  }
-
-  observeResponse(response) {
-    let url;
-    try {
-      url = new URL(response.url());
-    } catch {
-      return;
-    }
-    if (url.origin !== new URL(this.apiUrl).origin || url.pathname !== '/v2/update_token') return;
-    const status = response.status();
-    if (status === 400) {
-      void this.enterSignedOut(new Error('/v2/update_token returned HTTP 400'));
-      return;
-    }
-    if (status < 200 || status >= 300) {
-      if (status >= 400) {
-        this.consecutiveAuthFailures += 1;
-        console.warn(
-          `/v2/update_token 失败 (${status})，连续失败 `
-          + `${this.consecutiveAuthFailures}/${this.maxConsecutiveAuthFailures} 次`,
-        );
-      }
-      return;
-    }
-
-    this.consecutiveAuthFailures = 0;
-
-    // 页面会异步提交轮转后的 refresh token。合并
-    // 成功的更新响应并在后台只持久化一次；
-    // token 刷新不必等待 Chromium 的存储序列化。
-    this.scheduleTokenStoragePersistence();
-  }
-
-  async refreshFrontendSession({ requireNewToken = false, sessionActivation = false } = {}) {
-    this.assertBrowserActivityAllowed({ sessionActivation });
     if (this.refreshPromise) return this.refreshPromise;
 
     this.refreshPromise = (async () => {
-      const previousToken = this.accessToken;
-      const previousObservedTokenAt = this.observedTokenAt;
-      let refreshTimeout;
-      const timeoutPromise = new Promise((_, reject) => {
-        refreshTimeout = setTimeout(() => reject(new Error('会话刷新超时(45秒)')), 45_000);
-      });
-      
+      console.log('正在通过官网 API 续期访问令牌...');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
       try {
-        console.log(requireNewToken ? '正在刷新官网访问令牌...' : '正在验证前端会话...');
-        await Promise.race([
-          (async () => {
-            await this.page.goto(this.pageUrl, { waitUntil: 'commit', timeout: 25_000 });
-            await this.waitForAccessToken({
-              excludeToken: requireNewToken ? previousToken : '',
-            });
-          })(),
-          timeoutPromise,
-        ]);
-        this.lastFrontendNavigationAt = Date.now();
-        if (previousToken && previousToken !== this.accessToken) {
-          console.log('Nogi browser session supplied a refreshed access token');
-        } else if (!requireNewToken) {
-          console.log('Nogi browser session validated with the current access token');
+        const response = await fetch(`${this.apiUrl}/v2/update_token`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Origin: this.webUrl,
+            Referer: `${this.webUrl}/`,
+            'X-Talk-App-ID': this.appId,
+            'X-Talk-App-Platform': this.platform,
+            'Accept-Language': process.env.NOGI_ACCEPT_LANGUAGE || 'zh-CN,en-US,ja',
+            Cookie: `session=${this.sessionCookie}`,
+          },
+          body: JSON.stringify({}),
+          signal: controller.signal,
+        });
+
+        if (response.status === 400) {
+          await this.enterSignedOut(new Error('/v2/update_token returned HTTP 400'));
+          throw new Error('官网会话已失效 (400 Bad Request)，请重新登录并上传新会话');
         }
+
+        if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          this.consecutiveAuthFailures += 1;
+          throw new Error(`/v2/update_token 失败 (${response.status}): ${errText}`);
+        }
+
+        const data = await response.json();
+        if (!data.access_token) {
+          throw new Error('/v2/update_token 响应未包含 access_token');
+        }
+
+        this.accessToken = data.access_token;
+        this.observedTokenAt = Date.now();
+        this.consecutiveAuthFailures = 0;
+
+        // 检查 Set-Cookie 中是否轮转了 session cookie
+        const setCookieHeader = response.headers.get('set-cookie');
+        if (setCookieHeader) {
+          const match = setCookieHeader.match(/session=([a-zA-Z0-9_-]+)/);
+          if (match && match[1] && match[1] !== this.sessionCookie) {
+            this.sessionCookie = match[1];
+            console.log('检测到官网 session Cookie 轮转，已自动更新');
+          }
+        }
+
+        await this.persistSession();
         await this.persistAccessToken();
-        console.log(requireNewToken ? '官网访问令牌刷新成功' : '前端会话验证成功');
+        console.log(`✓ 官网访问令牌续期成功 (有效期约 ${data.expires_in || 3600} 秒)`);
+        return this.accessToken;
       } catch (error) {
-        console.error(requireNewToken ? '官网访问令牌刷新失败:' : '前端会话验证失败:', error.message);
-        this.accessToken = previousToken;
-        this.observedTokenAt = previousObservedTokenAt;
+        console.error('官网访问令牌续期失败:', error.message);
         throw error;
       } finally {
-        clearTimeout(refreshTimeout);
+        clearTimeout(timeout);
       }
     })().finally(() => {
       this.refreshPromise = null;
     });
+
     return this.refreshPromise;
   }
 
+  // 兼容别名
+  async refreshFrontendSession(options) {
+    return this.refreshAccessToken(options);
+  }
+
   headers() {
-    if (!this.accessToken) throw new Error('官网页面尚未提供访问令牌');
+    if (!this.accessToken) throw new Error('尚未获取到有效访问令牌');
     return {
       Accept: 'application/json',
       'Content-Type': 'application/json',
@@ -826,13 +505,11 @@ class NogiBrowserMonitor {
   }
 
   async apiRequest(pathname, { retryAuth = true, sessionActivation = false } = {}) {
-    this.assertBrowserActivityAllowed({ sessionActivation });
-    // 与官方 Web 端 TokenManager 保持一致：尽可能在临近过期时刷新，
-    // 但如果主动刷新无法完成，仍然尝试当前 token。
-    // 下面真正的 401 仍是权威信号，会获得一次刷新 + 重试。
+    this.assertAuthAllowed({ sessionActivation });
+
     if (retryAuth && this.shouldRefreshAccessToken()) {
       try {
-        await this.refreshFrontendSession({ requireNewToken: true });
+        await this.refreshAccessToken();
       } catch (error) {
         console.warn('官网访问令牌预刷新失败,继续使用当前令牌请求:', error.message);
       }
@@ -852,11 +529,11 @@ class NogiBrowserMonitor {
 
     if (response.status === 401 && retryAuth) {
       try {
-        await this.refreshFrontendSession({ requireNewToken: true });
-        return this.apiRequest(pathname, { retryAuth: false });
+        await this.refreshAccessToken({ sessionActivation });
+        return this.apiRequest(pathname, { retryAuth: false, sessionActivation });
       } catch (refreshError) {
         console.error('会话刷新失败:', refreshError.message);
-        const detail = '会话已过期,无法刷新。请上传新的浏览器会话文件。';
+        const detail = '会话已过期,无法刷新。请上传新的会话文件。';
         throw new Error(`Nogi API ${response.status} ${pathname}: ${detail}`);
       }
     }
@@ -962,7 +639,7 @@ class NogiBrowserMonitor {
   }
 
   async poll() {
-    this.assertBrowserActivityAllowed();
+    this.assertAuthAllowed();
     const isInitialSync = !this.hasCompletedInitialPoll;
     const groups = await this.resolveGroups();
     if (groups.length === 0) throw new Error('No active subscribed groups found');
@@ -981,79 +658,79 @@ class NogiBrowserMonitor {
 
     try {
       const polling = (async () => {
-          let fetched = 0;
-          let stored = 0;
-          let pushed = 0;
+        let fetched = 0;
+        let stored = 0;
+        let pushed = 0;
 
-          for (const group of groups) {
-            const shouldBackfillHistory = !this.backfilledGroupIds.has(group.id);
-            const sendPush = shouldBackfillHistory ? !this.backfillOnStart : true;
-            let rawMessages;
-            let currentPageMessages;
-            if (shouldBackfillHistory) {
-              const pastMessages = await this.fetchPastMessages(group.id);
-              const timeline = await this.fetchAllTimeline(group.id);
-              const seenIds = new Set();
-              rawMessages = [...timeline.messages, ...pastMessages].filter(rawMessage => {
-                const rawId = String(rawMessage.id ?? rawMessage.message_id ?? '');
-                if (!rawId || seenIds.has(rawId)) return false;
-                seenIds.add(rawId);
-                return true;
-              });
-              currentPageMessages = timeline.firstPageMessages;
-              const backfillReason = isInitialSync
-                ? 'startup'
-                : this.historyBackfillReason || 'new_subscription';
-              console.log(
-                `Nogi history fetched: reason=${backfillReason}, group=${group.id}, `
-                + `timeline_pages=${timeline.pageCount}, `
-                + `timeline_messages=${timeline.messages.length}, past_messages=${pastMessages.length}, `
-                + `unique_messages=${rawMessages.length}`,
+        for (const group of groups) {
+          const shouldBackfillHistory = !this.backfilledGroupIds.has(group.id);
+          const sendPush = shouldBackfillHistory ? !this.backfillOnStart : true;
+          let rawMessages;
+          let currentPageMessages;
+          if (shouldBackfillHistory) {
+            const pastMessages = await this.fetchPastMessages(group.id);
+            const timeline = await this.fetchAllTimeline(group.id);
+            const seenIds = new Set();
+            rawMessages = [...timeline.messages, ...pastMessages].filter(rawMessage => {
+              const rawId = String(rawMessage.id ?? rawMessage.message_id ?? '');
+              if (!rawId || seenIds.has(rawId)) return false;
+              seenIds.add(rawId);
+              return true;
+            });
+            currentPageMessages = timeline.firstPageMessages;
+            const backfillReason = isInitialSync
+              ? 'startup'
+              : this.historyBackfillReason || 'new_subscription';
+            console.log(
+              `Nogi history fetched: reason=${backfillReason}, group=${group.id}, `
+              + `timeline_pages=${timeline.pageCount}, `
+              + `timeline_messages=${timeline.messages.length}, past_messages=${pastMessages.length}, `
+              + `unique_messages=${rawMessages.length}`,
+            );
+          } else {
+            rawMessages = await this.fetchTimeline(group.id);
+            currentPageMessages = rawMessages;
+          }
+
+          const previousIds = this.groupMessageIds.get(group.id) || new Set();
+          const currentIds = new Set(
+            currentPageMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)),
+          );
+          const newMessages = rawMessages.filter(rawMessage => !previousIds.has(String(rawMessage.id ?? rawMessage.message_id)));
+          const failedIds = new Set();
+          fetched += newMessages.length;
+          for (const rawMessage of newMessages.reverse()) {
+            const rawId = String(rawMessage.id ?? rawMessage.message_id);
+            const message = this.normalizeMessage(rawMessage, group);
+            if (!message) {
+              previousIds.add(rawId);
+              continue;
+            }
+            const result = await this.processMessage(message, sendPush);
+            stored += result.isNew ? 1 : 0;
+            pushed += result.pushed ? 1 : 0;
+            if (result.processed) previousIds.add(rawId);
+            else failedIds.add(rawId);
+          }
+          this.groupMessageIds.set(
+            group.id,
+            new Set([...currentIds].filter(id => !failedIds.has(id))),
+          );
+          if (shouldBackfillHistory) {
+            if (failedIds.size > 0) {
+              throw new Error(
+                `Nogi history persistence failed for group ${group.id}: ${failedIds.size} message(s)`,
               );
-            } else {
-              rawMessages = await this.fetchTimeline(group.id);
-              currentPageMessages = rawMessages;
             }
-
-            const previousIds = this.groupMessageIds.get(group.id) || new Set();
-            const currentIds = new Set(
-              currentPageMessages.map(rawMessage => String(rawMessage.id ?? rawMessage.message_id)),
-            );
-            const newMessages = rawMessages.filter(rawMessage => !previousIds.has(String(rawMessage.id ?? rawMessage.message_id)));
-            const failedIds = new Set();
-            fetched += newMessages.length;
-            for (const rawMessage of newMessages.reverse()) {
-              const rawId = String(rawMessage.id ?? rawMessage.message_id);
-              const message = this.normalizeMessage(rawMessage, group);
-              if (!message) {
-                previousIds.add(rawId);
-                continue;
-              }
-              const result = await this.processMessage(message, sendPush);
-              stored += result.isNew ? 1 : 0;
-              pushed += result.pushed ? 1 : 0;
-              if (result.processed) previousIds.add(rawId);
-              else failedIds.add(rawId);
-            }
-            this.groupMessageIds.set(
-              group.id,
-              new Set([...currentIds].filter(id => !failedIds.has(id))),
-            );
-            if (shouldBackfillHistory) {
-              if (failedIds.size > 0) {
-                throw new Error(
-                  `Nogi history persistence failed for group ${group.id}: ${failedIds.size} message(s)`,
-                );
-              }
-              this.backfilledGroupIds.add(group.id);
-            }
+            this.backfilledGroupIds.add(group.id);
           }
+        }
 
-          this.hasCompletedInitialPoll = true;
-          if (groups.every(group => this.backfilledGroupIds.has(group.id))) {
-            this.historyBackfillReason = null;
-          }
-          console.log(`Nogi browser monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
+        this.hasCompletedInitialPoll = true;
+        if (groups.every(group => this.backfilledGroupIds.has(group.id))) {
+          this.historyBackfillReason = null;
+        }
+        console.log(`Nogi monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
       })();
 
       if (timeoutPromise) await Promise.race([polling, timeoutPromise]);
@@ -1065,9 +742,19 @@ class NogiBrowserMonitor {
 
   async loadStorageState() {
     try {
-      return (await readBrowserSession(this.storageStateFile)).state;
+      const { state, credentials } = await readBrowserSession(this.storageStateFile);
+      if (credentials?.sessionCookie) {
+        this.sessionCookie = credentials.sessionCookie;
+      }
+      if (credentials?.accessToken && !this.accessToken) {
+        this.accessToken = credentials.accessToken;
+        this.observedTokenAt = Date.now();
+      }
+      return state;
     } catch (error) {
-      if (error.code !== 'ENOENT') console.warn('Nogi browser state could not be loaded:', error.message);
+      if (error.code !== 'ENOENT') {
+        console.warn('会话文件无法读取:', error.message);
+      }
       return null;
     }
   }
@@ -1078,9 +765,13 @@ class NogiBrowserMonitor {
       const token = String(state.accessToken || '').trim();
       const expiresAt = tokenExpiry(token);
       if (!token || (expiresAt && expiresAt.getTime() <= Date.now() + ACCESS_TOKEN_REFRESH_SKEW_MS)) return '';
+      if (!this.accessToken) {
+        this.accessToken = token;
+        this.observedTokenAt = Date.now();
+      }
       return token;
     } catch (error) {
-      if (error.code !== 'ENOENT') console.warn('Nogi access token state could not be loaded:', error.message);
+      if (error.code !== 'ENOENT') console.warn('访问令牌缓存无法读取:', error.message);
       return '';
     }
   }
@@ -1100,64 +791,38 @@ class NogiBrowserMonitor {
       await fs.rename(tempFile, this.accessTokenStateFile);
     } catch (error) {
       if (this.lastPersistedAccessToken === token) this.lastPersistedAccessToken = '';
-      console.warn('Nogi access token state could not be persisted:', error.message);
+      console.warn('访问令牌缓存持久化失败:', error.message);
     }
   }
 
-  async persistStorageState() {
-    if (!this.context || this.suspendStoragePersistence) return false;
-
-    const persist = async () => {
-      if (!this.context || this.suspendStoragePersistence) return false;
-      if (this.storageStateCapturePromise) {
-        console.warn('Nogi browser state persistence skipped: a previous capture is still running');
-        return false;
+  async persistSession() {
+    if (!this.sessionCookie) return false;
+    try {
+      let stateToSave;
+      const existing = await readJsonIfExists(this.storageStateFile).catch(() => null);
+      if (existing && Array.isArray(existing.cookies)) {
+        // 保留旧版 storageState 结构
+        for (const c of existing.cookies) {
+          if (c.name === 'session') c.value = this.sessionCookie;
+        }
+        stateToSave = existing;
+      } else {
+        // 保存新版轻量凭据
+        stateToSave = {
+          sessionCookie: this.sessionCookie,
+          accessToken: this.accessToken,
+          updatedAt: new Date().toISOString(),
+        };
       }
-
-      const context = this.context;
-      const capturePromise = context.storageState({ indexedDB: true });
-      this.storageStateCapturePromise = capturePromise;
-      void capturePromise.then(
-        () => {
-          if (this.storageStateCapturePromise === capturePromise) this.storageStateCapturePromise = null;
-        },
-        () => {
-          if (this.storageStateCapturePromise === capturePromise) this.storageStateCapturePromise = null;
-        },
-      );
-
-      let timeout;
-      try {
-        const state = await Promise.race([
-          capturePromise,
-          new Promise((_, reject) => {
-            timeout = setTimeout(() => reject(new Error(
-              `浏览器状态保存超时(${Math.round(this.storageStateTimeoutMs / 1000)}秒)`,
-            )), this.storageStateTimeoutMs);
-          }),
-        ]);
-        if (this.context !== context || this.suspendStoragePersistence) return;
-        const serializedState = JSON.stringify(state);
-        const { version } = await this.writeStorageState(serializedState);
-        this.lastPersistedStorageVersion = version;
-        return true;
-      } catch (error) {
-        console.warn('Nogi browser state could not be persisted:', error.message);
-        return false;
-      } finally {
-        clearTimeout(timeout);
-      }
-    };
-
-    this.statePersistPromise = this.statePersistPromise.then(persist, persist);
-    return this.statePersistPromise;
-  }
-
-  async writeStorageState(serializedState) {
-    const version = sessionVersion(serializedState);
-    this.lastPersistedStorageVersion = version;
-    await atomicWritePrivateFile(this.storageStateFile, serializedState);
-    return { version };
+      const serialized = JSON.stringify(stateToSave, null, 2);
+      const version = sessionVersion(serialized);
+      this.lastPersistedStorageVersion = version;
+      await atomicWritePrivateFile(this.storageStateFile, serialized);
+      return true;
+    } catch (error) {
+      console.warn('会话状态持久化失败:', error.message);
+      return false;
+    }
   }
 
   async startSessionFileWatcher() {
@@ -1169,8 +834,6 @@ class NogiBrowserMonitor {
     const uploadStatusFileName = path.basename(uploadStatusFilePath);
     await fs.mkdir(directory, { recursive: true });
 
-    // 在订阅之前先建立基线。下面的对账流程
-    // 随后会捕获这次读取与 watch() 之间微小间隙中的变化。
     try {
       const initialSession = await readBrowserSession(this.storageStateFile);
       this.lastPersistedStorageVersion = initialSession.version;
@@ -1223,7 +886,7 @@ class NogiBrowserMonitor {
     if (matchingUpload?.requestId === this.lastHandledUploadRequestId) return;
     if (!matchingUpload && loadedSession.version === this.lastPersistedStorageVersion) return;
     loadedSession.requestId = matchingUpload?.requestId || null;
-    console.log('检测到外部会话文件更新,准备重载浏览器上下文...');
+    console.log('检测到外部会话文件更新,准备重载凭据...');
     await this.reloadSession(loadedSession);
   }
 
@@ -1251,17 +914,23 @@ class NogiBrowserMonitor {
     if (activePolling) await activePolling.catch(() => {});
     let requestedVersion = loadedSession?.version || null;
     let requestId = loadedSession?.requestId || null;
+
     try {
-      console.log('开始重载浏览器会话...');
+      console.log('开始重载会话凭据...');
       const requestedSession = loadedSession || await readBrowserSession(this.storageStateFile);
       const newStorageState = requestedSession.state;
       requestedVersion = requestedSession.version;
       requestId = requestedSession.requestId || requestId;
       if (requestId) this.lastHandledUploadRequestId = requestId;
-      
+
       if (!newStorageState) {
         console.warn('无法加载新会话文件,保持当前会话');
         return;
+      }
+
+      const credentials = requestedSession.credentials || extractSessionCredentials(newStorageState);
+      if (!credentials?.sessionCookie) {
+        throw new Error('新会话文件中未找到有效的 session Cookie');
       }
 
       const { activationStatusFilePath } = browserSessionPaths(this.storageStateFile);
@@ -1272,36 +941,23 @@ class NogiBrowserMonitor {
         updatedAt: new Date().toISOString(),
       });
 
-      // 将上传的快照保留在内存中，并防止旧上下文在
-      // 浏览器被替换时覆盖它。
-      this.suspendStoragePersistence = true;
-
-      console.log('关闭当前浏览器实例...');
-      await this.closeBrowser();
-      
-      this.accessToken = '';
-      this.observedTokenAt = 0;
-      this.lastFrontendNavigationAt = 0;
-      this.browserStartedAt = 0;
+      this.sessionCookie = credentials.sessionCookie;
+      this.accessToken = credentials.accessToken || '';
+      this.observedTokenAt = credentials.accessToken ? Date.now() : 0;
       this.lastPersistedAccessToken = '';
       this.refreshPromise = null;
 
-      console.log('使用新会话重新打开浏览器...');
-      await this.openBrowser(newStorageState, { sessionActivation: true });
-      // 不要让上一个浏览器会话持久化的 token 使
-      // 新上传的会话看起来有效。激活必须观察到由上传的站点状态
-      // 自身产生的请求。
-      this.accessToken = '';
-      this.observedTokenAt = 0;
-      await this.refreshFrontendSession({ sessionActivation: true });
+      console.log('正在验证新会话凭据...');
+      await this.refreshAccessToken({ sessionActivation: true });
       await this.apiRequest(
         `/v2/groups?organization_id=${encodeURIComponent(this.organizationId)}`,
         { retryAuth: false, sessionActivation: true },
       );
+
       this.resumeAuthentication();
       this.backfilledGroupIds.clear();
       this.historyBackfillReason = 'session_reload';
-      console.log('Nogi history backfill scheduled after browser session activation');
+      console.log('会话验证成功，已调度消息回填');
 
       await atomicWritePrivateJson(activationStatusFilePath, {
         requestId,
@@ -1309,8 +965,8 @@ class NogiBrowserMonitor {
         status: 'active',
         updatedAt: new Date().toISOString(),
       });
-      
-      console.log(`✓ 浏览器会话已激活并验证: ${requestedVersion}`);
+
+      console.log(`✓ 官网会话已激活并验证: ${requestedVersion}`);
     } catch (error) {
       console.error('重载会话失败:', error.message);
       if (requestedVersion) {
@@ -1329,7 +985,6 @@ class NogiBrowserMonitor {
         session_version: requestedVersion,
       });
     } finally {
-      this.suspendStoragePersistence = false;
       this.isReloadingSession = false;
       this.releaseSessionReloadWaiters();
       if (this.pendingSessionReload) {
@@ -1346,7 +1001,7 @@ class NogiBrowserMonitor {
 
 const monitor = new NogiBrowserMonitor();
 
-export { NogiBrowserMonitor };
+export { NogiBrowserMonitor, NogiBrowserMonitor as NogiMonitor };
 export default monitor;
 
 if (import.meta.url === `file://${process.argv[1]}`) {

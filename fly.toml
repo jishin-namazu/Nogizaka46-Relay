@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for nogi-relay on 2026-09-03T10:00:00+08:00
+# fly.toml app configuration file generated for nogi-relay
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 
@@ -29,16 +29,7 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
   NOGI_BACKFILL_ON_START = "true"
   NOGI_BROWSER_STATE_FILE = "/data/nogi-browser-state.json"
   NOGI_ACCESS_TOKEN_STATE_FILE = "/data/nogi-access-token.json"
-  NOGI_BROWSER_HEADLESS = "true"
-  NOGI_BROWSER_AUTH_WAIT_SECONDS = "30"
-  # /v2/update_token 成功后延迟后台保存浏览器状态
-  NOGI_BROWSER_SETTLE_SECONDS = "8"
-  NOGI_BROWSER_STORAGE_STATE_TIMEOUT_SECONDS = "10"
-  NOGI_BROWSER_BLOCK_MEDIA = "true"
   NOGI_MAX_TOKEN_REFRESH_FAILURES = "3"
-  NOGI_MACHINE_MEMORY_RESTART_MB = "700"
-  # 0 = 关闭定时重启，仅保留 Linux cgroup 整机内存阈值重启
-  NOGI_BROWSER_RESTART_INTERVAL_SECONDS = "0"
   NOGI_MEDIA_PORT = "8081"
   MEDIA_STORAGE_DIR = "/data/nogi-media"
   MEDIA_MAX_BYTES = "104857600"

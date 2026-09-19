@@ -94,7 +94,7 @@ fly deploy --app <YOUR_APP_NAME>
 ```
 
 > [!NOTE]
-> 平台会自动基于根目录的 `Dockerfile` 构建无头浏览器生产镜像，并在容器内部先后启动主 API 服务与 Monitor 监控进程。
+> 平台会自动基于根目录的 `Dockerfile` 构建生产镜像，并在容器内部启动主 API 服务与 Monitor 监控进程。
 
 ### 步骤 4：初始化生产数据库
 
@@ -109,7 +109,7 @@ curl -X POST https://<YOUR_APP_NAME>.fly.dev/init-db \
 
 ### 步骤 5：上传官网会话
 
-因为云端无头服务器无法手动登录，请在本地电脑提取登录态后上传：
+在本地电脑提取登录态后上传：
 
 ```bash
 # 1. 在本地 server 目录安装依赖并提取会话
@@ -117,7 +117,7 @@ cd server
 npm install
 npm run bootstrap:browser
 ```
-- 在自动弹出的浏览器中登录乃木坂46消息账号，确认可看到已订阅成员页面后，回到终端按 **回车**，本地将生成 `nogi-browser-state.json`。
+- 在弹出的浏览器中登录乃木坂46消息账号，确认可看到已订阅成员页面后，回到终端按 **回车**，本地将生成 `nogi-browser-state.json`。
 
 ```bash
 # 2. 一键上传至云端生产服务器
@@ -127,8 +127,8 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 输出 `✓ Session activated` 即表示云端已成功接管官网会话并启动消息轮询。
 
 > [!WARNING]
-> **⚠️重要提示：乃木坂 Message Web 端仅限单一会话（多端互斥）**  
-> 乃木坂46 官方 Message 的 Web 端**同时只允许一个设备处于登录态**。会话上传至云端后，**切勿在日常电脑或手机浏览器中再次登录官网 Web 版**。一旦其他设备登录 Web，云端当前持有的 Token 将很快被官方注销，导致服务端被迫停止轮询。日常查看消息请通过 Nogi Relay 原生 App 或 官方移动端 APP。
+> **乃木坂 Message Web 端单会话限制**  
+> 官方 Message Web 端同时只允许一个设备处于登录态。会话上传至云端后，请勿在其他浏览器再次登录官网 Web 版，否则服务端当前会话将被官方注销。
 
 ### 步骤 6：手机客户端连接与推送验收
 
@@ -157,8 +157,7 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 
 ## 3. 会话日常运维与热更新
 
-由于官网 Web 端**严格限制单会话**，如果用户在外部浏览器（如个人电脑或手机浏览器）再次登录了官网网页版，云端服务端的会话就会很快被官方吊销，导致 Token 刷新失败并在日志中输出：
-`[NOGI_SESSION_UPDATE_REQUIRED]`。此时服务端会停止轮询并保护系统，**无需重新部署或重启容器**，只需按以下步骤热更新会话：
+当官网账号在外部设备登录导致服务端会话失效时，日志中输出 `[NOGI_SESSION_UPDATE_REQUIRED]`。此时按以下步骤热更新会话：
 
 1. 本地重新提取会话：
    ```bash
@@ -169,7 +168,7 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
    ```bash
    node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev 自定义token
    ```
-服务端会自动无缝重新加载新会话并恢复轮询。
+服务端会自动重新加载新会话并恢复轮询。
 
 ---
 
@@ -179,17 +178,14 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 
 | 变量名 | 默认值 / 示例 | 作用与说明 |
 | :--- | :--- | :--- |
-| `PUBLIC_BASE_URL` | `https://<YOUR_APP_NAME>.fly.dev` | 对外主 API 域名（跟随自定义应用名更改，用于生成媒体与测试直链） |
+| `PUBLIC_BASE_URL` | `https://<YOUR_APP_NAME>.fly.dev` | 对外主 API 域名（用于生成媒体与测试直链） |
 | `PUBLIC_MEDIA_BASE_URL` | `https://<YOUR_APP_NAME>.fly.dev:8081` | 对外受保护媒体服务访问地址（端口 8081） |
 | `NOGI_POLL_INTERVAL_SECONDS` | `60` | 私有消息轮询周期（秒，最低 15s） |
 | `NOGI_BLOG_POLL_INTERVAL_SECONDS` | `60` | 公开 BLOG 轮询周期（秒） |
-| `NOGI_BACKFILL_ON_START` | `true` | 服务启动时是否沿游标自动回填历史过去消息 |
-| `NOGI_MACHINE_MEMORY_RESTART_MB` | `700` | 基于 Linux cgroup `memory.current` 的整机内存重启阈值（MB） |
-| `NOGI_BROWSER_SETTLE_SECONDS` | `8` | 官网更新 token 后，后台保存浏览器状态前的等待时间 |
-| `NOGI_BROWSER_STORAGE_STATE_TIMEOUT_SECONDS` | `10` | IndexedDB 浏览器状态抓取的最长等待时间 |
-| `NOGI_BROWSER_RESTART_INTERVAL_SECONDS` | `0` | 可选定时重启周期；`0` 表示仅使用内存阈值 |
-
-Monitor 的 access token 预刷新窗口固定为 9 秒。内存触发重启时，如果 token 距离到期不超过 3 分钟，Monitor 会等待续期完成，并确认新 token 与刷新后的浏览器状态均已保存后再重启。
+| `NOGI_BACKFILL_ON_START` | `true` | 服务启动时是否沿游标自动回填历史消息 |
+| `NOGI_BROWSER_STATE_FILE` | `/data/nogi-browser-state.json` | 会话凭证存储路径 |
+| `NOGI_ACCESS_TOKEN_STATE_FILE` | `/data/nogi-access-token.json` | 访问令牌缓存文件路径 |
+| `NOGI_MAX_TOKEN_REFRESH_FAILURES` | `3` | 连续刷新失败触发安全挂起的最大重试次数 |
 
 > [!NOTE]
 > 如果你在 `fly.toml` 中将顶部的 `app = "..."` 直接修改为了你的 `<YOUR_APP_NAME>`，则在执行 `fly deploy` 或 `fly secrets set` 时可省略 `--app <YOUR_APP_NAME>` 参数。
@@ -205,10 +201,6 @@ fly logs --app <YOUR_APP_NAME>
 # 查看实例运行状态与健康检查
 fly status --app <YOUR_APP_NAME>
 
-# 查看容器 cgroup 当前/最大内存字节数
-fly ssh console --app <YOUR_APP_NAME> -C "cat /sys/fs/cgroup/memory.current"
-fly ssh console --app <YOUR_APP_NAME> -C "cat /sys/fs/cgroup/memory.max"
-
 # 检查当前会话激活状态
 curl -X GET https://<YOUR_APP_NAME>.fly.dev/v1/admin/browser-session/status \
   -H "Authorization: Bearer 自定义token"
@@ -217,9 +209,9 @@ curl -X GET https://<YOUR_APP_NAME>.fly.dev/v1/admin/browser-session/status \
 curl -X GET "https://<YOUR_APP_NAME>.fly.dev/v1/admin/error-logs?limit=100&level=error" \
   -H "Authorization: Bearer 自定义token"
 
-# 进入容器终端（如需排查文件）
+# 进入容器终端
 fly ssh console --app <YOUR_APP_NAME>
 
-# 存储卷在线扩容（如需要）
+# 存储卷在线扩容
 fly volumes extend nogi_media --size 5 --app <YOUR_APP_NAME>
 ```

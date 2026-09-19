@@ -50,14 +50,13 @@ $TOKEN = "你的ACCESS_TOKEN"
 
 ## 2. 官网会话管理与热更新
 
-服务端由无头 Chromium 托管移动端官网前端。当官网账号重新登录导致 Token 失效（日志输出 `[NOGI_SESSION_UPDATE_REQUIRED]`）时，使用以下命令提取并热更新会话，**无需重启容器**。
+服务端通过官方 API 自动轮询并维护访问令牌。当官网账号在其他设备重新登录导致会话失效（日志输出 `[NOGI_SESSION_UPDATE_REQUIRED]`）时，使用以下命令提取并热更新会话，无需重启容器。
 
 > [!WARNING]
-> **⚠️ 注意：乃木坂 Message Web 端单会话限制与多端互斥**
-> - **官方单会话策略**：乃木坂46 官方 Message 的 Web 端**只允许一个活跃会话存在**。
-> - **多端登录冲突**：当设备 A（如服务端无头浏览器）已加载会话处于登录状态后，若在设备 B（如你的日常电脑浏览器或手机浏览器）再次登录了官网 Web 端，**设备 A（服务端）持有的 Token / Refresh Token 会在极短时间内被官方直接吊销/注销**。
-> - **失效表现**：服务端 Monitor 进程刷新 Token 时会遭遇 400 失败，转入 `signedOut` 状态并暂停消息轮询。
-> - **建议**：上传会话后，**请勿在日常浏览器中随意重复登录官方 Web 网页版**；若不慎在其他设备登录了 Web 端导致token失效，必须重新在本地执行以下步骤提取并上传最新会话文件。
+> **乃木坂 Message Web 端单会话限制**
+> - 官方 Message Web 端仅允许一个活跃会话存在。
+> - 当在其他设备登录官网 Web 端后，服务端持有的会话将被官方吊销。
+> - 服务端 Monitor 进程续期失败时转入 `signedOut` 状态并暂停轮询。此时需重新提取并上传新会话。
 
 ### 2.1 本地提取官网会话
 在本地电脑的 `server/` 目录下运行交互式提取工具：
@@ -66,7 +65,7 @@ cd server
 npm install
 npm run bootstrap:browser
 ```
-- 脚本会自动唤起一个可视化的 Chromium / Chrome 窗口并导航至官方消息网页；
+- 脚本会自动唤起本地浏览器并导航至官方消息网页；
 - 在网页中登录乃木坂46消息账号，确保能看到已订阅成员页面后；
 - 回到终端敲击 **回车**，当前目录下会自动生成 `nogi-browser-state.json`。
 
@@ -76,7 +75,7 @@ npm run bootstrap:browser
 node upload-session.js ./nogi-browser-state.json $SERVER $TOKEN
 ```
 该脚本会自动完成：
-1. 校验本地 JSON 结构的完整性（cookies, origins 等）；
+1. 校验本地 JSON 结构的完整性（支持轻量会话凭证与完整快照格式）；
 2. 调接口热写入云端私有目录（`0600` 文件权限）；
 3. 轮询云端 Monitor 状态机，直到 Monitor 成功调用官网 API 校验通过并激活（返回 `✓ Session activated`）。
 
@@ -127,12 +126,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$SERVER/v1/admin/error-logs?limit=100&before=<nextBefore>" | jq .
 ```
 
-### 2.6 浏览器内存重启与 Token 保护
+### 2.6 访问令牌自动续期机制
 
-Monitor 从 Linux cgroup 的 `memory.current` / `memory.max` 读取整台实例的内存，
-默认在超过 `NOGI_MACHINE_MEMORY_RESTART_MB=700` 时回收浏览器。若 access token
-距离到期不超过 3 分钟，重启会暂缓到官网进入 9 秒续期窗口；只有截获新 token 且
-刷新后的浏览器状态成功保存后，才会执行重启。
+Monitor 进程每轮轮询时检查当前 Access Token 的有效期：
+- 默认在 Token 过期前 3 分钟（或服务启动初始化时）调用官方 `POST /v2/update_token` 接口完成续期。
+- 续期成功后，服务端自动将官方响应中 Set-Cookie 返回的新 `session` Cookie 持久化保存至挂载卷，保持会话持续有效。
+- 连续刷新失败达到阈值时转入安全挂起状态，等待新会话上传激活。
 
 ---
 

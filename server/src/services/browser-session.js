@@ -41,12 +41,41 @@ export async function readJsonIfExists(filePath) {
   }
 }
 
+export function extractSessionCredentials(state) {
+  if (!state || typeof state !== 'object') return null;
+
+  let sessionCookie = state.sessionCookie || state.session || '';
+  let accessToken = state.accessToken || '';
+
+  if (Array.isArray(state.cookies)) {
+    const sessionCookieObj = state.cookies.find(
+      c => c.name === 'session' && (c.path === '/v2/update_token' || (c.domain && c.domain.includes('message.nogizaka46.com'))),
+    );
+    if (sessionCookieObj && sessionCookieObj.value) {
+      sessionCookie = sessionCookieObj.value;
+    }
+  }
+
+  if (!sessionCookie && typeof state === 'string') {
+    sessionCookie = state.trim();
+  }
+
+  if (!sessionCookie) return null;
+
+  return {
+    sessionCookie,
+    accessToken,
+  };
+}
+
 export async function readBrowserSession(stateFilePath) {
   const serialized = await fs.readFile(stateFilePath, 'utf8');
   const state = JSON.parse(serialized);
   if (!state || typeof state !== 'object') throw new Error('invalid browser storage state');
+  const credentials = extractSessionCredentials(state);
   return {
     state,
+    credentials,
     version: sessionVersion(serialized),
   };
 }

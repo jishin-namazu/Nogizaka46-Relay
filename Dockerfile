@@ -1,9 +1,6 @@
 # Dockerfile for Fly.io deployment
 
-FROM mcr.microsoft.com/playwright:v1.62.1-noble
-
-# The base image includes the Playwright-matched Chromium/headless shell.
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+FROM node:20-slim
 
 # 设置工作目录
 WORKDIR /app
@@ -21,10 +18,6 @@ COPY server/ ./
 # 否则容器里 `sh start-all.sh` 会直接语法错误，API 起不来、健康检查失败。
 RUN sed -i 's/\r$//' start-all.sh && chmod +x start-all.sh
 
-# 创建非 root 用户
-RUN chown -R pwuser:pwuser /app
-
-USER pwuser
 
 # 暴露端口
 EXPOSE 8080 8081

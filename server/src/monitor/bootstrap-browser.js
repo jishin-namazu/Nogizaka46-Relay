@@ -16,7 +16,7 @@ const apiOrigin = new URL(process.env.NOGI_API_URL || 'https://api.message.nogiz
 
 // 清除旧会话,强制用户重新登录
 if (await fileExists(stateFile)) {
-  console.log('检测到旧的浏览器会话文件,将清除以确保重新登录...');
+  console.log('检测到旧的会话文件,将清除以确保重新登录...');
   await fs.unlink(stateFile).catch(() => {});
 }
 
@@ -25,20 +25,24 @@ const browser = await chromium.launch({
   executablePath,
   args: ['--no-sandbox'],
 });
-// 始终使用空白上下文,不加载旧会话
+
 const context = await browser.newContext();
 let authorizationObserved = false;
+let observedAccessToken = '';
+
 context.on('request', request => {
   try {
     const url = new URL(request.url());
     const authorization = request.headers().authorization || '';
     if (url.origin === apiOrigin && authorization.toLowerCase().startsWith('bearer ')) {
       authorizationObserved = true;
+      observedAccessToken = authorization.slice(7).trim();
     }
   } catch {
     // 忽略非 HTTP 请求。
   }
 });
+
 const page = await context.newPage();
 const pageUrl = `${webUrl}/organization/${encodeURIComponent(organizationId)}/talk?mode=normal`;
 
@@ -47,17 +51,39 @@ try {
   const terminal = readline.createInterface({ input, output });
   await terminal.question('请在打开的官网窗口中完成登录，确认页面可正常查看消息后按回车保存会话...');
   terminal.close();
+
   if (!authorizationObserved) {
     throw new Error('未检测到官网授权请求，未保存会话；请确认已登录并能查看消息后重试');
   }
 
   const savedState = await context.storageState({ indexedDB: true });
+  
+  // 提取关键的 session cookie
+  const sessionCookie = savedState.cookies.find(
+    c => c.name === 'session' && (c.path === '/v2/update_token' || (c.domain && c.domain.includes('message.nogizaka46.com'))),
+  )?.value || '';
+
+  if (!sessionCookie) {
+    console.warn('警告: 未在 Cookie 中检测到 session 凭据，续期可能会受到影响');
+  } else {
+    console.log('✓ 成功捕获官网 session 凭证');
+  }
+
+  // 组装双向兼容的凭据对象（包含轻量字段与完整快照）
+  const sessionPayload = {
+    sessionCookie,
+    accessToken: observedAccessToken,
+    updatedAt: new Date().toISOString(),
+    cookies: savedState.cookies,
+    origins: savedState.origins,
+  };
+
   const directory = path.dirname(stateFile);
   await fs.mkdir(directory, { recursive: true });
   const tempFile = `${stateFile}.tmp-${process.pid}-${Date.now()}`;
-  await fs.writeFile(tempFile, JSON.stringify(savedState), { mode: 0o600 });
+  await fs.writeFile(tempFile, JSON.stringify(sessionPayload, null, 2), { mode: 0o600 });
   await fs.rename(tempFile, stateFile);
-  console.log(`浏览器会话已保存到 ${path.resolve(stateFile)}（权限 0600）`);
+  console.log(`会话凭据已成功保存到 ${path.resolve(stateFile)}（权限 0600）`);
 } finally {
   await context.close().catch(() => {});
   await browser.close().catch(() => {});

@@ -6,6 +6,7 @@ import {
   atomicWritePrivateFile,
   atomicWritePrivateJson,
   browserSessionPaths,
+  extractSessionCredentials,
   readJsonIfExists,
   sessionVersion,
 } from '../services/browser-session.js';
@@ -97,18 +98,14 @@ router.post('/browser-session', async (req, res) => {
       });
     }
 
-    // 校验会话结构
-    if (!session.cookies || !Array.isArray(session.cookies)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid session structure: missing or invalid cookies array',
-      });
-    }
+    // 校验会话结构：支持纯 API 会话凭据或旧版浏览器快照
+    const credentials = extractSessionCredentials(session);
+    const hasLegacyStructure = Array.isArray(session.cookies) && Array.isArray(session.origins);
 
-    if (!session.origins || !Array.isArray(session.origins)) {
+    if (!credentials && !hasLegacyStructure) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid session structure: missing or invalid origins array',
+        error: 'Invalid session structure: expected either clean session credentials (sessionCookie) or legacy browser storageState',
       });
     }
 
