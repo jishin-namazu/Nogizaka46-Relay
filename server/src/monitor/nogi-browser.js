@@ -29,6 +29,7 @@ const DEFAULT_BROWSER_STATE_FILE = (process.platform === 'win32' || !existsSync(
 export const ACCESS_TOKEN_REFRESH_SKEW_MS = 3 * 60_000; // 提前 3 分钟刷新
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const globalInFlightMessages = new Map();
 
 function parseBoolean(value, fallback) {
   if (value == null || value === '') return fallback;
@@ -203,27 +204,57 @@ class NogiBrowserMonitor {
   async processMessage(message, sendPush) {
     try {
       const messageToSave = this.accountId ? { ...message, source_account_id: this.accountId } : message;
-      const saveResult = await this.messageStore.saveMessage(messageToSave);
-      const isNew = typeof saveResult === 'object' && saveResult !== null && 'isNew' in saveResult
-        ? Boolean(saveResult.isNew)
-        : Boolean(saveResult);
 
-      const pushTarget = typeof saveResult === 'object' && saveResult !== null && saveResult.message
-        ? saveResult.message
-        : message;
-      let pushed = false;
-
-      // 不推送已撤回的消息
-      if (sendPush && isNew && !message.is_canceled) {
-        try {
-          await this.pusher.pushMessage(pushTarget);
-          pushed = true;
-        } catch (error) {
-          await recordError('monitor.push_message', error, { messageId: message.id });
+      // 1. 跨账号先验去重：检查是否已在数据库中
+      if (this.messageStore?.hasMessage) {
+        const alreadyExists = await this.messageStore.hasMessage(message.id);
+        if (alreadyExists) {
+          if (this.accountId && this.messageStore.addSourceAccount) {
+            await this.messageStore.addSourceAccount(message.id, this.accountId);
+          }
+          return { isNew: false, pushed: false, processed: true };
         }
       }
 
-      return { isNew, pushed, processed: true };
+      // 2. 跨账号并发去重：检查是否有其他账号正在处理同一条消息
+      if (globalInFlightMessages.has(message.id)) {
+        await globalInFlightMessages.get(message.id);
+        if (this.accountId && this.messageStore?.addSourceAccount) {
+          await this.messageStore.addSourceAccount(message.id, this.accountId);
+        }
+        return { isNew: false, pushed: false, processed: true };
+      }
+
+      let resolveInFlight;
+      const inFlightPromise = new Promise((resolve) => { resolveInFlight = resolve; });
+      globalInFlightMessages.set(message.id, inFlightPromise);
+
+      try {
+        const saveResult = await this.messageStore.saveMessage(messageToSave);
+        const isNew = typeof saveResult === 'object' && saveResult !== null && 'isNew' in saveResult
+          ? Boolean(saveResult.isNew)
+          : Boolean(saveResult);
+
+        const pushTarget = typeof saveResult === 'object' && saveResult !== null && saveResult.message
+          ? saveResult.message
+          : message;
+        let pushed = false;
+
+        // 不推送已撤回的消息，且仅限全新首次入库的消息
+        if (sendPush && isNew && !message.is_canceled) {
+          try {
+            await this.pusher.pushMessage(pushTarget);
+            pushed = true;
+          } catch (error) {
+            await recordError('monitor.push_message', error, { messageId: message.id });
+          }
+        }
+
+        return { isNew, pushed, processed: true };
+      } finally {
+        resolveInFlight();
+        globalInFlightMessages.delete(message.id);
+      }
     } catch (error) {
       await recordError('monitor.store_message', error, {
         message_id: message.id,

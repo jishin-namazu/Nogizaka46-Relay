@@ -2,6 +2,9 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import pushService from '../services/push.js';
 import messageService from '../services/message.js';
+import deviceService from '../services/device.js';
+import db from '../db/index.js';
+import { sendMulticastData } from '../services/firebase.js';
 
 const router = express.Router();
 
@@ -243,6 +246,60 @@ router.post('/test', async (req, res) => {
   } catch (error) {
     console.error('Unified test push error:', error);
     res.status(500).json({ error: 'Failed to send test push', message: error.message });
+  }
+});
+
+/**
+ * POST /v1/push/revoke
+ * 撤回指定消息或最近一次推送的通知
+ */
+router.post('/revoke', async (req, res) => {
+  try {
+    const { message_id, device_id } = req.body;
+    let targetMessageId = message_id ? String(message_id).trim() : null;
+
+    if (!targetMessageId) {
+      const lastLog = await db.queryOne(
+        'SELECT message_id FROM push_logs ORDER BY created_at DESC LIMIT 1'
+      );
+      targetMessageId = lastLog?.message_id || null;
+    }
+    if (!targetMessageId) {
+      const lastMsg = await db.queryOne(
+        "SELECT id FROM messages WHERE id !~ '^test[-_]' ORDER BY sent_at DESC LIMIT 1"
+      );
+      targetMessageId = lastMsg?.id || null;
+    }
+
+    const revokePayload = {
+      action: 'revoke',
+      type: 'revoke',
+      message_id: targetMessageId || '',
+      timestamp: new Date().toISOString(),
+    };
+
+    let tokens = [];
+    if (device_id) {
+      const singleToken = await deviceService.getTokenByDeviceId(parseInt(device_id, 10));
+      if (singleToken) tokens = [singleToken];
+    } else {
+      tokens = await deviceService.getAllTokens();
+    }
+
+    if (tokens.length === 0) {
+      return res.status(404).json({ success: false, error: 'No devices registered' });
+    }
+
+    const result = await sendMulticastData(tokens, revokePayload, `revoke:${targetMessageId || 'all'}`);
+    res.json({
+      success: true,
+      revoked_message_id: targetMessageId,
+      device_count: tokens.length,
+      result,
+    });
+  } catch (error) {
+    console.error('Revoke push error:', error);
+    res.status(500).json({ error: 'Failed to revoke push', message: error.message });
   }
 });
 

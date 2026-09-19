@@ -40,8 +40,11 @@ class MessageService {
           return { message: updated || existing, isNew: false };
         }
       }
+      if (message.source_account_id) {
+        await this.addSourceAccount(message.id, message.source_account_id);
+      }
       console.log(`Message ${message.id} already exists, skipping`);
-      return { message: existing, isNew: false };
+      return { message: existing, isNew: false, duplicate: true };
     }
 
     const archived = await mediaArchive.archiveMessage(message);
@@ -179,6 +182,36 @@ class MessageService {
       WHERE ${NON_TEST_MESSAGE}`
     );
     return stats;
+  }
+
+  /**
+   * 检查指定消息是否已经存在于数据库中
+   */
+  async hasMessage(id) {
+    if (!id) return false;
+    const row = await db.queryOne('SELECT id FROM messages WHERE id = $1', [id]);
+    return Boolean(row);
+  }
+
+  /**
+   * 将账号 ID 追加到指定消息的 source_accounts 列表中（去重追加）
+   */
+  async addSourceAccount(id, accountId) {
+    if (!id || !accountId) return;
+    try {
+      const accJson = JSON.stringify([String(accountId)]);
+      await db.query(
+        `UPDATE messages
+         SET source_accounts = CASE
+           WHEN source_accounts @> $1::jsonb THEN source_accounts
+           ELSE source_accounts || $1::jsonb
+         END
+         WHERE id = $2`,
+        [accJson, id]
+      );
+    } catch (err) {
+      console.warn(`Failed to add source account ${accountId} to message ${id}:`, err.message);
+    }
   }
 }
 

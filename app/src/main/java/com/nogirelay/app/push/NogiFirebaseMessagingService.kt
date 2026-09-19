@@ -36,6 +36,17 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
+        if (remoteMessage.data["action"] == "revoke" || remoteMessage.data["type"] == "revoke") {
+            val messageId = remoteMessage.data["message_id"]
+            val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+            if (!messageId.isNullOrBlank()) {
+                IncomingCallNotifier.cancel(this, messageId)
+            } else {
+                notificationManager.cancelAll()
+            }
+            return
+        }
+
         if (remoteMessage.data["type"] == "blog") {
             val previewBlog = runCatching { AppGraph.blogClient.fromPush(remoteMessage.data) }
                 .onFailure { Log.w("NogiRelay", "Invalid BLOG push payload", it) }
