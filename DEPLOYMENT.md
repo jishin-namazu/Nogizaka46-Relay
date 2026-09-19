@@ -24,7 +24,18 @@
 
 在开始部署前，请确保准备好以下资源与工具：
 
-1. **[Fly.io 账号与 CLI](https://fly.io/docs/hands-on/install-flyctl/)**：本地已安装 `flyctl` 并完成登录（`fly auth login`）。
+1. **[Fly.io 账号与命令行工具 (flyctl)](https://fly.io/docs/hands-on/install-flyctl/)**：
+   - **安装命令行工具 (`flyctl`)**：
+     - **Windows (PowerShell)**：
+       ```powershell
+       iwr https://fly.io/install.ps1 -useb | iex
+       ```
+     - **macOS / Linux**：
+       ```bash
+       curl -L https://fly.io/install.sh | sh
+       # 或者 macOS (Homebrew): brew install flyctl
+       ```
+   - **登录账号**：安装完成后在终端运行 `fly auth login` 完成浏览器授权登录，输入 `fly version` 验证安装成功。
 2. **PostgreSQL 数据库**：一个外网可访问的 PostgreSQL 数据库连接串（可免费使用 [Neon](https://neon.tech)、[Supabase](https://supabase.com) 或 Fly Postgres）。
 3. **Firebase 项目与服务账号密钥**：
    - 在 Firebase 控制台创建项目，启用 Cloud Messaging；
