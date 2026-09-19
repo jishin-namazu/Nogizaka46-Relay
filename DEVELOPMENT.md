@@ -819,16 +819,25 @@ data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
 - `manifest.json` 字段：`format`（固定 `nogirelay-export`）、`formatVersion`（当前 `1`）、`appVersionName`、`appVersionCode`、`exportedAt`、`kind`（`messages` / `blogs`）、`includesMedia`、`includesTranslations`、`members[]`（`id`、`name`、`category`、`avatar_url`、`display_order`、`directory`、`graduated`）。
 - 导入防护：条目数上限 200,000（`MAX_ENTRIES`），单条目解压上限 100 MiB（`MAX_ENTRY_BYTES`）。
 - 链接列规则（`explicitColumns`）：键缺失或 JSON `null` 表示归档未携带该信息，本地值不动；显式空串表示清空，导入重复记录时照写。消息列为 `member_avatar_url`、`phone_image_url`、`media_url`、`thumbnail_url`、`ringtone_url`；博客列为 `image_url`、`post_url`、`member_avatar_url`，另外 `body_html`、`member_id`、`member_name` 只在非空时覆盖。
-- 媒体清单（`mediaCandidates`）：消息取主媒体，语音消息额外带全屏来电写真，缩略图不打包；博客取封面（正文已含则不重复）加全部正文大图，按 URL 去重。
+- 媒体清单（`ExportFormat.mediaCandidates`，唯一实现在 `MediaRefs`）：消息取主媒体，语音消息额外带全屏来电写真，缩略图不打包；博客取封面（正文已含则不重复）加全部正文大图，按 URL 去重。
 
-#### 5.5.2 导出 (`DataExporter.kt`)
+#### 5.5.2 媒体引用表 (`data/MediaRefs.kt` + `data/MediaRefIndex.kt`)
 
-1. `estimate()` 用 `countMessagesForMembers` / `countBlogsForMembers` 取总数，再遍历记录一次，经 `MediaDownloader.cachedFileForUrl` 判断每份媒体是否已缓存，产出 `ExportEstimate`：记录数、引用媒体数、已缓存数、字节数、按角色统计、缺失清单。
-2. `export()` 先写 `manifest.json`，再逐条写 `data/*.jsonl` 并逐条回调进度，然后逐条写入 `media/` 条目，最后写可选的 `data/skipped.jsonl`。
+- `MediaRefs`：`candidates(消息/博客)` 给出角色（`media` / `phone_image` / `cover` / `body`）、URL 与媒体类型；`messageMemberKey` / `blogMemberKey` 给出归属成员。`ExportFormat.mediaCandidates` 转发到它。
+- `media_refs` 表（v11）：`(kind, record_id, member_key, role, url, media_type, ordinal, parse_version)`，主键 `(kind, record_id, role, url)`，索引 `(kind, member_key)`。
+- 写入即维护：`insert` / `insertImported` / `insertBlogIfAbsent` / `upsertBlog` / `refreshImportedLinks` / `refreshImportedBlogLinks` 落库后调用 `refreshMessageMediaRefs` / `refreshBlogMediaRefs`，按数据库当前行重建该记录的引用行。
+- 版本与重建：`MediaRefs.PARSE_VERSION` 存在 `sync_state`。不一致时 `MediaRefIndex.ensureBuilt` 在后台按 `MEDIA_REF_BATCH` 分批重建整张表；重建期间 `mediaRefsReady()` 为 false，统计与导出走直接解析。
+- 缓存状态：引用行只记录 URL，是否已缓存由 `MediaDownloader.cachedFileForUrl` 查盘。
+- 索引：`idx_messages_member_sent`（成员 key 表达式 + `sent_at DESC, received_at DESC, id DESC`）、`idx_blog_posts_member_date`（`member_id, published_at DESC, id DESC`）。
+
+#### 5.5.3 导出 (`DataExporter.kt`)
+
+1. `estimate()` 用 `countMessagesForMembers` / `countBlogsForMembers` 取总数；引用表就绪时读 `mediaRefsFor`，对去重后的每个 URL 调用 `MediaDownloader.cachedFileForUrl` 判断缓存；否则遍历记录逐条解析。产出 `ExportEstimate`：记录数、引用媒体数、已缓存数、字节数、按角色统计、缺失清单。
+2. `export()` 先写 `manifest.json`，再逐条写 `data/*.jsonl` 并逐条回调进度，然后逐条写入 `media/` 条目，最后写可选的 `data/skipped.jsonl`。媒体候选按 `recordId` 从引用表分组取回，未就绪时逐条解析。
 3. 导出不联网：只打包本地已缓存的媒体，缺失项记入 `data/skipped.jsonl`，记录本身完整写出。
 4. 读库用单查询流式游标（`forEachMessageForMembers` / `forEachBlogForMembers`）逐条读取，与 `estimate()` 一致；**不用 `LIMIT/OFFSET` 分页** —— 分页会让 SQLite 为每一页重新用临时 B-tree 物化并排序整个结果集（本库 27k 条 BLOG 实测首页 0.20 s、末页 1.95 s，而一次性流式读完只要 0.96 s），记录会卡在 500 的整数倍上，进度显示因此每 500 条跳一格。
 
-#### 5.5.3 导入 (`DataImporter.kt`)
+#### 5.5.4 导入 (`DataImporter.kt`)
 
 1. 读 `manifest.json`：`kind` 决定载荷解释方式；`members[]` 中 `directory == true` 的行经 `insertMemberIfAbsent`（`CONFLICT_IGNORE`）写入 `blog_members`，分类先过 `BlogMemberCategories.normalizeCategory`。
 2. 逐条回写：`data/*.jsonl` 每行解析后立刻在独立 SQLite 事务中落库 —— 消息走 `writeMessage()`（`insertImported`），博客走 `writeBlog()`（`insertBlogIfAbsent`）。不攒批，进程中断最多丢当前这一条。
@@ -836,21 +845,21 @@ data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
 4. 媒体条目：条目名 `media/<sha256>.<ext>` 的 sha256 与解压内容做摘要比对，通过后按引用它的每个 URL 写入媒体缓存；条目先于记录出现时先落暂存目录，记录解析完后按 `pathToUrls` 落位（`deferredPaths`）。
 5. 单行解析失败计入 `invalid`，最多记录 10 条错误信息，不中断整次导入。
 6. 进度逐条回调：记录 `onProgress("导入记录", processed, 0)`，媒体 `onProgress("导入媒体", mediaProcessed, 0)`。
-7. 成员筛选：`ImportOptions.memberIds` 非 null 时只合并这些成员的记录与目录行，其余记录连同它引用的媒体一并跳过；成员 key 由 `ExportFormat.messageMemberKey`（`member_id` 优先，回退 `member_name`）与 `blogMemberKey`（`member_id`）给出，与导出端的选择口径一致。
+7. 成员筛选：`ImportOptions.memberIds` 非 null 时只合并这些成员的记录与目录行，其余记录连同它引用的媒体一并跳过；成员 key 由 `ExportFormat.messageMemberKey`（`member_id` 优先，回退 `member_name`）与 `blogMemberKey`（`member_id`）给出。
 
-#### 5.5.4 传输调度 (`DataTransferManager.kt`)
+#### 5.5.5 传输调度 (`DataTransferManager.kt`)
 
 - 进程级单例，持有 `StateFlow<TransferState>`（`running`、`kind`、`operation`、`phase`、`done`、`total`、`outcome`、`error`），同一时刻只跑一个任务。
 - `operation` 取 `EXPORT` / `IMPORT` / `BACKFILL`；`cancel()` 取消协程，导出被取消时删除半成品文件。
 - 导出与导入完成后调用 `AppGraph.notifyDataChanged()` 刷新界面。
 
-#### 5.5.5 媒体补齐 (`MediaBackfill.kt` + `MediaBackfillService.kt`)
+#### 5.5.6 媒体补齐 (`MediaBackfill.kt` + `MediaBackfillService.kt`)
 
 - 补齐清单直接复用导出预览收集的 `missing` 列表，不重新遍历数据库。
 - 每条先查缓存，命中计入 `reused`；否则下载，`HttpNotFoundException` 计入 `notFound`，下载器写入永久 404 标记，后续不再请求该 URL。
 - 补齐期间启动前台服务 `MediaBackfillService` 维持后台下载，进度逐条上报。
 
-#### 5.5.6 交互界面 (`ui/transfer/`)
+#### 5.5.7 交互界面 (`ui/transfer/`)
 
 - `DataTransferDrawer.kt`：按 `kind` 提供成员选择、媒体/译文开关、导出预估、进度与结果卡片；导入确认对话框也提供"导入成员"选择，成员来自归档清单。
 - `MemberPickerDialog.kt`：成员网格 `MemberPickerGrid` 与 `memberGroups()`，以及导出/导入共用的 `TransferMemberPickerDialog`；分区顺序由 `BlogMemberCategories.STANDARD_CATEGORIES + "其他"` 派生（`MemberCategoryOrder`）。

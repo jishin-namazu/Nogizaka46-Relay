@@ -18,6 +18,7 @@ import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.call.OfficialProximityScreenControl
 import com.nogirelay.app.call.ProximityScreenControl
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.MediaRefIndex
 import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
@@ -65,6 +66,8 @@ class MainActivity : ComponentActivity() {
         Log.d("MainActivity", "Calling TranslationManager.enqueue from onCreate")
         TranslationManager.enqueue(this)
         BlogTranslationManager.enqueuePending(this)
+        // 媒体引用表未建或解析版本变化时，在后台重建。
+        MediaRefIndex.ensureBuilt(AppGraph.database)
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching { BlogPrewarmer.prewarm() }
         }

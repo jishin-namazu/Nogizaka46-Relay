@@ -1,11 +1,9 @@
 package com.nogirelay.app.data.transfer
 
 import com.nogirelay.app.data.BlogPost
-import com.nogirelay.app.data.isRealBlogImageUrl
+import com.nogirelay.app.data.MediaRefs
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
-import com.nogirelay.app.blog.BlogContentParser
-import com.nogirelay.app.blog.BlogContentBlock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -37,8 +35,11 @@ data class ManifestMember(
 /** 记录引用的一份媒体文件。[path] 是存放其字节的 ZIP 条目。 */
 data class MediaRef(val role: String, val url: String, val path: String)
 
-/** 扫描记录时收集到的已缓存媒体候选。 */
-data class MediaCandidate(val role: String, val url: String, val type: MessageType)
+/**
+ * 媒体候选：唯一实现已移到 [com.nogirelay.app.data.MediaRefs]，这里保留类型别名，
+ * 导出、补齐等既有调用点因此无需改动。
+ */
+typealias MediaCandidate = com.nogirelay.app.data.MediaCandidate
 
 data class ExportManifest(
     val formatVersion: Int,
@@ -236,16 +237,11 @@ object ExportFormat {
         isUnread = false,
     )
 
-    /**
-     * 归档记录归属的成员 key，与导出端选择成员的口径一致：有 `member_id` 就用它，
-     * 否则回退到 `member_name`（旧消息没有成员编号）。导入按成员筛选时用它
-     * 判断一条记录属不属于所选成员。
-     */
-    fun messageMemberKey(message: RelayMessage): String =
-        message.memberId.trim().ifBlank { message.memberName.trim() }
+    /** 归档记录归属的成员 key；与媒体引用表同口径，见 [MediaRefs.messageMemberKey]。 */
+    fun messageMemberKey(message: RelayMessage): String = MediaRefs.messageMemberKey(message)
 
-    /** BLOG 的成员 key：帖子的 `member_id` 就是归档清单里的成员 id。 */
-    fun blogMemberKey(post: BlogPost): String = post.memberId.trim()
+    /** BLOG 的成员 key；与媒体引用表同口径，见 [MediaRefs.blogMemberKey]。 */
+    fun blogMemberKey(post: BlogPost): String = MediaRefs.blogMemberKey(post)
 
     /**
      * 归档里**显式写出**的链接列。规则：缺键或 JSON null ＝ 归档没带这个信息，本地值不动；
@@ -304,50 +300,11 @@ object ExportFormat {
         }
     }
 
-    /**
-     * 消息归档携带的媒体：它的主媒体，并且仅对语音消息还包括
-     * 全屏通话照片。缩略图不打包。
-     *
-     * 主 URL 遵循 MediaDownloader 的解析顺序：没有媒体
-     * URL 的 IMAGE 消息回退到它的缩略图。
-     */
-    fun mediaCandidates(message: RelayMessage): List<MediaCandidate> = buildList {
-        val primary = message.mediaUrl?.takeIf(String::isNotBlank)
-            ?: if (message.type == MessageType.IMAGE) {
-                message.thumbnailUrl?.takeIf(String::isNotBlank)
-            } else {
-                null
-            }
-        primary?.let { add(MediaCandidate("media", it, message.type)) }
-        // 只有语音消息能唤起全屏通话，所以只有它拥有通话照片；其他
-        // 类型附带的所有照片 URL 都不属于这条消息所展示的内容。
-        if (message.type == MessageType.AUDIO) {
-            message.phoneImageUrl?.takeIf(String::isNotBlank)?.let {
-                add(MediaCandidate("phone_image", it, MessageType.IMAGE))
-            }
-        }
-    }.distinctBy { it.role to it.url }
+    /** 消息的媒体候选；规则与媒体引用表共用，实现在 [MediaRefs.candidates]。 */
+    fun mediaCandidates(message: RelayMessage): List<MediaCandidate> = MediaRefs.candidates(message)
 
-    /**
-     * 一篇 BLOG 的封面加上正文中的每张图片，按与阅读器完全一致的方式解析，
-     * 因此不会有遗漏。
-     *
-     * 官方 API 通常把文章的第一张图片同时作为封面和内嵌图片给出，因此只有当
-     * 正文尚未包含它时才把封面单独列为一项；无论哪种情况，该
-     * URL 都只列一次，正文重复出现的图片也会合并。
-     */
-    fun mediaCandidates(post: BlogPost): List<MediaCandidate> {
-        val cover = post.imageUrl?.takeIf(::isRealBlogImageUrl)
-        val bodyUrls = BlogContentParser.blocks(post.bodyHtml)
-            .filterIsInstance<BlogContentBlock.Image>()
-            .map(BlogContentBlock.Image::url)
-            .filter(String::isNotBlank)
-        val inBody = bodyUrls.toHashSet()
-        return buildList {
-            cover?.takeIf { it !in inBody }?.let { add(MediaCandidate("cover", it, MessageType.IMAGE)) }
-            bodyUrls.forEach { add(MediaCandidate("body", it, MessageType.IMAGE)) }
-        }.distinctBy { it.url }
-    }
+    /** BLOG 的媒体候选；规则与媒体引用表共用，实现在 [MediaRefs.candidates]。 */
+    fun mediaCandidates(post: BlogPost): List<MediaCandidate> = MediaRefs.candidates(post)
 
     fun mediaEntryName(sha256: String, extension: String): String {
         val suffix = extension.takeIf { it.isNotBlank() } ?: "bin"

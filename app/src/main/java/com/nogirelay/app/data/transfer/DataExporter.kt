@@ -5,6 +5,8 @@ import android.net.Uri
 import com.nogirelay.app.BuildConfig
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogPost
+import com.nogirelay.app.data.MediaRefIndex
+import com.nogirelay.app.data.MediaRefKind
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
 import kotlinx.coroutines.CancellationException
@@ -59,6 +61,8 @@ data class ExportEstimate(
  */
 object DataExporter {
     private const val BUFFER = 64 * 1024
+    /** 走引用表时每多少条候选回报一次进度。 */
+    private const val PROGRESS_STEP = 128
 
     private class ResolvedMedia(
         val path: String,
@@ -129,21 +133,39 @@ object DataExporter {
             }
         }
 
-        when (kind) {
-            ExportKind.MESSAGES -> database.forEachMessageForMembers(memberKeys) { message ->
-                checkActive()
-                records += 1
-                reportProgress()
-                inspect(ExportFormat.mediaCandidates(message))
-            }
-            ExportKind.BLOGS -> database.forEachBlogForMembers(memberKeys) { post ->
-                checkActive()
-                records += 1
-                reportProgress()
-                inspect(ExportFormat.mediaCandidates(post))
-            }
+        // 引用表就绪时读表，否则遍历记录逐条解析并触发后台重建。
+        val refRows = if (database.mediaRefsReady()) {
+            database.mediaRefsFor(kind.toMediaRefKind(), memberKeys)
+        } else {
+            MediaRefIndex.ensureBuilt(database)
+            null
         }
-        onProgress?.invoke(records, total)
+        if (refRows != null) {
+            records = total
+            onProgress?.invoke(0, refRows.size)
+            refRows.forEachIndexed { index, row ->
+                checkActive()
+                inspect(listOf(MediaCandidate(row.role, row.url, row.type)))
+                if (index % PROGRESS_STEP == 0) onProgress?.invoke(index, refRows.size)
+            }
+            onProgress?.invoke(refRows.size, refRows.size)
+        } else {
+            when (kind) {
+                ExportKind.MESSAGES -> database.forEachMessageForMembers(memberKeys) { message ->
+                    checkActive()
+                    records += 1
+                    reportProgress()
+                    inspect(ExportFormat.mediaCandidates(message))
+                }
+                ExportKind.BLOGS -> database.forEachBlogForMembers(memberKeys) { post ->
+                    checkActive()
+                    records += 1
+                    reportProgress()
+                    inspect(ExportFormat.mediaCandidates(post))
+                }
+            }
+            onProgress?.invoke(records, total)
+        }
 
         return ExportEstimate(
             records = records,
@@ -184,6 +206,18 @@ object DataExporter {
         val resolvedByKey = HashMap<String, ResolvedMedia?>()
         val skipped = mutableListOf<JSONObject>()
         var recordCount = 0
+        // 引用表就绪时媒体候选来自表，否则逐条解析并触发重建。
+        val refsByRecord: Map<String, List<MediaCandidate>>? = if (request.includeMedia) {
+            if (database.mediaRefsReady()) {
+                database.mediaRefsFor(request.kind.toMediaRefKind(), request.memberKeys)
+                    .groupBy({ it.recordId }, { MediaCandidate(it.role, it.url, it.type) })
+            } else {
+                MediaRefIndex.ensureBuilt(database)
+                null
+            }
+        } else {
+            null
+        }
 
         val rawOutput = resolver.openOutputStream(outputUri) ?: error("无法写入所选文件")
         // 游标读取期间无法做挂起上下文检查，所以捕获 job 并轮询。
@@ -204,7 +238,10 @@ object DataExporter {
                     val refs = mutableListOf<MediaRef>()
                     // 不含媒体时 refs 保持为空，记录本身照常写全，导入端会看到 includesMedia=false。
                     if (request.includeMedia) {
-                        candidates(request.kind, item).forEach { candidate ->
+                        // 引用表就绪时以其为准：没有行即这条记录没有媒体。
+                        val recordRefs = refsByRecord?.get(recordId(request.kind, item))
+                            ?: if (refsByRecord == null) candidates(request.kind, item) else emptyList()
+                        recordRefs.forEach { candidate ->
                             val key = candidate.role + "|" + candidate.url
                             val media = if (resolvedByKey.containsKey(key)) {
                                 resolvedByKey[key]
@@ -279,6 +316,16 @@ object DataExporter {
     private fun candidates(kind: ExportKind, item: Any) = when (kind) {
         ExportKind.MESSAGES -> ExportFormat.mediaCandidates(item as RelayMessage)
         ExportKind.BLOGS -> ExportFormat.mediaCandidates(item as BlogPost)
+    }
+
+    private fun ExportKind.toMediaRefKind(): MediaRefKind = when (this) {
+        ExportKind.MESSAGES -> MediaRefKind.MESSAGES
+        ExportKind.BLOGS -> MediaRefKind.BLOGS
+    }
+
+    private fun recordId(kind: ExportKind, item: Any): String = when (kind) {
+        ExportKind.MESSAGES -> (item as RelayMessage).id
+        ExportKind.BLOGS -> (item as BlogPost).id
     }
 
     private fun manifestMembers(

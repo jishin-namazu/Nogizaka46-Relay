@@ -51,6 +51,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         db.execSQL("CREATE INDEX idx_messages_sent_at ON messages(sent_at DESC)")
         db.execSQL("CREATE INDEX idx_messages_unread_member ON messages(is_unread, member_id, member_name)")
         createBlogTables(db)
+        createMediaRefSchema(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -96,6 +97,11 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                     "WHERE id GLOB '[0-9]*' AND id LIKE '0%' AND length(id) > 1 " +
                     "AND EXISTS (SELECT 1 FROM blog_posts p WHERE p.id = LTRIM(blog_posts.id, '0'))",
             )
+        }
+        if (oldVersion < 11) {
+            // v11 引入媒体引用表与成员 key 索引；历史记录由 MediaRefIndex 在后台回填，
+            // 所以升级本身只是建表建索引，不会卡住启动。
+            createMediaRefSchema(db)
         }
     }
 
@@ -150,6 +156,35 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_blog_members_order ON blog_members(display_order ASC)")
     }
 
+    /** 媒体引用表，以及按成员过滤/排序所需的表达式与复合索引。 */
+    private fun createMediaRefSchema(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS media_refs (
+                kind TEXT NOT NULL,
+                record_id TEXT NOT NULL,
+                member_key TEXT NOT NULL,
+                role TEXT NOT NULL,
+                url TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                parse_version INTEGER NOT NULL,
+                PRIMARY KEY (kind, record_id, role, url)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_media_refs_member ON media_refs(kind, member_key)")
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_messages_member_sent ON messages(" +
+                "CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END, " +
+                "sent_at DESC, received_at DESC, id DESC)",
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_blog_posts_member_date ON blog_posts(" +
+                "member_id, published_at DESC, id DESC)",
+        )
+    }
+
     fun insert(message: RelayMessage, isUnread: Boolean = false): Boolean {
         val values = ContentValues().apply {
             put("id", message.id)
@@ -190,6 +225,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                 writableDatabase.update("messages", mediaValues, "id = ?", arrayOf(message.id))
             }
         }
+        refreshMessageMediaRefs(message.id)
         return inserted
     }
 
@@ -503,7 +539,10 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             SQLiteDatabase.CONFLICT_IGNORE,
         ) != -1L
         updateMemberLatestPost(post.memberId, post.publishedAt)
-        if (inserted) return true
+        if (inserted) {
+            refreshBlogMediaRefs(id)
+            return true
+        }
 
         val existingBody = readableDatabase.query(
             "blog_posts",
@@ -532,6 +571,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             }
         }
         writableDatabase.update("blog_posts", update, "id = ?", arrayOf(id))
+        refreshBlogMediaRefs(id)
         return false
     }
 
@@ -674,12 +714,14 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             put("translation_done", if (message.translationDone) 1 else 0)
             put("received_at", 0L)
         }
-        return writableDatabase.insertWithOnConflict(
+        val inserted = writableDatabase.insertWithOnConflict(
             "messages",
             null,
             values,
             SQLiteDatabase.CONFLICT_IGNORE,
         ) != -1L
+        refreshMessageMediaRefs(message.id)
+        return inserted
     }
 
     /**
@@ -710,6 +752,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             SQLiteDatabase.CONFLICT_IGNORE,
         ) != -1L
         updateMemberLatestPost(post.memberId, post.publishedAt)
+        refreshBlogMediaRefs(id)
         return inserted
     }
 
@@ -751,8 +794,11 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
      * 媒体往返也能继续解析。内容、阅读状态和译文都不受影响，
      * 且只有链接确实不同时才将该行计为已刷新。
      */
-    fun refreshImportedLinks(id: String, links: Map<String, String>): Boolean =
-        updateLinksIfDifferent("messages", id, links)
+    fun refreshImportedLinks(id: String, links: Map<String, String>): Boolean {
+        val updated = updateLinksIfDifferent("messages", id, links)
+        if (updated) refreshMessageMediaRefs(id)
+        return updated
+    }
 
     /**
      * BLOG 上的对应实现。BLOG 的内联图片地址存放在 `body_html` 中，因此刷新这些
@@ -764,8 +810,11 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
      * 编号（而非爬虫的 slug id）时，必须能把已导入的帖子移到
      * 官方成员上，否则新成员行的卒業标记与期数将永远不会被使用。
      */
-    fun refreshImportedBlogLinks(id: String, links: Map<String, String>): Boolean =
-        updateLinksIfDifferent("blog_posts", id, links)
+    fun refreshImportedBlogLinks(id: String, links: Map<String, String>): Boolean {
+        val updated = updateLinksIfDifferent("blog_posts", id, links)
+        if (updated) refreshBlogMediaRefs(id)
+        return updated
+    }
 
     /** 只写入给定的列，且仅当其中至少一列与已存储的值不同时才写入。 */
     private fun updateLinksIfDifferent(table: String, id: String, links: Map<String, String>): Boolean {
@@ -778,6 +827,230 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             "id = ? AND ($conditions)",
             arrayOf(id, *links.values.toTypedArray()),
         ) > 0
+    }
+
+    // ---------- 媒体引用表：统计与导出的共享数据源 ----------
+
+    /** [MediaRefs.PARSE_VERSION] 是否已经完整落库；false 时调用方退回直接解析记录。 */
+    fun mediaRefsReady(): Boolean =
+        syncStateValue(MEDIA_REFS_VERSION_KEY)?.toIntOrNull() == MediaRefs.PARSE_VERSION
+
+    /** 后台重建完成后的落章。 */
+    fun markMediaRefsReady() =
+        putSyncStateValue(MEDIA_REFS_VERSION_KEY, MediaRefs.PARSE_VERSION.toString())
+
+    /** 所选成员引用的全部媒体，按记录与候选顺序返回。 */
+    fun mediaRefsFor(kind: MediaRefKind, memberKeys: Collection<String>): List<MediaRefRow> {
+        if (memberKeys.isEmpty()) return emptyList()
+        val placeholders = memberKeys.joinToString(",") { "?" }
+        val result = mutableListOf<MediaRefRow>()
+        readableDatabase.rawQuery(
+            "SELECT record_id, role, url, media_type, ordinal FROM media_refs " +
+                "WHERE kind = ? AND member_key IN ($placeholders) ORDER BY record_id, ordinal",
+            arrayOf(kind.name, *memberKeys.toTypedArray()),
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += MediaRefRow(
+                    recordId = cursor.getString(0),
+                    role = cursor.getString(1),
+                    url = cursor.getString(2),
+                    type = MessageType.valueOf(cursor.getString(3)),
+                    ordinal = cursor.getInt(4),
+                )
+            }
+        }
+        return result
+    }
+
+    /** 按数据库里的当前内容重建某条消息的引用行；行已不存在时清掉残留。 */
+    fun refreshMessageMediaRefs(id: String) {
+        val message = find(id)
+        if (message == null) {
+            deleteMediaRefs(MediaRefKind.MESSAGES, id)
+            return
+        }
+        replaceMediaRefs(
+            MediaRefKind.MESSAGES,
+            id,
+            MediaRefs.messageMemberKey(message),
+            MediaRefs.candidates(message),
+        )
+    }
+
+    /** [refreshMessageMediaRefs] 的 BLOG 版本。 */
+    fun refreshBlogMediaRefs(id: String) {
+        val canonical = canonicalBlogId(id)
+        val post = findBlog(canonical)
+        if (post == null) {
+            deleteMediaRefs(MediaRefKind.BLOGS, canonical)
+            return
+        }
+        replaceMediaRefs(
+            MediaRefKind.BLOGS,
+            canonical,
+            MediaRefs.blogMemberKey(post),
+            MediaRefs.candidates(post),
+        )
+    }
+
+    /** 整表重建；由 [MediaRefIndex] 在升级或 [MediaRefs.PARSE_VERSION] 变化后调用。 */
+    fun rebuildMediaRefs(onProgress: ((done: Int, total: Int) -> Unit)? = null) {
+        val messageTotal = readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM messages WHERE id NOT GLOB ?",
+            arrayOf(TEST_MESSAGE_GLOB),
+        ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
+        val blogTotal = readableDatabase.rawQuery("SELECT COUNT(*) FROM blog_posts", null)
+            .use { if (it.moveToFirst()) it.getInt(0) else 0 }
+        val total = messageTotal + blogTotal
+        writableDatabase.delete("media_refs", null, null)
+
+        var done = 0
+        var lastMessageId: String? = null
+        while (true) {
+            val page = readMessagePage(lastMessageId)
+            if (page.isEmpty()) break
+            val rows = mutableListOf<ContentValues>()
+            page.forEach { message ->
+                appendMediaRefValues(
+                    rows,
+                    MediaRefKind.MESSAGES,
+                    message.id,
+                    MediaRefs.messageMemberKey(message),
+                    MediaRefs.candidates(message),
+                )
+            }
+            insertRefRows(rows)
+            done += page.size
+            lastMessageId = page.last().id
+            onProgress?.invoke(done, total)
+        }
+
+        var lastBlogId: String? = null
+        while (true) {
+            val page = readBlogPage(lastBlogId)
+            if (page.isEmpty()) break
+            val rows = mutableListOf<ContentValues>()
+            page.forEach { post ->
+                appendMediaRefValues(
+                    rows,
+                    MediaRefKind.BLOGS,
+                    canonicalBlogId(post.id),
+                    MediaRefs.blogMemberKey(post),
+                    MediaRefs.candidates(post),
+                )
+            }
+            insertRefRows(rows)
+            done += page.size
+            lastBlogId = page.last().id
+            onProgress?.invoke(done, total)
+        }
+        onProgress?.invoke(total, total)
+    }
+
+    private fun replaceMediaRefs(
+        kind: MediaRefKind,
+        recordId: String,
+        memberKey: String,
+        candidates: List<MediaCandidate>,
+    ) {
+        inWriteTransaction {
+            writableDatabase.delete("media_refs", "kind = ? AND record_id = ?", arrayOf(kind.name, recordId))
+            val pending = mutableListOf<ContentValues>()
+            appendMediaRefValues(pending, kind, recordId, memberKey, candidates)
+            pending.forEach {
+                writableDatabase.insertWithOnConflict("media_refs", null, it, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+        }
+    }
+
+    private fun deleteMediaRefs(kind: MediaRefKind, recordId: String) {
+        writableDatabase.delete("media_refs", "kind = ? AND record_id = ?", arrayOf(kind.name, recordId))
+    }
+
+    private fun appendMediaRefValues(
+        out: MutableList<ContentValues>,
+        kind: MediaRefKind,
+        recordId: String,
+        memberKey: String,
+        candidates: List<MediaCandidate>,
+    ) {
+        candidates.forEachIndexed { index, candidate ->
+            out += ContentValues().apply {
+                put("kind", kind.name)
+                put("record_id", recordId)
+                put("member_key", memberKey)
+                put("role", candidate.role)
+                put("url", candidate.url)
+                put("media_type", candidate.type.name)
+                put("ordinal", index)
+                put("parse_version", MediaRefs.PARSE_VERSION)
+            }
+        }
+    }
+
+    /** 按 id 升序取一页消息；[afterId] 为 null 时从头开始。 */
+    private fun readMessagePage(afterId: String?): List<RelayMessage> {
+        val selection = if (afterId == null) "id NOT GLOB ?" else "id NOT GLOB ? AND id > ?"
+        val arguments = if (afterId == null) {
+            arrayOf(TEST_MESSAGE_GLOB)
+        } else {
+            arrayOf(TEST_MESSAGE_GLOB, afterId)
+        }
+        val result = mutableListOf<RelayMessage>()
+        readableDatabase.query(
+            "messages",
+            null,
+            selection,
+            arguments,
+            null,
+            null,
+            "id ASC",
+            MEDIA_REF_BATCH.toString(),
+        ).use { cursor -> while (cursor.moveToNext()) result += cursor.toMessage() }
+        return result
+    }
+
+    /** 按 id 升序取一页 BLOG；[afterId] 为 null 时从头开始。 */
+    private fun readBlogPage(afterId: String?): List<BlogPost> {
+        val selection = if (afterId == null) null else "id > ?"
+        val arguments = if (afterId == null) null else arrayOf(afterId)
+        val result = mutableListOf<BlogPost>()
+        readableDatabase.query(
+            "blog_posts",
+            null,
+            selection,
+            arguments,
+            null,
+            null,
+            "id ASC",
+            MEDIA_REF_BATCH.toString(),
+        ).use { cursor -> while (cursor.moveToNext()) result += cursor.toBlogPost() }
+        return result
+    }
+
+    private fun insertRefRows(rows: List<ContentValues>) {
+        if (rows.isEmpty()) return
+        inWriteTransaction {
+            rows.forEach {
+                writableDatabase.insertWithOnConflict("media_refs", null, it, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+        }
+    }
+
+    /** 已经处在事务里时不再嵌套开启，直接复用外层事务。 */
+    private fun inWriteTransaction(block: () -> Unit) {
+        val db = writableDatabase
+        if (db.inTransaction()) {
+            block()
+            return
+        }
+        db.beginTransaction()
+        try {
+            block()
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     /**
@@ -1428,8 +1701,12 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     companion object {
         private const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 10
+        private const val DB_VERSION = 11
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
+        /** [MediaRefs.PARSE_VERSION] 已落库的标记，存在 sync_state 里。 */
+        private const val MEDIA_REFS_VERSION_KEY = "media_refs_parse_version_v1"
+        /** 重建时每多少条记录提交一次，平衡内存与事务开销。 */
+        private const val MEDIA_REF_BATCH = 500
 
         /** 批量重译单次上限；常规入队仍然只取小分页。 */
         const val MAX_TRANSLATION_BATCH = 20_000
