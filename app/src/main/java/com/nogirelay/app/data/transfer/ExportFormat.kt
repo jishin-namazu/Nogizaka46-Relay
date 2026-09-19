@@ -237,6 +237,17 @@ object ExportFormat {
     )
 
     /**
+     * 归档记录归属的成员 key，与导出端选择成员的口径一致：有 `member_id` 就用它，
+     * 否则回退到 `member_name`（旧消息没有成员编号）。导入按成员筛选时用它
+     * 判断一条记录属不属于所选成员。
+     */
+    fun messageMemberKey(message: RelayMessage): String =
+        message.memberId.trim().ifBlank { message.memberName.trim() }
+
+    /** BLOG 的成员 key：帖子的 `member_id` 就是归档清单里的成员 id。 */
+    fun blogMemberKey(post: BlogPost): String = post.memberId.trim()
+
+    /**
      * 归档里**显式写出**的链接列。规则：缺键或 JSON null ＝ 归档没带这个信息，本地值不动；
      * 显式空串 ＝ 归档就是要清空它，导入重复记录时照写（空值覆盖）。
      */

@@ -836,6 +836,7 @@ data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
 4. 媒体条目：条目名 `media/<sha256>.<ext>` 的 sha256 与解压内容做摘要比对，通过后按引用它的每个 URL 写入媒体缓存；条目先于记录出现时先落暂存目录，记录解析完后按 `pathToUrls` 落位（`deferredPaths`）。
 5. 单行解析失败计入 `invalid`，最多记录 10 条错误信息，不中断整次导入。
 6. 进度逐条回调：记录 `onProgress("导入记录", processed, 0)`，媒体 `onProgress("导入媒体", mediaProcessed, 0)`。
+7. 成员筛选：`ImportOptions.memberIds` 非 null 时只合并这些成员的记录与目录行，其余记录连同它引用的媒体一并跳过；成员 key 由 `ExportFormat.messageMemberKey`（`member_id` 优先，回退 `member_name`）与 `blogMemberKey`（`member_id`）给出，与导出端的选择口径一致。
 
 #### 5.5.4 传输调度 (`DataTransferManager.kt`)
 
@@ -851,8 +852,8 @@ data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
 
 #### 5.5.6 交互界面 (`ui/transfer/`)
 
-- `DataTransferDrawer.kt`：按 `kind` 提供成员选择、时间范围、媒体/译文开关、导出预估、进度与结果卡片。
-- `MemberPickerDialog.kt`：成员网格与 `memberGroups()`；分区顺序由 `BlogMemberCategories.STANDARD_CATEGORIES + "其他"` 派生（`MemberCategoryOrder`）。
+- `DataTransferDrawer.kt`：按 `kind` 提供成员选择、媒体/译文开关、导出预估、进度与结果卡片；导入确认对话框也提供"导入成员"选择，成员来自归档清单。
+- `MemberPickerDialog.kt`：成员网格 `MemberPickerGrid` 与 `memberGroups()`，以及导出/导入共用的 `TransferMemberPickerDialog`；分区顺序由 `BlogMemberCategories.STANDARD_CATEGORIES + "其他"` 派生（`MemberCategoryOrder`）。
 
 ---
 

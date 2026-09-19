@@ -260,4 +260,27 @@ class ExportFormatTest {
         assertFalse(links.containsKey("member_id"))
         assertEquals("山下 美月", links["member_name"])
     }
+
+    /** 导入按成员筛选用的 key：消息有成员编号就用编号，否则回退到成员名。 */
+    @Test
+    fun messageMemberKeyUsesIdThenFallsBackToName() {
+        val withId = ExportFormat.jsonToMessage(
+            JSONObject().put("id", "m-1").put("member_id", " 48 ").put("member_name", "井上 和"),
+        )
+        assertEquals("48", ExportFormat.messageMemberKey(withId))
+
+        val withoutId = ExportFormat.jsonToMessage(
+            JSONObject().put("id", "m-2").put("member_id", "").put("member_name", "運営スタッフ"),
+        )
+        assertEquals("運営スタッフ", ExportFormat.messageMemberKey(withoutId))
+    }
+
+    /** BLOG 的成员 key 就是帖子的 member_id，且与清单里的成员 id 同口径。 */
+    @Test
+    fun blogMemberKeyIsThePostMemberId() {
+        val post = ExportFormat.jsonToBlog(
+            JSONObject().put("id", "295").put("member_id", " 48 ").put("body_html", "<p>x</p>"),
+        )
+        assertEquals("48", ExportFormat.blogMemberKey(post))
+    }
 }

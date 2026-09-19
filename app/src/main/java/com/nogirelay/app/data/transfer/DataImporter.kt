@@ -23,6 +23,11 @@ import kotlin.coroutines.coroutineContext
 data class ImportOptions(
     val importMedia: Boolean = true,
     val importMembers: Boolean = true,
+    /**
+     * null ＝ 导入归档中的全部成员；否则只导入这些成员 id 的记录与目录行。
+     * id 与 [ExportFormat.messageMemberKey] / [ExportFormat.blogMemberKey] 同口径。
+     */
+    val memberIds: Set<String>? = null,
 )
 
 /** 确认对话框所需的一切，从最前面的 manifest 读取，不触碰媒体。 */
@@ -54,10 +59,13 @@ data class ImportReport(
 /**
  * 将一个 Nogi Relay 归档合并到本地数据库中。
  *
- * 合并按主键增量且幂等：已存在的行绝不会被重写，因此
- * 第二次导入同一归档会把一切都报告为重复。唯一的例外是
- * 归档带有译文而本地行没有——参见
- * [com.nogirelay.app.data.MessageDatabase.backfillMessageTranslation]。
+ * 合并按主键增量且幂等：已存在的行不会被整行重写，只有归档显式写出的链接列
+ * （BLOG 还包括正文与成员身份）会按差异刷新，因此第二次导入同一归档会把
+ * 一切都报告为重复。译文只会回填到本地缺失或未完成的行上，已有译文绝不会
+ * 被清空——参见 [com.nogirelay.app.data.MessageDatabase.backfillMessageTranslation]。
+ *
+ * [ImportOptions.memberIds] 非 null 时只合并这些成员的记录与目录行，
+ * 其余记录连同它们引用的媒体一并跳过。
  */
 object DataImporter {
     private const val BUFFER = 64 * 1024
@@ -120,6 +128,19 @@ object DataImporter {
             if (errors.size < MAX_REPORTED_ERRORS) errors += message
         }
 
+        /** 选择了成员子集时只导入属于这些成员的记录；null（默认）表示归档里的全部成员。 */
+        fun memberSelected(key: String): Boolean {
+            val filter = options.memberIds ?: return true
+            return key in filter
+        }
+
+        /** 记录引用到的媒体：路径 → 可能解析出它的 URL，稍后据此把这些字节落盘。 */
+        fun collectMediaRefs(json: JSONObject) {
+            ExportFormat.mediaRefsFrom(json).forEach { ref ->
+                pathToUrls.getOrPut(ref.path) { mutableListOf() }.add(ref.url)
+            }
+        }
+
         /**
          * 逐条回写：每条记录读完就立刻在它自己的事务里落库，不做攒批，进程中断最多丢当前这一条。
          * 重复 id 时归档"显式写出的链接列"（含空值）覆盖本地列：同 id 不同地址时以归档为准，
@@ -168,18 +189,23 @@ object DataImporter {
                         if (line.isBlank()) continue
                         try {
                             val json = JSONObject(line)
-                            ExportFormat.mediaRefsFrom(json).forEach { ref ->
-                                pathToUrls.getOrPut(ref.path) { mutableListOf() }.add(ref.url)
-                            }
+                            // 先按成员过滤、再收媒体引用：没被选中的记录连同它引用的
+                            // 媒体一起跳过，导入因此只触及所选成员。
                             when (entryKind) {
-                                ExportKind.MESSAGES -> writeMessage(
-                                    ExportFormat.jsonToMessage(json),
-                                    ExportFormat.messageLinksFrom(json),
-                                )
-                                ExportKind.BLOGS -> writeBlog(
-                                    ExportFormat.jsonToBlog(json),
-                                    ExportFormat.blogLinksFrom(json),
-                                )
+                                ExportKind.MESSAGES -> {
+                                    val message = ExportFormat.jsonToMessage(json)
+                                    if (memberSelected(ExportFormat.messageMemberKey(message))) {
+                                        collectMediaRefs(json)
+                                        writeMessage(message, ExportFormat.messageLinksFrom(json))
+                                    }
+                                }
+                                ExportKind.BLOGS -> {
+                                    val post = ExportFormat.jsonToBlog(json)
+                                    if (memberSelected(ExportFormat.blogMemberKey(post))) {
+                                        collectMediaRefs(json)
+                                        writeBlog(post, ExportFormat.blogLinksFrom(json))
+                                    }
+                                }
                             }
                         } catch (error: Exception) {
                             invalid += 1
@@ -323,7 +349,9 @@ object DataImporter {
                             val manifest = ExportFormat.manifestFromJson(JSONObject(readText(zip)))
                             kind = manifest.kind
                             if (options.importMembers) {
-                                manifest.members.filter(ManifestMember::directory).forEach { member ->
+                                manifest.members
+                                    .filter { it.directory && memberSelected(it.id) }
+                                    .forEach { member ->
                                     val merged = database.insertMemberIfAbsent(
                                         BlogMember(
                                             id = member.id,

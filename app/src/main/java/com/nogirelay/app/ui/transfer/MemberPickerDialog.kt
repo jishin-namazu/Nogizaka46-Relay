@@ -162,11 +162,11 @@ fun MemberPickerGrid(
 }
 
 /**
- * 导出区块使用的成员选择器。与 BLOG 筛选对话框相同，只是去掉了时间范围
- * 区块，因此"选择成员"在整个 App 中始终是同一种交互。
+ * 导出与导入区块共用的成员选择器。与 BLOG 筛选对话框相同，只是去掉了
+ * 时间范围区块，因此"选择成员"在整个 App 中始终是同一种交互。
  */
 @Composable
-fun ExportMemberPickerDialog(
+fun TransferMemberPickerDialog(
     title: String,
     members: List<BlogMember>,
     selectedIds: Set<String>,

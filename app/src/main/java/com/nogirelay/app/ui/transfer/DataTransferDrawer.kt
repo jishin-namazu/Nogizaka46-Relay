@@ -107,6 +107,9 @@ fun DataTransferDrawer(
     val progress by estimateProgress.collectAsState()
     var preview by remember(kind) { mutableStateOf<ImportPreview?>(null) }
     var pendingImportUri by remember(kind) { mutableStateOf<Uri?>(null) }
+    // 导入成员选择：null = 归档中的全部成员。归档成员只有预览后才知道，所以换一个归档就重置。
+    var importSelectedIds by remember(kind) { mutableStateOf<Set<String>?>(null) }
+    var showImportPicker by remember(kind) { mutableStateOf(false) }
     var tabIndex by remember(kind) { mutableStateOf(0) }
     var estimateKey by remember(kind) { mutableStateOf(0) }
 
@@ -129,6 +132,22 @@ fun DataTransferDrawer(
 
     val allIds = remember(members) { members.mapTo(linkedSetOf(), BlogMember::id) }
     val effectiveSelection = selectedIds ?: allIds
+
+    // 导入成员直接来自归档清单，因此筛选界面在导入前就能显示"这个归档里有哪些成员"。
+    val previewMembers = remember(preview) {
+        preview?.members.orEmpty().map { member ->
+            BlogMember(
+                id = member.id,
+                name = member.name,
+                category = member.category,
+                avatarUrl = member.avatarUrl,
+                displayOrder = member.displayOrder,
+                graduated = member.graduated,
+            )
+        }
+    }
+    val importAllIds = remember(previewMembers) { previewMembers.mapTo(linkedSetOf(), BlogMember::id) }
+    val effectiveImportSelection = importSelectedIds ?: importAllIds
 
     // 补齐媒体期间不统计导出数据：下载会改变缓存状态。
     // 补齐结束后 transfer.running 变回 false，下面的 estimateKey 会自增，届时再统一统计一次。
@@ -183,6 +202,8 @@ fun DataTransferDrawer(
             } else {
                 preview = parsed
                 pendingImportUri = uri
+                importSelectedIds = null
+                showImportPicker = false
             }
         }
     }
@@ -415,7 +436,7 @@ fun DataTransferDrawer(
     }
 
     if (showPicker) {
-        ExportMemberPickerDialog(
+        TransferMemberPickerDialog(
             title = "选择导出成员",
             members = members,
             selectedIds = effectiveSelection,
@@ -429,11 +450,25 @@ fun DataTransferDrawer(
 
     val pendingPreview = preview
     val pendingUri = pendingImportUri
-    if (pendingPreview != null && pendingUri != null) {
+    if (showImportPicker && pendingPreview != null) {
+        // 复用导出区块的成员筛选界面：成员来自归档清单，默认全选。
+        TransferMemberPickerDialog(
+            title = "选择导入成员",
+            members = previewMembers,
+            selectedIds = effectiveImportSelection,
+            onDismiss = { showImportPicker = false },
+            onConfirm = { picked ->
+                importSelectedIds = picked.takeUnless { it == importAllIds }
+                showImportPicker = false
+            },
+        )
+    } else if (pendingPreview != null && pendingUri != null) {
         AlertDialog(
             onDismissRequest = {
                 preview = null
                 pendingImportUri = null
+                importSelectedIds = null
+                showImportPicker = false
             },
             shape = RoundedCornerShape(20.dp),
             title = { Text("确认导入", fontWeight = FontWeight.Bold) },
@@ -443,7 +478,35 @@ fun DataTransferDrawer(
                     Text("导出时间：" + ExportFormat.displayTimestamp(pendingPreview.exportedAt))
                     Text("包含媒体：" + if (pendingPreview.includesMedia) "是" else "否")
                     Text("包含译文：" + if (pendingPreview.includesTranslations) "是" else "否")
-                    Text("成员：" + pendingPreview.members.size + " 位")
+                    if (previewMembers.isNotEmpty()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !transfer.running) { showImportPicker = true }
+                                .padding(vertical = 6.dp),
+                        ) {
+                            Text(
+                                text = "导入成员",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = effectiveImportSelection.size.toString() + " / " + previewMembers.size,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Icon(
+                                Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    } else {
+                        Text("成员：" + pendingPreview.members.size + " 位")
+                    }
                     if (pendingPreview.formatVersion < ExportFormat.FORMAT_VERSION) {
                         Text(
                             text = "该归档为旧格式（v" + pendingPreview.formatVersion + "），将按当前规则合并。",
@@ -459,10 +522,19 @@ fun DataTransferDrawer(
                         DataTransferManager.importArchive(
                             context,
                             pendingUri,
-                            ImportOptions(importMedia = importMedia, importMembers = importMembers),
+                            ImportOptions(
+                                importMedia = importMedia,
+                                importMembers = importMembers,
+                                // 全选（或归档没有成员清单）＝ null，表示不按成员过滤。
+                                memberIds = effectiveImportSelection.takeUnless {
+                                    previewMembers.isEmpty() || it == importAllIds
+                                },
+                            ),
                         )
                         preview = null
                         pendingImportUri = null
+                        importSelectedIds = null
+                        showImportPicker = false
                     },
                     colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
                 ) { Text("开始导入", fontWeight = FontWeight.Bold) }
@@ -472,6 +544,8 @@ fun DataTransferDrawer(
                     onClick = {
                         preview = null
                         pendingImportUri = null
+                        importSelectedIds = null
+                        showImportPicker = false
                     },
                 ) { Text("取消") }
             },
