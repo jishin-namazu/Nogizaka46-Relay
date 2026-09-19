@@ -777,6 +777,7 @@ sequenceDiagram
 为了减轻中继服务器的带宽与存储压力，Android 客户端直接连接官方 API：
 - `BlogClient.kt` 负责直接请求 `https://www.nogizaka46.com/s/n46/api/list/blog` 和 `list/member`。
 - 解析官方 JSONP 包装体 `res(...)`，首次同步完整博客历史，后续按同步头部增量写入本地 SQLite 表 `blog_posts`。
+- 同步写回时只在**正文字或图片结构**变化时作废译文（`upsertBlog` 用 `BlogContentParser.bodyTextShape` 比较抹平 `<img>` 内容后的形状）；官方正文里的图片地址只是换主机（镜像 → 官方 CDN）或相对⇄绝对地址互换时，已存译文保持有效，不会被清空重翻。
 - 博客成员筛选列表以**本地实际发过博客的作者**为基准，同时联表匹配官方成员目录补充期别分类（一期至六期、团体/运营）与头像排序，自动隐藏从未发过博客的成员。
 - 期别分类在读取时统一归一化（`BlogMemberCategories`）：全角「３期生」「４期生」「５期生」「６期生」、集体帐号原名「新4期生」以及「研究生」都折回 `6期生 / 5期生 / 4期生 / 3期生 / 2期生 / 1期生 / 運営スタッフ` 这套标准写法。筛选按分类字符串全等分组，未归一化的写法会各自变成一个独立分区。
 - 成员头像优先取 `blog_members.avatar_url`，为空时回落到 `blog_posts.member_avatar_url`（`MAX` 聚合）。博客列表读的是后者，两处因此始终一致。

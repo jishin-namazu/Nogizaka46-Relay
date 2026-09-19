@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.nogirelay.app.blog.BlogContentParser
 
 /**
  * 数据传输成员选择器提供的一位消息作者。[directory] 为 true 时表示
@@ -564,7 +565,12 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             if (post.postUrl.isNotBlank()) put("post_url", post.postUrl)
             if (post.bodyHtml.isNotBlank()) {
                 put("body_html", post.bodyHtml)
-                if (existingBody != post.bodyHtml) {
+                // 译文只由标题与正文纯文本派生。图片换主机（镜像 → 官方 CDN）或相对/绝对
+                // 地址互换都会改写 body_html，但文字没变，译文不该因此作废——否则每次
+                // 官网正文里的图片地址一变，整库译文都会被清空重翻。
+                if (existingBody != post.bodyHtml &&
+                    BlogContentParser.bodyTextShape(existingBody) != BlogContentParser.bodyTextShape(post.bodyHtml)
+                ) {
                     put("translation", null as String?)
                     put("translation_done", 0)
                 }
@@ -726,7 +732,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     /**
      * 归档导入器使用的插入。它不会修改已有行；[upsertBlog]
-     * 则会在正文变化时覆盖并清除译文。
+     * 则会在正文的文字或图片结构变化时覆盖并清除译文（只换图片地址不算）。
      */
     fun insertBlogIfAbsent(post: BlogPost, isUnread: Boolean = false): Boolean {
         val id = canonicalBlogId(post.id)

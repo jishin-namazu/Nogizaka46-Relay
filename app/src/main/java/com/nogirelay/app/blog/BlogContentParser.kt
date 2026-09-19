@@ -35,6 +35,14 @@ object BlogContentParser {
             imageSource.find(match.value)?.groupValues?.getOrNull(2)?.let(::officialUrl)
         }.toList()
 
+    /**
+     * 把每个 `<img>` 标签的内容抹平成一个固定占位符，只保留图片的位置与数量。
+     *
+     * 译文是由标题加正文纯文本派生的，图片只是换主机（镜像 → 官方 CDN）或相对/绝对地址互换时，
+     * 两份正文的这个形状相等，译文依然有效；形状不同才说明文字或图片结构真的变了。
+     */
+    fun bodyTextShape(html: String): String = imageTag.replace(html, "<img>")
+
     fun plainText(blocks: List<BlogContentBlock>): String = blocks
         .filterIsInstance<BlogContentBlock.Text>()
         .map(BlogContentBlock.Text::value)
