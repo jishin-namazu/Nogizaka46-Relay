@@ -20,6 +20,7 @@ import com.nogirelay.app.data.api.ApiConfig
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.nio.file.Files
 import java.net.URL
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -388,6 +389,35 @@ object MediaDownloader {
             .digest(url.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
         return File(File(context.applicationContext.filesDir, "media-cache"), "$digest.$extension")
+    }
+
+    /** 按 [type] 推断扩展名后的缓存路径；与读取方查找的位置完全一致。 */
+    fun cacheFileForUrl(context: Context, url: String, type: MessageType): File =
+        cacheFile(context, url, type)
+
+    /**
+     * 把 [fromUrl] 已落盘的缓存字节搬到 [toUrl] 的缓存位，使读取方无需重新联网。
+     *
+     * 归档导入把图片主机从镜像换成官方时使用：缓存文件按 URL 的 sha256 命名，如果不建立
+     * 这层搬运，同一张图在新 URL 下会被当成未缓存而整库重下。优先硬链接（同目录同一分区，
+     * 不占额外空间），失败时退回复制。返回是否真的建立了新缓存位。
+     */
+    fun adoptCachedBytes(context: Context, fromUrl: String, toUrl: String, type: MessageType): Boolean {
+        if (fromUrl.isBlank() || toUrl.isBlank() || fromUrl == toUrl) return false
+        val appContext = context.applicationContext
+        val source = cacheFile(appContext, fromUrl, type)
+        if (!source.isFile || source.length() <= 0L) return false
+        val target = cacheFile(appContext, toUrl, type)
+        if (target.isFile && target.length() > 0L) return false
+        val parent = target.parentFile
+        if (parent != null && !parent.exists() && !parent.mkdirs()) return false
+        val linked = runCatching { Files.createLink(target.toPath(), source.toPath()) }.isSuccess
+        if (!linked && runCatching { source.copyTo(target, overwrite = true) }.isFailure) {
+            runCatching { target.delete() }
+            return false
+        }
+        clearNotFound(appContext, toUrl)
+        return true
     }
 
     private fun cacheFile(context: Context, url: String, type: MessageType): File =

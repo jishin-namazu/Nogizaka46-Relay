@@ -676,6 +676,14 @@ private fun TransferStatusCard(
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (outcome.report.mediaAdopted > 0) {
+                                Text(
+                                    text = "缓存迁移 " + outcome.report.mediaAdopted +
+                                        " 个（沿用旧主机已下载的图片，无需重新联网）",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             if (outcome.report.membersMerged > 0) {
                                 Text(
                                     text = "成员目录合并 " + outcome.report.membersMerged + " 位",

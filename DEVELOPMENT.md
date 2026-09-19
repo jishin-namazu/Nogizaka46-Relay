@@ -827,7 +827,7 @@ data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
 - `media_refs` 表（v11）：`(kind, record_id, member_key, role, url, media_type, ordinal, parse_version)`，主键 `(kind, record_id, role, url)`，索引 `(kind, member_key)`。
 - 写入即维护：`insert` / `insertImported` / `insertBlogIfAbsent` / `upsertBlog` / `refreshImportedLinks` / `refreshImportedBlogLinks` 落库后调用 `refreshMessageMediaRefs` / `refreshBlogMediaRefs`，按数据库当前行重建该记录的引用行。
 - 版本与重建：`MediaRefs.PARSE_VERSION` 存在 `sync_state`。不一致时 `MediaRefIndex.ensureBuilt` 在后台按 `MEDIA_REF_BATCH` 分批重建整张表；重建期间 `mediaRefsReady()` 为 false，统计与导出走直接解析。
-- 缓存状态：引用行只记录 URL，是否已缓存由 `MediaDownloader.cachedFileForUrl` 查盘。
+- 缓存状态：引用行只记录 URL，是否已缓存由 `MediaDownloader.cachedFileForUrl` 查盘；缓存文件名是 URL 的 sha256，因此 URL 换了主机就查不到旧文件，导入时靠 `adoptCachedBytes` 接管（见 5.5.4）。
 - 索引：`idx_messages_member_sent`（成员 key 表达式 + `sent_at DESC, received_at DESC, id DESC`）、`idx_blog_posts_member_date`（`member_id, published_at DESC, id DESC`）。
 
 #### 5.5.3 导出 (`DataExporter.kt`)
@@ -842,6 +842,7 @@ data/skipped.jsonl     # 可选：被引用但本地没有缓存的媒体
 1. 读 `manifest.json`：`kind` 决定载荷解释方式；`members[]` 中 `directory == true` 的行经 `insertMemberIfAbsent`（`CONFLICT_IGNORE`）写入 `blog_members`，分类先过 `BlogMemberCategories.normalizeCategory`。
 2. 逐条回写：`data/*.jsonl` 每行解析后立刻在独立 SQLite 事务中落库 —— 消息走 `writeMessage()`（`insertImported`），博客走 `writeBlog()`（`insertBlogIfAbsent`）。不攒批，进程中断最多丢当前这一条。
 3. 重复 id：`refreshImportedLinks` / `refreshImportedBlogLinks` 只在归档显式列出的值与本地不同时 UPDATE（`updateLinksIfDifferent` 的 WHERE 含 `COALESCE(列,'') <> ?`）；`backfillMessageTranslation` / `backfillBlogTranslation` 只在本地缺译文时补写。
+   - 主机迁移时的缓存接管：刷新博客链接前，`adoptBlogMediaCache` 用 `BlogContentParser.imageUrlsInOrder` 把旧、新 `body_html` 的 `<img>` 逐位配对（导出只替换 src，标签数量与顺序不变），封面 `image_url` 另外单独配对。只有「旧地址非官方主机、新地址是官方 CDN」这一方向才把旧 URL 的缓存字节硬链接（`java.nio.file.Files.createLink`，失败退回复制）到新 URL 的缓存位（`MediaDownloader.adoptCachedBytes`），并清掉新 URL 的 404 标记。缓存文件按 URL 的 sha256 命名，没有这层接管，换主机就等于整库重新下载；接管数量记在 `ImportReport.mediaAdopted`，结果卡片单列一行「缓存迁移 N 个」。反向或两边都已是官方却不同时不动手，避免把内容真的换过的正文缓存成错图。
 4. 媒体条目：条目名 `media/<sha256>.<ext>` 的 sha256 与解压内容做摘要比对，通过后按引用它的每个 URL 写入媒体缓存；条目先于记录出现时先落暂存目录，记录解析完后按 `pathToUrls` 落位（`deferredPaths`）。
 5. 单行解析失败计入 `invalid`，最多记录 10 条错误信息，不中断整次导入。
 6. 进度逐条回调：记录 `onProgress("导入记录", processed, 0)`，媒体 `onProgress("导入媒体", mediaProcessed, 0)`。

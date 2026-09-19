@@ -25,6 +25,16 @@ object BlogContentParser {
         return result
     }
 
+    /**
+     * 按出现顺序返回正文中每个 `<img>` 的目标 URL；`src` 为空或解析不出官方地址时返回 null，
+     * 但仍占一个位置，使同一篇正文的前后两次解析能逐位对齐。归档导入据此把旧、新正文的
+     * 图片一一配对，从而复用已下载的缓存。
+     */
+    fun imageUrlsInOrder(html: String): List<String?> =
+        imageTag.findAll(html).map { match ->
+            imageSource.find(match.value)?.groupValues?.getOrNull(2)?.let(::officialUrl)
+        }.toList()
+
     fun plainText(blocks: List<BlogContentBlock>): String = blocks
         .filterIsInstance<BlogContentBlock.Text>()
         .map(BlogContentBlock.Text::value)

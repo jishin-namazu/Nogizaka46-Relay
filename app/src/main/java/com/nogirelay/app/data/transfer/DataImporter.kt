@@ -2,10 +2,12 @@ package com.nogirelay.app.data.transfer
 
 import android.content.Context
 import android.net.Uri
+import com.nogirelay.app.blog.BlogContentParser
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogMemberCategories
 import com.nogirelay.app.data.BlogPost
+import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
 import kotlinx.coroutines.ensureActive
@@ -51,6 +53,11 @@ data class ImportReport(
     val membersMerged: Int,
     val mediaStored: Int,
     val mediaReused: Int,
+    /**
+     * 归档把图片主机换到官方 CDN 时，从旧 URL 缓存接管过来的媒体数。这些字节本来就在
+     * 本地，导入只是把它们接到新 URL 的缓存位，因此既没有新增字节也不会重新联网。
+     */
+    val mediaAdopted: Int,
     val mediaFailed: Int,
     val mediaBytes: Long,
     val errors: List<String>,
@@ -119,6 +126,7 @@ object DataImporter {
         var membersMerged = 0
         var mediaStored = 0
         var mediaReused = 0
+        var mediaAdopted = 0
         var mediaFailed = 0
         var mediaBytes = 0L
         var processed = 0
@@ -169,6 +177,11 @@ object DataImporter {
                     inserted += 1
                 } else {
                     duplicates += 1
+                    // 归档换了图片主机时，先把旧 URL 已下载的字节接到新 URL 的缓存位，
+                    // 否则读取方按新 URL 查缓存必然落空，整库都要重新联网。
+                    database.findBlog(post.id)?.let { existing ->
+                        mediaAdopted += adoptBlogMediaCache(context, existing, post)
+                    }
                     if (database.refreshImportedBlogLinks(post.id, links)) linkRefreshed += 1
                     val translation = post.translation
                     if (!translation.isNullOrBlank() &&
@@ -429,6 +442,7 @@ object DataImporter {
             membersMerged = membersMerged,
             mediaStored = mediaStored,
             mediaReused = mediaReused,
+            mediaAdopted = mediaAdopted,
             mediaFailed = mediaFailed,
             mediaBytes = mediaBytes,
             errors = errors,
@@ -447,6 +461,44 @@ object DataImporter {
             temporary.copyTo(target, overwrite = true)
             temporary.delete()
         }
+    }
+
+    /**
+     * 归档把一条已存在 BLOG 的图片地址换到了另一台主机时，把旧 URL 已经落盘的缓存字节
+     * 接到新 URL 的缓存位。读取方按 URL 的 sha256 命名缓存文件，没有这层搬运，同一张图
+     * 在新 URL 下会被当成未缓存而整库重新下载。
+     *
+     * 正文图片按 `<img>` 出现顺序逐位配对：导出只替换了 src 的取值，标签数量与顺序不变，
+     * 因此两次解析结果天然对齐；封面（image_url）另外单独配对。找不到旧缓存或新地址为空的
+     * 位置自然跳过，交由后续按需下载。
+     */
+    private fun adoptBlogMediaCache(context: Context, before: BlogPost, after: BlogPost): Int {
+        val oldUrls = BlogContentParser.imageUrlsInOrder(before.bodyHtml)
+        val newUrls = BlogContentParser.imageUrlsInOrder(after.bodyHtml)
+        var adopted = 0
+        for (index in 0 until minOf(oldUrls.size, newUrls.size)) {
+            val from = oldUrls[index] ?: continue
+            val to = newUrls[index] ?: continue
+            if (adoptPair(context, from, to)) adopted += 1
+        }
+        val oldCover = before.imageUrl?.takeIf(String::isNotBlank)
+        val newCover = after.imageUrl?.takeIf(String::isNotBlank)
+        if (oldCover != null && newCover != null && adoptPair(context, oldCover, newCover)) adopted += 1
+        return adopted
+    }
+
+    /**
+     * 只搬「非官方主机 → 官方 CDN」这一个方向：新地址落在官方 CDN 才说明这是一次镜像迁移；
+     * 两边本身都已是官方却不同，更可能是正文内容真的换过图，沿用旧字节只会把缓存污染成错图。
+     */
+    private fun adoptPair(context: Context, from: String, to: String): Boolean {
+        if (isOfficialCdnHost(from) || !isOfficialCdnHost(to)) return false
+        return MediaDownloader.adoptCachedBytes(context, from, to, MessageType.IMAGE)
+    }
+
+    private fun isOfficialCdnHost(url: String): Boolean {
+        val host = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull() ?: return false
+        return host == "nogizaka46.com" || host.endsWith(".nogizaka46.com")
     }
 
     /** Zip Slip 防护：只允许本格式写入的前缀，绝不允许遍历片段。 */
