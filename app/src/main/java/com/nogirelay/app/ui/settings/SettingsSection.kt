@@ -541,7 +541,7 @@ fun SettingsSection(
                     }
                     FullTranslationToggle(
                         title = "消息全量翻译",
-                        description = "开启后自动翻译所有历史未翻译的消息；关闭时只自动翻译新收到的消息。",
+                        description = "开启后自动翻译所有历史未翻译的消息；关闭时只自动翻译新收到的消息，查看历史消息需要手动点击翻译。",
                         checked = messageFullTranslation,
                         onCheckedChange = {
                             messageFullTranslation = it
@@ -550,7 +550,7 @@ fun SettingsSection(
                     )
                     FullTranslationToggle(
                         title = "博客全量翻译",
-                        description = "开启后自动翻译所有历史未翻译的博客；关闭时只自动翻译新发布的博客。",
+                        description = "开启后自动翻译所有历史未翻译的博客；关闭时只自动翻译新发布的博客和点开阅读的博客。",
                         checked = blogFullTranslation,
                         onCheckedChange = {
                             blogFullTranslation = it
@@ -629,7 +629,8 @@ fun SettingsSection(
 
 /**
  * 全量翻译开关的一行：开关关闭（默认）时自动流程只处理新到内容，打开后才翻历史积压。
- * 手动"重新翻译全部"不受这里影响。
+ * 手动"重新翻译全部"不受这里影响；博客打开详情页时的按需翻译同样不受影响
+ * （见 BlogScreen 详情页的 `BlogTranslationManager.enqueue` 调用），因此博客侧的说明要写明这一点。
  */
 @Composable
 private fun FullTranslationToggle(
