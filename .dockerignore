@@ -1,36 +1,17 @@
-# Ignore massive zip archives
-*.zip
-*.zip.*
-*.baiduyun.*
+# Ignore everything by default to avoid scanning massive files in the repository root
+*
 
-# Ignore Android app and build artifacts
-app/
-gradle/
-.gradle/
-gradlew
-gradlew.bat
-local.properties
-local.properties.example
-build.gradle.kts
-settings.gradle.kts
+# Allow Dockerfile and server directory
+!Dockerfile
+!server/
+!server/**
 
-# Ignore heavy local data and docs
-_work/
-data/
-docs/
-.git/
-.github/
-.idea/
-.vscode/
-
-# Ignore server local dependencies and logs
+# Exclude sensitive files and local artifacts inside server
 server/node_modules/
 server/logs/
 server/*.log
 server/.env
 server/.env.*
-
-# Ignore sensitive keys and tokens
 **/firebase-admin-key.json
 **/nogi-access-token.json
 **/nogi-browser-state.json
