@@ -113,6 +113,19 @@ jobs:
           path: dist/*
           retention-days: 30
 
+      # Release 页面的 "Source code (zip/tar.gz)" 由 GitHub 按 tag 指向的 commit 现生成，
+      # 不是工作流上传的。版本号没变时 tag 名字始终一样（如 v1.0.0），若不动它，源码包
+      # 会一直停在第一次打 tag 的那次提交，只有 APK 更新。这里每次把 tag 强制移到当前
+      # 构建的提交，使源码快照与 APK 一致，因此版本号可以暂时不升。
+      # 用 actions/checkout 持久化的 GITHUB_TOKEN 推送，不会再次触发本工作流。
+      - name: Move release tag to this commit
+        if: github.ref_type != 'tag'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
+          git push --force origin "refs/tags/${RELEASE_TAG}"
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
