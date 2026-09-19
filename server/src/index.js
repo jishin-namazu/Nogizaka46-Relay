@@ -50,6 +50,13 @@ app.get(['/admin', '/admin/*'], (req, res, next) => {
   next();
 });
 
+// 部署在 Fly.io 边缘代理之后：代理会终止 TLS 并附加 X-Forwarded-For。
+// 信任最近的一跳，让 req.ip 取到代理写入的真实客户端 IP，而不是所有请求
+// 共用的代理地址；用数字而非 true，避免客户端伪造该头绕过 IP 限流。
+// 若将来在前面再叠加一层代理（如 Cloudflare），调大 TRUST_PROXY_HOPS 即可。
+const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || '1', 10);
+app.set('trust proxy', Number.isInteger(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
+
 // 速率限制
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 分钟

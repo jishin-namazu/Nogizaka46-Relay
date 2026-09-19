@@ -186,6 +186,7 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 | `NOGI_BROWSER_STATE_FILE` | `/data/nogi-browser-state.json` | 会话凭证存储路径 |
 | `NOGI_ACCESS_TOKEN_STATE_FILE` | `/data/nogi-access-token.json` | 访问令牌缓存文件路径 |
 | `NOGI_MAX_TOKEN_REFRESH_FAILURES` | `3` | 连续刷新失败触发安全挂起的最大重试次数 |
+| `TRUST_PROXY_HOPS` | `1` | 反向代理跳数，决定限流按哪个 IP 计数；Fly.io 为 1，再叠加 Cloudflare 等代理时调大 |
 
 > [!NOTE]
 > 如果你在 `fly.toml` 中将顶部的 `app = "..."` 直接修改为了你的 `<YOUR_APP_NAME>`，则在执行 `fly deploy` 或 `fly secrets set` 时可省略 `--app <YOUR_APP_NAME>` 参数。

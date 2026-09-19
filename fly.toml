@@ -20,6 +20,7 @@ primary_region = "nrt"  # Tokyo, Japan (closest to China)
   DB_POOL_MIN = "1"
   DB_POOL_MAX = "20"
   PORT = "8080"
+  TRUST_PROXY_HOPS = "1"
   NOGI_WEB_URL = "https://message.nogizaka46.com"
   NOGI_API_URL = "https://api.message.nogizaka46.com"
   NOGI_APP_ID = "jp.co.sonymusic.communication.nogizaka 2.5"
