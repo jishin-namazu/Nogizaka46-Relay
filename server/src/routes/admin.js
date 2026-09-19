@@ -389,12 +389,17 @@ router.get('/accounts/:id', async (req, res) => {
 
 /**
  * PATCH /v1/admin/accounts/:id
- * 更新账号基础属性 (名称、启停状态)
+ * 更新账号基础属性 (账号标识 ID、名称/备注、启停状态)
  */
 router.patch('/accounts/:id', async (req, res) => {
   try {
-    const { name, status } = req.body;
-    const updated = await updateAccountInfo(req.params.id, { name, status });
+    const { name, status, newId, id: reqBodyId } = req.body;
+    const targetNewId = newId || (reqBodyId && reqBodyId !== req.params.id ? reqBodyId : null);
+    const updated = await updateAccountInfo(req.params.id, {
+      name,
+      status,
+      newId: targetNewId,
+    });
     if (!updated) {
       return res.status(404).json({ success: false, error: '账号不存在或未提供任何更新项' });
     }

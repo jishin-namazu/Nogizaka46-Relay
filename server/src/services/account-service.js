@@ -161,12 +161,17 @@ export async function createAccount({ id, name, sessionCookie, accessToken = nul
 }
 
 /**
- * 更新账号基础信息 (别名、启用/禁用状态)
+ * 更新账号基础信息 (账号标识、别名/备注、启用/禁用状态)
  */
-export async function updateAccountInfo(id, { name, status }) {
+export async function updateAccountInfo(id, { name, status, newId }) {
+  const cleanNewId = newId ? String(newId).trim() : null;
   const updates = [];
-  const params = [id];
+  const params = [];
 
+  if (cleanNewId && cleanNewId !== id) {
+    params.push(cleanNewId);
+    updates.push(`id = $${params.length}`);
+  }
   if (name != null) {
     params.push(String(name).trim());
     updates.push(`name = $${params.length}`);
@@ -179,9 +184,30 @@ export async function updateAccountInfo(id, { name, status }) {
   if (updates.length === 0) return null;
 
   updates.push('updated_at = CURRENT_TIMESTAMP');
-  const queryText = `UPDATE accounts SET ${updates.join(', ')} WHERE id = $1 RETURNING id, name, status, updated_at`;
+  params.push(id);
+  const whereIdx = params.length;
+
+  const queryText = `UPDATE accounts SET ${updates.join(', ')} WHERE id = $${whereIdx} RETURNING id, name, status, updated_at`;
   const result = await queryOne(queryText, params);
-  await touchAccountSignal('update', id);
+
+  if (result && cleanNewId && cleanNewId !== id) {
+    // 同步更新 messages 中的 source_accounts 映射
+    try {
+      await dbQuery(
+        `UPDATE messages
+         SET source_accounts = (
+           SELECT jsonb_agg(CASE WHEN x = $1 THEN $2 ELSE x END)
+           FROM jsonb_array_elements_text(source_accounts) AS x
+         )
+         WHERE source_accounts ? $1`,
+        [id, cleanNewId],
+      );
+    } catch (e) {
+      console.warn('更新消息 source_accounts 失败:', e.message);
+    }
+  }
+
+  await touchAccountSignal('update', cleanNewId || id);
   return result;
 }
 

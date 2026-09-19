@@ -82,7 +82,7 @@ router.post('/send', async (req, res) => {
  */
 router.post('/test-message', async (req, res) => {
   try {
-    const { member_name, text, user_id } = req.body;
+    const { member_name, text, user_id, device_id } = req.body;
     if (text != null && (typeof text !== 'string' || !text.trim())) {
       return res.status(400).json({
         error: 'Invalid field: text must be a non-empty string',
@@ -117,7 +117,8 @@ router.post('/test-message', async (req, res) => {
       original_data: { test: true, kind: 'message' },
     };
 
-    const result = await pushService.pushTransientMessage(testMessage, user_id);
+    const targetDeviceId = device_id ? parseInt(device_id, 10) : null;
+    const result = await pushService.pushTransientMessage(testMessage, user_id, targetDeviceId);
 
     res.json({
       success: result.success,
@@ -150,7 +151,7 @@ router.get('/test-call-audio.wav', (req, res) => {
  */
 router.post('/test-call', async (req, res) => {
   try {
-    const { member_name, user_id } = req.body;
+    const { member_name, user_id, device_id } = req.body;
 
     // 创建测试消息
     const testMessage = {
@@ -172,7 +173,8 @@ router.post('/test-call', async (req, res) => {
     };
 
     // 测试来电只用于验证 FCM 和客户端全屏来电链路，不保存消息或推送日志。
-    const result = await pushService.pushTransientAudioCall(testMessage, user_id);
+    const targetDeviceId = device_id ? parseInt(device_id, 10) : null;
+    const result = await pushService.pushTransientAudioCall(testMessage, user_id, targetDeviceId);
 
     res.json({
       success: result.success,
@@ -185,6 +187,62 @@ router.post('/test-call', async (req, res) => {
       error: 'Failed to send test call',
       message: error.message,
     });
+  }
+});
+
+/**
+ * POST /v1/push/test
+ * 统一测试推送接口，支持普通文本和来电模式，支持目标设备
+ */
+router.post('/test', async (req, res) => {
+  try {
+    const { type = 'message', member_name, text, user_id, device_id } = req.body;
+    const targetDeviceId = device_id ? parseInt(device_id, 10) : null;
+
+    if (type === 'call') {
+      const testMessage = {
+        id: `test-call-${Date.now()}-${randomUUID()}`,
+        member_id: 'test_member',
+        member_name: member_name || '齋藤飛鳥',
+        member_avatar_url: null,
+        phone_image_url: null,
+        type: 'audio',
+        text: null,
+        media_url: `${publicBaseUrl()}/v1/push/test-call-audio.wav`,
+        thumbnail_url: null,
+        duration_seconds: 30,
+        sent_at: new Date().toISOString(),
+        incoming_call_from: member_name || '齋藤飛鳥',
+        ringtone_url: null,
+        is_played: false,
+        original_data: { test: true },
+      };
+      const result = await pushService.pushTransientAudioCall(testMessage, user_id, targetDeviceId);
+      return res.json({ success: result.success, message: testMessage, result });
+    }
+
+    const testMessage = {
+      id: `test-message-${Date.now()}-${randomUUID()}`,
+      member_id: 'test_message_member',
+      member_name: member_name?.trim().slice(0, 100) || 'Nogi Relay',
+      member_avatar_url: null,
+      phone_image_url: null,
+      type: 'text',
+      text: text?.trim() || '这是一条普通消息推送测试',
+      media_url: null,
+      thumbnail_url: null,
+      duration_seconds: null,
+      sent_at: new Date().toISOString(),
+      incoming_call_from: null,
+      ringtone_url: null,
+      is_played: false,
+      original_data: { test: true, kind: 'message' },
+    };
+    const result = await pushService.pushTransientMessage(testMessage, user_id, targetDeviceId);
+    return res.json({ success: result.success, message: testMessage, result });
+  } catch (error) {
+    console.error('Unified test push error:', error);
+    res.status(500).json({ error: 'Failed to send test push', message: error.message });
   }
 });
 

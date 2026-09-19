@@ -1,5 +1,6 @@
 import express from 'express';
 import deviceService from '../services/device.js';
+import { queryOne } from '../db/index.js';
 
 const router = express.Router();
 
@@ -111,6 +112,32 @@ router.delete('/:id', async (req, res) => {
       error: 'Failed to delete device',
       message: error.message,
     });
+  }
+});
+
+/**
+ * PATCH /v1/devices/:id
+ * 更新设备备注/标识
+ */
+router.patch('/:id', async (req, res) => {
+  try {
+    const deviceId = parseInt(req.params.id, 10);
+    const { label } = req.body;
+    if (isNaN(deviceId) || label == null) {
+      return res.status(400).json({ error: 'Invalid device ID or missing label' });
+    }
+    const cleanLabel = String(label).trim();
+    const updated = await queryOne(
+      'UPDATE devices SET label = $1 WHERE id = $2 RETURNING id, platform, label, last_seen_at, created_at',
+      [cleanLabel, deviceId]
+    );
+    if (!updated) {
+      return res.status(404).json({ error: 'Device not found' });
+    }
+    res.json({ success: true, device: updated });
+  } catch (error) {
+    console.error('Update device error:', error);
+    res.status(500).json({ error: 'Failed to update device', message: error.message });
   }
 });
 

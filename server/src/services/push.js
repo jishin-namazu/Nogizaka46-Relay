@@ -73,11 +73,20 @@ class PushService {
    * 因为 push_logs.message_id 外键指向 messages，这里也不写推送日志，
    * 调用方应直接使用 Firebase 返回的 successCount/failureCount 判断结果。
    */
-  async pushTransientMessage(message, userId = null) {
-    const tokens = await deviceService.getAllTokens(userId);
+  async pushTransientMessage(message, userId = null, deviceId = null) {
+    let tokens = [];
+    if (deviceId) {
+      const singleToken = await deviceService.getTokenByDeviceId(deviceId);
+      if (singleToken) {
+        tokens = [singleToken];
+      }
+    } else {
+      tokens = await deviceService.getAllTokens(userId);
+    }
+
     if (tokens.length === 0) {
       console.log('No devices to push transient message to');
-      return { success: false, error: 'No devices registered' };
+      return { success: false, error: 'No devices registered or device not found' };
     }
 
     console.log(`Pushing transient ${message.type} message ${message.id} to ${tokens.length} devices`);
@@ -87,7 +96,7 @@ class PushService {
   /**
    * 推送不落库的临时语音来电。
    */
-  async pushTransientAudioCall(message, userId = null) {
+  async pushTransientAudioCall(message, userId = null, deviceId = null) {
     if (message.type !== 'audio' || !message.incoming_call_from) {
       console.warn('Message does not meet transient audio call criteria');
       return { success: false, error: 'Not an audio call message' };
@@ -99,7 +108,7 @@ class PushService {
     }
 
     console.log(`Pushing transient audio call from ${message.incoming_call_from}`);
-    return await this.pushTransientMessage(message, userId);
+    return await this.pushTransientMessage(message, userId, deviceId);
   }
 
   /**
