@@ -9,13 +9,14 @@
 ## 目录
 
 - [1. 快速准备与通用约定](#1-快速准备与通用约定)
-- [2. 官网会话管理与热更新](#2-官网会话管理与热更新)
-- [3. 消息记录查询与统计](#3-消息记录查询与统计)
-- [4. 订阅成员查询与分析](#4-订阅成员查询与分析)
-- [5. 媒体文件下载与存储排查](#5-媒体文件下载与存储排查)
-- [6. 设备管理与推送测试](#6-设备管理与推送测试)
-- [7. 数据库初始化与健康检查](#7-数据库初始化与健康检查)
-- [8. 本地脚本与实用运维命令](#8-本地脚本与实用运维命令)
+- [2. 官网会话与多账号管理](#2-官网会话与多账号管理)
+- [3. Web 图形化管理界面](#3-web-图形化管理界面)
+- [4. 消息记录查询与统计](#4-消息记录查询与统计)
+- [5. 订阅成员查询与分析](#5-订阅成员查询与分析)
+- [6. 媒体文件下载与存储排查](#6-媒体文件下载与存储排查)
+- [7. 设备管理与推送测试](#7-设备管理与推送测试)
+- [8. 数据库初始化与健康检查](#8-数据库初始化与健康检查)
+- [9. 本地脚本与实用运维命令](#9-本地脚本与实用运维命令)
 
 ---
 
@@ -135,16 +136,95 @@ Monitor 进程每轮轮询时检查当前 Access Token 的有效期：
 
 ---
 
-## 3. 消息记录查询与统计
+## 3. Web 图形化管理界面与多账号 API
 
-### 3.1 分页拉取最新消息列表
+服务端内置轻量化响应式图形管理控制台，直接访问根路径下的 `/admin` 即可使用，无需额外安装前端构建工具。
+
+- **访问地址**：`https://<YOUR_APP_NAME>.fly.dev/admin`（本地为 `http://127.0.0.1:3000/admin`）
+- **身份认证**：首次打开弹出密钥配置对话框，输入服务端配置的 `ACCESS_TOKEN` 或 `API_KEY`，凭据将保存在本地浏览器中。
+
+### 3.1 控制台核心功能模块
+1. **多账号管理**：集中展示所有托管账号的状态、订阅群组列表、会话 Cookie 脱敏视图、Token 剩余有效期及异常报错；支持拖拽上传会话文件、单个账号一键同步、停用与删除。
+2. **系统总览**：实时展示常驻内存占用 (RSS)、运行时间 (Uptime)、消息与多媒体归档统计、已注册设备平台分布及最近 24 小时错误计数。
+3. **消息与媒体**：全量消息流视图，支持按账号筛选、按消息类型（文字/语音/写真/视频）筛选、关键词搜索、音频在线播放与原图预览。
+4. **设备与推送**：在线查看已注册 FCM 设备列表与最后活跃时间，提供推送调试台（可直接发送测试普通通知与全屏拟真来电）。
+5. **审计日志**：实时检索持久化错误日志（按级别、范围与关键词过滤）。
+
+### 3.2 多账号管理 REST API
+
+除 Web 控制台外，所有多账号操作均提供完整的 RESTful 接口供自动化运维：
+
+#### 获取系统总览指标
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/admin/overview" | jq .
+```
+
+#### 获取所有账号列表
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/admin/accounts" | jq .
+```
+
+#### 添加并验证新账号
+```bash
+curl -X POST "$SERVER/v1/admin/accounts" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "acc_sub_01",
+    "name": "副订阅账号 (4期生)",
+    "sessionCookie": "sess_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  }'
+```
+
+#### 更新账号别名或停用/启用
+```bash
+# 停用账号 (停止轮询)
+curl -X PATCH "$SERVER/v1/admin/accounts/acc_sub_01" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "disabled"}'
+
+# 重新启用
+curl -X PATCH "$SERVER/v1/admin/accounts/acc_sub_01" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "active"}'
+```
+
+#### 更新指定账号的会话凭据
+```bash
+curl -X POST "$SERVER/v1/admin/accounts/acc_sub_01/session" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionCookie": "sess_new_session_cookie_value"
+  }'
+```
+
+#### 立即触发指定账号消息同步
+```bash
+curl -X POST "$SERVER/v1/admin/accounts/acc_sub_01/sync" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+#### 删除账号
+```bash
+curl -X DELETE "$SERVER/v1/admin/accounts/acc_sub_01" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
+## 4. 消息记录查询与统计
+
+### 4.1 分页拉取最新消息列表
 默认返回最新 50 条消息（按 `sent_at DESC` 排序）：
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$SERVER/v1/messages?limit=20&offset=0" | jq .
 ```
 
-### 3.2 按消息类型筛选
+### 4.2 按消息类型筛选
 支持类型：`text` (文字), `image` (图片), `audio` (语音/来电), `video` (视频)。
 ```bash
 # 只查询最新 10 条语音/来电消息
@@ -156,14 +236,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$SERVER/v1/messages?type=image&limit=10" | jq .
 ```
 
-### 3.3 按特定成员查询消息
-传入目标成员的 `member_id`（可通过 4.1 节获取）：
+### 4.3 按特定成员查询消息
+传入目标成员的 `member_id`（可通过 5.1 节获取）：
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$SERVER/v1/messages?member_id=2&limit=20" | jq .
 ```
 
-### 3.4 查询单条消息完整详情
+### 4.4 查询单条消息完整详情
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$SERVER/v1/messages/<MESSAGE_ID>" | jq .
@@ -178,7 +258,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - `duration_seconds`：语音时长
 - `sent_at`：发送时间戳
 
-### 3.5 查询全库消息统计概要
+### 4.5 查询全库消息统计概要
 快速了解当前数据库中的消息总量与各类型分布：
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -201,7 +281,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 }
 ```
 
-### 3.6 将消息标记为已读/已播放
+### 4.6 将消息标记为已读/已播放
 ```bash
 curl -X PATCH "$SERVER/v1/messages/<MESSAGE_ID>/played" \
   -H "Authorization: Bearer $TOKEN"
@@ -209,9 +289,9 @@ curl -X PATCH "$SERVER/v1/messages/<MESSAGE_ID>/played" \
 
 ---
 
-## 4. 订阅成员查询与分析
+## 5. 订阅成员查询与分析
 
-### 4.1 从服务端获取所有已同步的成员列表
+### 5.1 从服务端获取所有已同步的成员列表
 服务端消息库中存储了已订阅成员的历史与增量消息。使用 `jq` 管道可以快速聚合去重出成员列表：
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/messages?limit=1000" \
@@ -233,7 +313,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/messages?limit=1000" \
 ]
 ```
 
-### 4.2 直接在数据库中统计各成员发信量 (SQL)
+### 5.2 直接在数据库中统计各成员发信量 (SQL)
 如果进入了云端或本地 PostgreSQL 数据库，可执行以下 SQL 分析：
 ```sql
 SELECT 
@@ -250,11 +330,11 @@ ORDER BY total_messages DESC;
 
 ---
 
-## 5. 媒体文件下载与存储排查
+## 6. 媒体文件下载与存储排查
 
 Relay 服务端将抓取到的所有语音、图片、视频和来电全屏写真按 **SHA-256 二进制摘要** 保存在持久化卷中，杜绝重复占用。通过独立媒体服务端口（默认 `8081`）提供支持 HTTP Range 断点续传的受保护下载。
 
-### 5.1 媒体下载接口规范
+### 6.1 媒体下载接口规范
 端点结构：`GET /v1/messages/:id/media/:kind`
 - `:kind` 支持三种：
   - `media`：原始媒体（语音 `.m4a`、图片 `.jpg`/`.png`、视频 `.mp4`）
@@ -263,7 +343,7 @@ Relay 服务端将抓取到的所有语音、图片、视频和来电全屏写�
 
 主 API 与独立媒体服务均提供该路由。Fly 容器内对应端口为 `8080` 和 `8081`，本地默认端口为 `3000` 和 `8081`。
 
-### 5.2 下载并保存语音文件 (音频流)
+### 6.2 下载并保存语音文件 (音频流)
 ```bash
 # 将语音下载保存为 voice.m4a
 curl -H "Authorization: Bearer $TOKEN" \
@@ -271,7 +351,7 @@ curl -H "Authorization: Bearer $TOKEN" \
   "$MEDIA/v1/messages/<MESSAGE_ID>/media/media"
 ```
 
-### 5.3 下载并保存原图
+### 6.3 下载并保存原图
 ```bash
 # 将图片下载保存为 image.jpg
 curl -H "Authorization: Bearer $TOKEN" \
@@ -279,14 +359,14 @@ curl -H "Authorization: Bearer $TOKEN" \
   "$MEDIA/v1/messages/<MESSAGE_ID>/media/media"
 ```
 
-### 5.4 下载全屏来电写真背景
+### 6.4 下载全屏来电写真背景
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   -o "call_bg_<MESSAGE_ID>.jpg" \
   "$MEDIA/v1/messages/<MESSAGE_ID>/media/phone_image"
 ```
 
-### 5.5 批量下载指定成员的最新语音文件 (Bash 脚本范例)
+### 6.5 批量下载指定成员的最新语音文件 (Bash 脚本范例)
 ```bash
 #!/bin/bash
 MEMBER_ID="2"
@@ -304,7 +384,7 @@ done
 echo "下载完成！"
 ```
 
-### 5.6 云端存储卷排查与用量检查 (Fly.io)
+### 6.6 云端存储卷排查与用量检查 (Fly.io)
 进入云端容器控制台检查磁盘：
 ```bash
 # 登录容器
@@ -323,14 +403,14 @@ ls -1 /data/nogi-media/objects/ | wc -l
 
 ---
 
-## 6. 设备管理与推送测试
+## 7. 设备管理与推送测试
 
-### 6.1 查询已注册的客户端设备
+### 7.1 查询已注册的客户端设备
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/devices" | jq .
 ```
 
-### 6.2 手动注册设备 (通常由 Android App 自动完成)
+### 7.2 手动注册设备 (通常由 Android App 自动完成)
 ```bash
 curl -X POST "$SERVER/v1/devices" \
   -H "Authorization: Bearer $TOKEN" \
@@ -342,7 +422,7 @@ curl -X POST "$SERVER/v1/devices" \
   }'
 ```
 
-### 6.3 模拟发送测试消息推送
+### 7.3 模拟发送测试消息推送
 用于排查手机是否能正常收到系统通知。测试消息不会写入真实消息数据库：
 ```bash
 curl -X POST "$SERVER/v1/push/test-message" \
@@ -354,7 +434,7 @@ curl -X POST "$SERVER/v1/push/test-message" \
   }'
 ```
 
-### 6.4 模拟发送测试全屏来电
+### 7.4 模拟发送测试全屏来电
 唤醒手机锁屏全屏语音呼入界面与铃声：
 ```bash
 curl -X POST "$SERVER/v1/push/test-call" \
@@ -365,7 +445,7 @@ curl -X POST "$SERVER/v1/push/test-call" \
   }'
 ```
 
-### 6.5 重新推送已存在的特定消息
+### 7.5 重新推送已存在的特定消息
 ```bash
 curl -X POST "$SERVER/v1/push/send" \
   -H "Authorization: Bearer $TOKEN" \
@@ -375,7 +455,7 @@ curl -X POST "$SERVER/v1/push/send" \
   }'
 ```
 
-### 6.6 查询近期推送投递日志
+### 7.6 查询近期推送投递日志
 排查 FCM 推送状态、成功率与客户端接收历史：
 ```bash
 # 查询最新 20 条推送记录
@@ -387,8 +467,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "$SERVER/v1/push/logs?message_id=<MESSAGE_ID>" | jq .
 ```
 
-### 6.7 注销 / 删除旧设备
-如果更换了手机或卸载了 App，可通过设备 ID（从 6.1 节获取）删除过期的设备注册项：
+### 7.7 注销 / 删除旧设备
+如果更换了手机或卸载了 App，可通过设备 ID（从 7.1 节获取）删除过期的设备注册项：
 ```bash
 curl -X DELETE "$SERVER/v1/devices/<DEVICE_ID>" \
   -H "Authorization: Bearer $TOKEN"
@@ -396,22 +476,22 @@ curl -X DELETE "$SERVER/v1/devices/<DEVICE_ID>" \
 
 ---
 
-## 7. 数据库初始化与健康检查
+## 8. 数据库初始化与健康检查
 
-### 7.1 主服务探活探针 (无鉴权)
+### 8.1 主服务探活探针 (无鉴权)
 用于 Fly.io / Kubernetes 健康检查探针：
 ```bash
 curl -i "$SERVER/health"
 ```
 响应：`HTTP/1.1 200 OK`，`{"status":"ok","timestamp":"..."}`
 
-### 7.2 媒体流服务探活探针 (无鉴权)
+### 8.2 媒体流服务探活探针 (无鉴权)
 ```bash
 curl -i "$MEDIA/health"
 ```
 响应：`HTTP/1.1 200 OK`，`{"status":"ok"}`
 
-### 7.3 初始化/升级生产数据库表结构
+### 8.3 初始化/升级生产数据库表结构
 通过 API 自动执行 `database/schema.sql` 中的 DDL：
 ```bash
 curl -X POST "$SERVER/init-db" \
@@ -421,7 +501,7 @@ curl -X POST "$SERVER/init-db" \
 
 ---
 
-## 8. 本地脚本与实用运维命令
+## 9. 本地脚本与实用运维命令
 
 在 `server/` 目录下提供了一系列即开即用的实用脚本：
 

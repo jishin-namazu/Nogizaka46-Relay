@@ -3,26 +3,30 @@
  */
 export function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
+  const xApiKey = req.headers['x-api-key'];
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let token = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  } else if (xApiKey) {
+    token = String(xApiKey).trim();
+  }
+
+  const expectedToken = process.env.ACCESS_TOKEN || process.env.API_KEY;
+
+  if (!token) {
     return res.status(401).json({
       error: 'Unauthorized',
-      message: 'Missing or invalid Authorization header'
+      message: 'Missing Authorization header (Bearer token) or X-API-Key'
     });
   }
 
-  const token = authHeader.substring(7);
-
-  // 验证 token（这里使用简单的环境变量比对，生产环境应使用 JWT）
-  if (token !== process.env.ACCESS_TOKEN) {
+  if (!expectedToken || token !== expectedToken) {
     return res.status(401).json({
       error: 'Unauthorized',
       message: 'Invalid access token'
     });
   }
-
-  // 可以在这里从 token 中解析用户信息并设置到 req.user
-  // req.user = { id: 'user_id', ... };
 
   next();
 }

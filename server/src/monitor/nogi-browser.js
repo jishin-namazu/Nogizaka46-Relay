@@ -82,9 +82,17 @@ class NogiBrowserMonitor {
   constructor({
     messageStore = messageService,
     pusher = pushService,
+    accountId = null,
+    accountName = null,
+    sessionCookie = '',
+    accessToken = '',
+    onStateChange = null,
   } = {}) {
     this.messageStore = messageStore;
     this.pusher = pusher;
+    this.accountId = accountId;
+    this.accountName = accountName || (accountId ? `Account ${accountId}` : '主订阅账号');
+    this.onStateChange = onStateChange;
     this.apiUrl = (process.env.NOGI_API_URL || DEFAULT_API_URL).replace(/\/$/, '');
     this.webUrl = (process.env.NOGI_WEB_URL || DEFAULT_WEB_URL).replace(/\/$/, '');
     this.appId = process.env.NOGI_APP_ID || DEFAULT_APP_ID;
@@ -106,9 +114,9 @@ class NogiBrowserMonitor {
     );
 
     // 凭据与令牌状态
-    this.sessionCookie = '';
-    this.accessToken = '';
-    this.observedTokenAt = 0;
+    this.sessionCookie = sessionCookie || '';
+    this.accessToken = accessToken || '';
+    this.observedTokenAt = accessToken ? Date.now() : 0;
     this.lastPersistedAccessToken = '';
 
     // 业务轮询与群组状态
@@ -194,7 +202,8 @@ class NogiBrowserMonitor {
 
   async processMessage(message, sendPush) {
     try {
-      const saveResult = await this.messageStore.saveMessage(message);
+      const messageToSave = this.accountId ? { ...message, source_account_id: this.accountId } : message;
+      const saveResult = await this.messageStore.saveMessage(messageToSave);
       const isNew = typeof saveResult === 'object' && saveResult !== null && 'isNew' in saveResult
         ? Boolean(saveResult.isNew)
         : Boolean(saveResult);
@@ -231,25 +240,27 @@ class NogiBrowserMonitor {
     if (this.isRunning) return this.loopPromise;
 
     try {
-      await this.loadStorageState();
-      await this.loadAccessTokenState();
-      await this.startSessionFileWatcher();
+      if (!this.accountId) {
+        await this.loadStorageState();
+        await this.loadAccessTokenState();
+        await this.startSessionFileWatcher();
+      }
 
       if (!this.sessionCookie) {
-        console.warn('未检测到有效会话文件，请通过管理接口或脚本上传会话凭据');
+        console.warn(`${this.accountId ? `[${this.accountName}] ` : ''}未检测到有效会话凭据，等待配置`);
       } else {
         try {
           await this.refreshAccessToken({ sessionActivation: false });
         } catch (error) {
-          console.warn('初始令牌刷新失败，等待新会话或重试:', error.message);
+          console.warn(`${this.accountId ? `[${this.accountName}] ` : ''}初始令牌刷新失败，等待新会话或重试:`, error.message);
         }
       }
     } catch (error) {
-      console.error('监控服务初始化失败:', error.message);
+      console.error(`${this.accountId ? `[${this.accountName}] ` : ''}监控服务初始化失败:`, error.message);
       throw error;
     }
 
-    console.log(`Nogi monitor started (Pure API mode, poll interval: ${Math.round(this.pollIntervalMs / 1000)}s)`);
+    console.log(`${this.accountId ? `[${this.accountName}] ` : ''}Nogi monitor started (Pure API mode, poll interval: ${Math.round(this.pollIntervalMs / 1000)}s)`);
     this.isRunning = true;
     this.authState = this.accessToken ? 'authenticated' : 'starting';
     this.loopPromise = this.runLoop();
@@ -282,12 +293,21 @@ class NogiBrowserMonitor {
 
           await recordError('monitor.poll', error, {
             mode: 'pure_api',
+            account_id: this.accountId,
             has_access_token: Boolean(this.accessToken),
             is_auth_error: isAuthError,
             consecutive_failures: this.consecutiveAuthFailures,
           });
 
           if (isAuthError) {
+            this.consecutiveAuthFailures += 1;
+            if (this.onStateChange) {
+              await this.onStateChange({
+                consecutiveFailures: this.consecutiveAuthFailures,
+                lastError: error.message,
+              }).catch(() => {});
+            }
+
             if (this.consecutiveAuthFailures >= this.maxConsecutiveAuthFailures) {
               await this.pauseAuthentication(error);
               await this.waitForAuthenticationResume();
@@ -295,7 +315,7 @@ class NogiBrowserMonitor {
             }
 
             console.error(
-              `认证请求失败；/v2/update_token 连续失败 `
+              `${this.accountId ? `[${this.accountName}] ` : ''}认证请求失败；/v2/update_token 连续失败 `
               + `${this.consecutiveAuthFailures}/${this.maxConsecutiveAuthFailures} 次，继续重试。`,
             );
             await sleep(Math.max(60_000, this.pollIntervalMs));
@@ -323,11 +343,13 @@ class NogiBrowserMonitor {
 
   async clearPersistedAccessToken() {
     this.lastPersistedAccessToken = '';
-    try {
-      await fs.unlink(this.accessTokenStateFile);
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        console.warn('无法清除已失效的访问令牌缓存:', error.message);
+    if (!this.accountId) {
+      try {
+        await fs.unlink(this.accessTokenStateFile);
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          console.warn('无法清除已失效的访问令牌缓存:', error.message);
+        }
       }
     }
   }
@@ -335,12 +357,18 @@ class NogiBrowserMonitor {
   async enterSignedOut(cause) {
     if (this.authState === 'signedOut') return;
     this.authState = 'signedOut';
-    console.error('[NOGI_AUTH_SIGNED_OUT] /v2/update_token 返回 400，会话已退出。');
+    console.error(`[NOGI_AUTH_SIGNED_OUT] ${this.accountId ? `[${this.accountName}] ` : ''}/v2/update_token 返回 400，会话已退出。`);
+    if (this.onStateChange) {
+      await this.onStateChange({
+        status: 'expired',
+        lastError: cause?.message || '官网会话已失效 (400 Bad Request)',
+      }).catch(() => {});
+    }
     await this.pauseAuthentication(cause, { auth_state: 'signedOut' });
     if (!this.signedOutLogTimer) {
       this.signedOutLogTimer = setInterval(() => {
         if (this.authState === 'signedOut') {
-          console.error('[NOGI_SESSION_UPDATE_REQUIRED] 会话已退出，需要更新会话文件。');
+          console.error(`[NOGI_SESSION_UPDATE_REQUIRED] ${this.accountId ? `[${this.accountName}] ` : ''}会话已退出，需要更新会话凭据。`);
         }
       }, 5 * 60_000);
       this.signedOutLogTimer.unref?.();
@@ -354,14 +382,22 @@ class NogiBrowserMonitor {
     this.observedTokenAt = 0;
     await this.clearPersistedAccessToken();
 
+    if (this.onStateChange) {
+      await this.onStateChange({
+        status: this.authState === 'signedOut' ? 'expired' : 'error',
+        lastError: cause?.message || '鉴权暂停',
+      }).catch(() => {});
+    }
+
     if (!wasPaused) {
       const message = [
-        '[NOGI_AUTH_PAUSED] 官网 access token 已失效，且无法通过 API 自动刷新。',
-        '已暂停消息轮询；HTTP 健康检查、管理接口、媒体服务及会话文件监听保持运行。',
-        '请上传新的会话文件；新会话验证通过后，监控将自动恢复。',
+        `[NOGI_AUTH_PAUSED] ${this.accountId ? `[${this.accountName}] ` : ''}官网 access token 已失效，且无法通过 API 自动刷新。`,
+        '已暂停消息轮询；管理后台及其他账号保持运行。',
+        '请更新该账号的会话凭据；验证通过后将自动恢复。',
       ].join('\n');
       console.error(message);
       await recordError('monitor.auth_paused', cause || new Error(message), {
+        account_id: this.accountId,
         requires_session_update: true,
         consecutive_auth_failures: this.consecutiveAuthFailures,
         ...context,
@@ -378,6 +414,13 @@ class NogiBrowserMonitor {
       this.signedOutLogTimer = null;
     }
     this.releaseAuthenticationWaiters();
+    if (this.onStateChange) {
+      this.onStateChange({
+        status: 'active',
+        consecutiveFailures: 0,
+        lastError: null,
+      }).catch(() => {});
+    }
   }
 
   waitForAuthenticationResume() {
@@ -466,16 +509,29 @@ class NogiBrowserMonitor {
           const match = setCookieHeader.match(/session=([a-zA-Z0-9_-]+)/);
           if (match && match[1] && match[1] !== this.sessionCookie) {
             this.sessionCookie = match[1];
-            console.log('检测到官网 session Cookie 轮转，已自动更新');
+            console.log(`${this.accountId ? `[${this.accountName}] ` : ''}检测到官网 session Cookie 轮转，已自动更新`);
           }
         }
 
-        await this.persistSession();
-        await this.persistAccessToken();
-        console.log(`✓ 官网访问令牌续期成功 (有效期约 ${data.expires_in || 3600} 秒)`);
+        if (this.onStateChange) {
+          await this.onStateChange({
+            status: 'active',
+            sessionCookie: this.sessionCookie,
+            accessToken: this.accessToken,
+            tokenExpiresAt: tokenExpiry(this.accessToken),
+            consecutiveFailures: 0,
+            lastError: null,
+          }).catch(err => console.warn(`[${this.accountName}] 更新状态回调失败:`, err.message));
+        }
+
+        if (!this.accountId) {
+          await this.persistSession();
+          await this.persistAccessToken();
+        }
+        console.log(`${this.accountId ? `[${this.accountName}] ` : ''}✓ 官网访问令牌续期成功 (有效期约 ${data.expires_in || 3600} 秒)`);
         return this.accessToken;
       } catch (error) {
-        console.error('官网访问令牌续期失败:', error.message);
+        console.error(`${this.accountId ? `[${this.accountName}] ` : ''}官网访问令牌续期失败:`, error.message);
         throw error;
       } finally {
         clearTimeout(timeout);
@@ -730,7 +786,16 @@ class NogiBrowserMonitor {
         if (groups.every(group => this.backfilledGroupIds.has(group.id))) {
           this.historyBackfillReason = null;
         }
-        console.log(`Nogi monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
+        if (this.onStateChange) {
+          await this.onStateChange({
+            status: 'active',
+            lastSyncAt: new Date(),
+            subscribedGroups: groups.map(g => ({ id: g.id, name: g.name })),
+            consecutiveFailures: 0,
+            lastError: null,
+          }).catch(err => console.warn(`[${this.accountName}] 更新同步状态失败:`, err.message));
+        }
+        console.log(`${this.accountId ? `[${this.accountName}] ` : ''}Nogi monitor poll complete: groups=${groups.length}, fetched=${fetched}, stored=${stored}, pushed=${pushed}`);
       })();
 
       if (timeoutPromise) await Promise.race([polling, timeoutPromise]);
@@ -996,6 +1061,34 @@ class NogiBrowserMonitor {
         });
       }
     }
+  }
+
+  async updateCredentials({ sessionCookie, accessToken = null, tokenExpiresAt = null }) {
+    if (sessionCookie) this.sessionCookie = sessionCookie;
+    if (accessToken) {
+      this.accessToken = accessToken;
+      this.observedTokenAt = Date.now();
+    }
+    this.consecutiveAuthFailures = 0;
+    this.resumeAuthentication();
+    this.backfilledGroupIds.clear();
+    this.historyBackfillReason = 'credentials_update';
+
+    if (!this.accessToken && this.sessionCookie) {
+      try {
+        await this.refreshAccessToken({ sessionActivation: true });
+      } catch (err) {
+        console.warn(`${this.accountId ? `[${this.accountName}] ` : ''}更新凭据后刷新令牌失败:`, err.message);
+      }
+    }
+  }
+
+  async triggerPoll() {
+    if (this.authPaused) {
+      await this.refreshAccessToken({ sessionActivation: true });
+      this.resumeAuthentication();
+    }
+    return this.poll();
   }
 }
 

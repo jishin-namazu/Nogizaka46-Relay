@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>乃木坂46 多账号中继控制台 - Nogi Relay Admin</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --background: #f8fafc;
+      --foreground: #0f172a;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --muted: #f1f5f9;
+      --muted-foreground: #64748b;
+      --accent: #f8fafc;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #090d16;
+        --foreground: #f8fafc;
+        --card: #111827;
+        --border: #1f293d;
+        --muted: #1e293b;
+        --muted-foreground: #94a3b8;
+        --accent: #1e293b;
+      }
+    }
+    .nogi-brand { background-color: #742581; }
+    .nogi-brand-text { color: #742581; }
+    .nogi-brand-border { border-color: #742581; }
+    .nogi-gradient { background: linear-gradient(135deg, #742581 0%, #4a1555 100%); }
+    .tab-active { border-bottom: 2px solid #742581; color: #742581; font-weight: 600; }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased min-h-screen">
+  
+  <!-- 顶部导航栏 -->
+  <header class="border-b border-[var(--border)] bg-[var(--card)] sticky top-0 z-30 shadow-xs">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg nogi-gradient flex items-center justify-center text-white font-bold text-lg shadow-sm">
+          乃
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-base tracking-tight">Nogi Relay</span>
+            <span class="px-2 py-0.5 text-xs rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-medium">v2.0 Console</span>
+          </div>
+          <p class="text-xs text-[var(--muted-foreground)]">乃木坂46 多账号中继与管理后台</p>
+        </div>
+      </div>
+
+      <!-- 快捷系统状态指标 -->
+      <div class="hidden md:flex items-center gap-4 text-xs">
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" id="apiStatusDot"></span>
+          <span class="text-[var(--muted-foreground)]">API:</span>
+          <span class="font-medium text-emerald-600 dark:text-emerald-400" id="apiStatusText">在线</span>
+        </div>
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
+          <span class="w-2 h-2 rounded-full bg-emerald-500" id="accountsStatusDot"></span>
+          <span class="text-[var(--muted-foreground)]">活跃账号:</span>
+          <span class="font-semibold" id="topActiveAccounts">-</span>
+        </div>
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--background)] border border-[var(--border)]">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span class="text-[var(--muted-foreground)]">推送设备:</span>
+          <span class="font-medium" id="topDevicesCount">-</span>
+        </div>
+      </div>
+
+      <!-- 操作区 -->
+      <div class="flex items-center gap-2.5">
+        <button onclick="openModal('uploadModal')" class="px-3 py-1.5 text-xs font-medium text-white nogi-brand hover:opacity-90 rounded-lg shadow-xs flex items-center gap-1.5 transition-all">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          添加账号
+        </button>
+        <button onclick="openModal('apiKeyModal')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]" title="配置 API 密钥">
+          密钥配置
+        </button>
+        <div class="h-6 w-px bg-[var(--border)]"></div>
+        <button onclick="refreshCurrentTab()" id="syncBtn" class="p-1.5 rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors" title="刷新数据">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 标签导航 -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex gap-8 text-sm overflow-x-auto">
+      <button onclick="switchTab('accounts')" id="tab-btn-accounts" class="py-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors tab-active flex items-center gap-1.5 shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+        多账号管理
+        <span class="ml-1 px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300" id="tabAccountCount">0</span>
+      </button>
+      <button onclick="switchTab('dashboard')" id="tab-btn-dashboard" class="py-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors flex items-center gap-1.5 shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        系统总览
+      </button>
+      <button onclick="switchTab('messages')" id="tab-btn-messages" class="py-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors flex items-center gap-1.5 shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+        消息与媒体
+      </button>
+      <button onclick="switchTab('devices')" id="tab-btn-devices" class="py-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors flex items-center gap-1.5 shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        设备与推送
+      </button>
+      <button onclick="switchTab('logs')" id="tab-btn-logs" class="py-3 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors flex items-center gap-1.5 shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        审计日志
+      </button>
+    </div>
+  </header>
+
+  <!-- 主体内容 -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <!-- ==================== TAB 1: 多账号管理 ==================== -->
+    <section id="pane-accounts" class="space-y-6">
+      <!-- 汇总状态卡 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-[var(--muted-foreground)]">托管账号总数</span>
+            <span class="p-1.5 rounded-lg bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+            </span>
+          </div>
+          <div class="mt-2 flex items-baseline gap-2">
+            <span class="text-2xl font-bold" id="cardTotalAccounts">-</span>
+            <span class="text-xs text-[var(--muted-foreground)]">个账号</span>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-[var(--muted-foreground)]">正常轮询中</span>
+            <span class="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            </span>
+          </div>
+          <div class="mt-2 flex items-baseline gap-2">
+            <span class="text-2xl font-bold text-emerald-600 dark:text-emerald-400" id="cardActiveAccounts">-</span>
+            <span class="text-xs text-[var(--muted-foreground)]">活跃</span>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-[var(--muted-foreground)]">需要更新会话</span>
+            <span class="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 text-rose-600">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+            </span>
+          </div>
+          <div class="mt-2 flex items-baseline gap-2">
+            <span class="text-2xl font-bold text-rose-600 dark:text-rose-400" id="cardExpiredAccounts">0</span>
+            <span class="text-xs text-rose-600 font-medium">需重新登录</span>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-medium text-[var(--muted-foreground)]">覆盖订阅成员</span>
+            <span class="p-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+            </span>
+          </div>
+          <div class="mt-2 flex items-baseline gap-2">
+            <span class="text-2xl font-bold" id="cardSubscribedCount">0</span>
+            <span class="text-xs text-[var(--muted-foreground)]">位成员已监控</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 账号列表容器 -->
+      <div id="accountsListContainer" class="space-y-4">
+        <div class="text-center py-12 text-[var(--muted-foreground)]">正在加载账号列表...</div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: 系统总览 ==================== -->
+    <section id="pane-dashboard" class="hidden space-y-6">
+      <div class="p-6 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
+        <h3 class="font-bold text-base mb-4">系统吞吐与运行时指标</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="space-y-2">
+            <span class="text-xs text-[var(--muted-foreground)]">常驻内存使用</span>
+            <div class="flex items-baseline gap-2">
+              <span class="text-2xl font-bold" id="sysMemRss">-</span>
+              <span class="text-xs text-[var(--muted-foreground)]">MB (RSS)</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)]" id="sysNodeInfo">-</p>
+          </div>
+          <div class="space-y-2">
+            <span class="text-xs text-[var(--muted-foreground)]">消息归档统计</span>
+            <div class="flex items-baseline gap-2">
+              <span class="text-2xl font-bold" id="sysTotalMessages">-</span>
+              <span class="text-xs text-purple-600 font-medium" id="sysTodayMessages">今日新增 0 条</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)]" id="sysMediaMessages">富媒体: - 条</p>
+          </div>
+          <div class="space-y-2">
+            <span class="text-xs text-[var(--muted-foreground)]">系统运行时间 (Uptime)</span>
+            <div class="flex items-baseline gap-2">
+              <span class="text-2xl font-bold" id="sysUptime">-</span>
+            </div>
+            <p class="text-xs text-[var(--muted-foreground)]" id="sys24hErrors">最近 24h 错误: 0 次</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 3: 消息与媒体 ==================== -->
+    <section id="pane-messages" class="hidden space-y-4">
+      <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs font-medium">账号:</span>
+          <select id="msgFilterAccount" onchange="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+            <option value="">全部账号</option>
+          </select>
+          <span class="text-xs font-medium ml-2">类型:</span>
+          <select id="msgFilterType" onchange="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+            <option value="">全部类型</option>
+            <option value="text">文字 (Text)</option>
+            <option value="image">写真图片 (Image)</option>
+            <option value="audio">语音来电 (Audio)</option>
+            <option value="video">视频动态 (Video)</option>
+          </select>
+          <input type="text" id="msgFilterQuery" placeholder="搜索消息或成员..." onkeydown="if(event.key==='Enter')loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-44">
+          <button onclick="loadMessages()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] font-medium">筛选</button>
+        </div>
+        <span class="text-xs text-[var(--muted-foreground)]" id="msgTotalCount">共 0 条</span>
+      </div>
+
+      <!-- 消息列表 -->
+      <div id="messagesContainer" class="space-y-2.5">
+        <div class="text-center py-12 text-[var(--muted-foreground)]">点击标签加载消息...</div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 4: 设备与推送 ==================== -->
+    <section id="pane-devices" class="hidden space-y-6">
+      <div class="p-5 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs space-y-4">
+        <h3 class="font-bold text-base">已注册推送设备 (FCM)</h3>
+        <div id="devicesTableContainer" class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-[var(--muted)] text-[var(--muted-foreground)]">
+              <tr>
+                <th class="p-2.5 rounded-l-lg">ID</th>
+                <th class="p-2.5">平台</th>
+                <th class="p-2.5">设备标识 / 别名</th>
+                <th class="p-2.5">最后活跃</th>
+                <th class="p-2.5 rounded-r-lg">注册时间</th>
+              </tr>
+            </thead>
+            <tbody id="devicesTableBody" class="divide-y divide-[var(--border)]">
+              <tr><td colspan="5" class="p-4 text-center text-[var(--muted-foreground)]">正在加载设备列表...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="p-5 rounded-xl bg-[var(--card)] border border-[var(--border)] shadow-xs">
+        <h3 class="font-bold text-base mb-2">推送在线调试台</h3>
+        <p class="text-xs text-[var(--muted-foreground)] mb-4">通过 FCM 高优先级通道向当前在线的移动客户端发送模拟测试推送。</p>
+        <div class="flex flex-wrap items-center gap-3">
+          <button onclick="sendTestPush('message')" class="px-4 py-2 text-xs font-semibold rounded-lg nogi-brand text-white hover:opacity-90 transition-all">
+            下发普通文本推送
+          </button>
+          <button onclick="sendTestPush('call')" class="px-4 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white transition-all">
+            下发全屏拟真来电 (VoIP Call)
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 5: 审计日志 ==================== -->
+    <section id="pane-logs" class="hidden space-y-4">
+      <div class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-medium">日志级别:</span>
+          <select id="logFilterLevel" onchange="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)]">
+            <option value="">全部</option>
+            <option value="error">Error</option>
+            <option value="warn">Warn</option>
+            <option value="info">Info</option>
+          </select>
+          <input type="text" id="logFilterQuery" placeholder="搜索日志内容..." onkeydown="if(event.key==='Enter')loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-48">
+          <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] font-medium">查询</button>
+        </div>
+        <button onclick="loadLogs()" class="px-2.5 py-1 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">刷新</button>
+      </div>
+
+      <div id="logsViewer" class="p-4 rounded-xl bg-[var(--card)] border border-[var(--border)] font-mono text-xs space-y-2 max-h-[600px] overflow-y-auto">
+        <div class="text-[var(--muted-foreground)]">正在加载系统日志...</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==================== MODAL: 上传会话 / 添加账号 ==================== -->
+  <div id="uploadModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-bold" id="modalTitle">添加 / 更新官网会话凭据</h3>
+          <p class="text-xs text-[var(--muted-foreground)] mt-0.5">支持拖拽 nogi-browser-state.json 或直接输入 session Cookie</p>
+        </div>
+        <button onclick="closeModal('uploadModal')" class="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <input type="hidden" id="targetAccountId" value="">
+        <div>
+          <label class="block text-xs font-semibold mb-1">账号标识 (ID)</label>
+          <input type="text" id="accIdInput" placeholder="例如：acc_asuka (留空自动生成)" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold mb-1">账号别名 / 备注</label>
+          <input type="text" id="accNameInput" placeholder="例如：主订阅账号 (5期生)" class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold mb-1.5">从 JSON 会话文件导入</label>
+          <div id="dropZone" class="border-2 border-dashed border-[var(--border)] rounded-xl p-5 text-center hover:border-purple-500 transition-colors cursor-pointer bg-[var(--background)]">
+            <svg class="w-7 h-7 mx-auto text-purple-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            <p class="text-xs font-medium text-[var(--foreground)]" id="dropZonePrompt">拖拽 nogi-browser-state.json 到此处，或点击选择文件</p>
+            <p class="text-[10px] text-[var(--muted-foreground)] mt-1">自动识别 session Cookie 并完成安全脱敏</p>
+            <input type="file" id="fileInput" accept=".json" class="hidden">
+          </div>
+        </div>
+
+        <div class="relative flex py-1 items-center">
+          <div class="flex-grow border-t border-[var(--border)]"></div>
+          <span class="flex-shrink mx-2 text-[10px] text-[var(--muted-foreground)] uppercase">或手动输入 Cookie</span>
+          <div class="flex-grow border-t border-[var(--border)]"></div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold mb-1">Session Cookie 值</label>
+          <input type="text" id="accCookieInput" placeholder="sess_xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" class="w-full px-3 py-2 text-xs font-mono rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500">
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button onclick="closeModal('uploadModal')" class="px-4 py-2 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)]">
+          取消
+        </button>
+        <button onclick="submitAccountForm()" id="submitSessionBtn" class="px-4 py-2 text-xs font-semibold text-white nogi-brand hover:opacity-90 rounded-lg shadow-sm flex items-center gap-1.5">
+          <span>验证并激活</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: API 密钥配置 ==================== -->
+  <div id="apiKeyModal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 hidden">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold">API 访问密钥设置</h3>
+        <button onclick="closeModal('apiKeyModal')" class="text-[var(--muted-foreground)] hover:text-[var(--foreground)] p-1">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <p class="text-xs text-[var(--muted-foreground)]">请输入服务器环境变量中配置的 API 密钥 (X-API-Key 或 Bearer Token)。凭据将安全保存在本地浏览器中。</p>
+      <div>
+        <input type="password" id="apiKeyInput" placeholder="输入服务器 API Key..." class="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono">
+      </div>
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button onclick="saveApiKey()" class="px-4 py-2 text-xs font-semibold text-white nogi-brand hover:opacity-90 rounded-lg shadow-sm">
+          保存并连接
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    let currentTab = 'accounts';
+    let cachedAccounts = [];
+
+    function getApiKey() {
+      return localStorage.getItem('nogi_admin_api_key') || '';
+    }
+
+    function setApiKey(key) {
+      localStorage.setItem('nogi_admin_api_key', key.trim());
+    }
+
+    async function apiFetch(endpoint, options = {}) {
+      const apiKey = getApiKey();
+      const headers = {
+        'Accept': 'application/json',
+        ...(options.headers || {}),
+      };
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+        headers['X-API-Key'] = apiKey;
+      }
+      if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
+        headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(options.body);
+      }
+
+      const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+      if (res.status === 401) {
+        openModal('apiKeyModal');
+        throw new Error('未提供有效 API 密钥或鉴权失败');
+      }
+      return res;
+    }
+
+    function switchTab(tabName) {
+      currentTab = tabName;
+      ['accounts', 'dashboard', 'messages', 'devices', 'logs'].forEach(t => {
+        document.getElementById(`pane-${t}`).classList.add('hidden');
+        document.getElementById(`tab-btn-${t}`).classList.remove('tab-active');
+      });
+      document.getElementById(`pane-${tabName}`).classList.remove('hidden');
+      document.getElementById(`tab-btn-${tabName}`).classList.add('tab-active');
+
+      if (tabName === 'accounts') loadAccounts();
+      if (tabName === 'dashboard') loadOverview();
+      if (tabName === 'messages') loadMessages();
+      if (tabName === 'devices') loadDevices();
+      if (tabName === 'logs') loadLogs();
+    }
+
+    function refreshCurrentTab() {
+      const btn = document.getElementById('syncBtn');
+      btn.classList.add('animate-spin');
+      switchTab(currentTab);
+      loadOverview();
+      setTimeout(() => btn.classList.remove('animate-spin'), 600);
+    }
+
+    function openModal(id, targetAccId = '') {
+      const modal = document.getElementById(id);
+      if (id === 'uploadModal') {
+        const targetAcc = cachedAccounts.find(a => a.id === targetAccId);
+        document.getElementById('targetAccountId').value = targetAccId;
+        if (targetAccId) {
+          document.getElementById('modalTitle').innerText = `更新账号凭据: ${targetAcc?.name || targetAccId}`;
+          document.getElementById('accIdInput').value = targetAccId;
+          document.getElementById('accIdInput').disabled = true;
+          document.getElementById('accNameInput').value = targetAcc?.name || '';
+        } else {
+          document.getElementById('modalTitle').innerText = '添加新官方订阅账号';
+          document.getElementById('accIdInput').value = '';
+          document.getElementById('accIdInput').disabled = false;
+          document.getElementById('accNameInput').value = '';
+        }
+        document.getElementById('accCookieInput').value = '';
+        document.getElementById('dropZonePrompt').innerText = '拖拽 nogi-browser-state.json 到此处，或点击选择文件';
+      } else if (id === 'apiKeyModal') {
+        document.getElementById('apiKeyInput').value = getApiKey();
+      }
+      modal.classList.remove('hidden');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+
+    function saveApiKey() {
+      const key = document.getElementById('apiKeyInput').value;
+      setApiKey(key);
+      closeModal('apiKeyModal');
+      refreshCurrentTab();
+    }
+
+    // 格式化时间与时长
+    function formatTime(isoStr) {
+      if (!isoStr) return '尚未同步';
+      const d = new Date(isoStr);
+      return d.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function formatTokenRemaining(isoStr) {
+      if (!isoStr) return '无有效期信息';
+      const diffMs = new Date(isoStr).getTime() - Date.now();
+      if (diffMs <= 0) return '已过期';
+      const mins = Math.floor(diffMs / 60000);
+      if (mins < 60) return `约 ${mins} 分钟后`;
+      const hrs = Math.floor(mins / 60);
+      return `约 ${hrs} 小时后`;
+    }
+
+    // ==================== 1. 加载账号列表 ====================
+    async function loadAccounts() {
+      const container = document.getElementById('accountsListContainer');
+      try {
+        const res = await apiFetch('/v1/admin/accounts');
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+
+        cachedAccounts = json.data || [];
+        document.getElementById('tabAccountCount').innerText = cachedAccounts.length;
+        document.getElementById('cardTotalAccounts').innerText = cachedAccounts.length;
+
+        const activeCount = cachedAccounts.filter(a => a.status === 'active').length;
+        const expiredCount = cachedAccounts.filter(a => a.status === 'expired' || a.status === 'error').length;
+        document.getElementById('cardActiveAccounts').innerText = activeCount;
+        document.getElementById('cardExpiredAccounts').innerText = expiredCount;
+        document.getElementById('topActiveAccounts').innerText = `${activeCount} / ${cachedAccounts.length}`;
+
+        // 计算所有账号订阅成员总数 (去重)
+        const uniqueMembers = new Set();
+        cachedAccounts.forEach(a => {
+          (a.subscribed_groups || []).forEach(g => uniqueMembers.add(g.id || g.name));
+        });
+        document.getElementById('cardSubscribedCount').innerText = uniqueMembers.size;
+
+        // 更新消息筛选下拉列表
+        const sel = document.getElementById('msgFilterAccount');
+        sel.innerHTML = '<option value="">全部账号</option>';
+        cachedAccounts.forEach(a => {
+          const opt = document.createElement('option');
+          opt.value = a.id;
+          opt.textContent = `${a.name} (${a.id})`;
+          sel.appendChild(opt);
+        });
+
+        if (cachedAccounts.length === 0) {
+          container.innerHTML = `
+            <div class="p-8 rounded-xl bg-[var(--card)] border border-[var(--border)] text-center space-y-3">
+              <p class="text-sm text-[var(--muted-foreground)]">尚未配置任何账号</p>
+              <button onclick="openModal('uploadModal')" class="px-4 py-2 text-xs font-semibold text-white nogi-brand rounded-lg">
+                立即添加第一个账号
+              </button>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = cachedAccounts.map(account => {
+          const isActive = account.status === 'active';
+          const isExpired = account.status === 'expired';
+          const isDisabled = account.status === 'disabled';
+          const isError = account.status === 'error';
+
+          let statusBadgeClass = 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300';
+          let statusText = '正常轮询中 (Active)';
+          if (isExpired) {
+            statusBadgeClass = 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 animate-pulse';
+            statusText = '会话已过期 (400 Bad Request)';
+          } else if (isError) {
+            statusBadgeClass = 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
+            statusText = `鉴权异常 (${account.consecutive_failures || 1}次重试)`;
+          } else if (isDisabled) {
+            statusBadgeClass = 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300';
+            statusText = '已停用 (Disabled)';
+          }
+
+          const groups = account.subscribed_groups || [];
+
+          return `
+            <div class="p-5 rounded-xl bg-[var(--card)] border ${isExpired ? 'border-rose-400 dark:border-rose-800 ring-1 ring-rose-500/20' : 'border-[var(--border)]'} shadow-xs transition-all space-y-4">
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl ${isExpired ? 'bg-rose-100 text-rose-700' : 'bg-purple-100 text-purple-700'} flex items-center justify-center font-bold text-base">
+                    ${escapeHtml(account.name.charAt(0) || '乃')}
+                  </div>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <h4 class="font-bold text-sm text-[var(--foreground)]">${escapeHtml(account.name)}</h4>
+                      <span class="px-2 py-0.5 text-[10px] font-mono rounded bg-[var(--muted)] text-[var(--muted-foreground)]">${escapeHtml(account.id)}</span>
+                      <span class="px-2 py-0.5 text-xs rounded-full font-medium ${statusBadgeClass}">
+                        ${statusText}
+                      </span>
+                    </div>
+                    <p class="text-xs text-[var(--muted-foreground)] mt-0.5">
+                      上次同步: ${formatTime(account.last_sync_at)} ｜ Token 有效期: ${formatTokenRemaining(account.token_expires_at)}
+                    </p>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <button onclick="syncAccount('${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    立即同步
+                  </button>
+                  <button onclick="openModal('uploadModal', '${account.id}')" class="px-3 py-1.5 text-xs font-medium rounded-lg ${isExpired ? 'bg-rose-600 text-white hover:bg-rose-700' : 'border border-[var(--border)] hover:bg-[var(--accent)]'}">
+                    更新会话
+                  </button>
+                  <button onclick="toggleAccountStatus('${account.id}', '${account.status}')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-[var(--accent)] text-[var(--muted-foreground)]">
+                    ${isDisabled ? '启用' : '停用'}
+                  </button>
+                  <button onclick="deleteAccount('${account.id}')" class="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] hover:bg-rose-50 hover:text-rose-600 text-[var(--muted-foreground)]">
+                    删除
+                  </button>
+                </div>
+              </div>
+
+              <!-- 订阅群组成员标签 -->
+              <div class="pt-2 border-t border-[var(--border)] flex flex-wrap items-center gap-1.5">
+                <span class="text-xs text-[var(--muted-foreground)] mr-1">已订阅群组 (${groups.length}):</span>
+                ${groups.length > 0 ? groups.map(g => `
+                  <span class="px-2 py-0.5 text-xs rounded-md bg-[var(--background)] border border-[var(--border)] text-[var(--foreground)]">
+                    ${escapeHtml(g.name || `群组 ${g.id}`)}
+                  </span>
+                `).join('') : '<span class="text-xs text-[var(--muted-foreground)] italic">初次同步后将自动列出</span>'}
+              </div>
+
+              ${account.last_error ? `
+                <div class="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 text-xs font-mono">
+                  ${escapeHtml(account.last_error)}
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        container.innerHTML = `<div class="p-6 text-center text-rose-600 text-xs">加载账号失败: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    // ==================== 2. 加载系统总览 ====================
+    async function loadOverview() {
+      try {
+        const res = await apiFetch('/v1/admin/overview');
+        const json = await res.json();
+        if (!json.success) return;
+        const d = json.data;
+
+        document.getElementById('sysMemRss').innerText = d.system.memoryRssMb;
+        document.getElementById('sysNodeInfo').innerText = `Node: ${d.system.nodeVersion} (${d.system.platform})`;
+        document.getElementById('sysTotalMessages').innerText = Number(d.messages.total).toLocaleString();
+        document.getElementById('sysTodayMessages').innerText = `今日新增 ${d.messages.today} 条`;
+        document.getElementById('sysMediaMessages').innerText = `富媒体写真/音频/视频: ${d.messages.media} 条`;
+        
+        const hrs = Math.floor(d.system.uptime / 3600);
+        const mins = Math.floor((d.system.uptime % 3600) / 60);
+        document.getElementById('sysUptime').innerText = `${hrs} 小时 ${mins} 分钟`;
+        document.getElementById('sys24hErrors').innerText = `最近 24h 错误: ${d.errors24h} 次`;
+        document.getElementById('topDevicesCount').innerText = `${d.devices.total} 台 (Android: ${d.devices.android})`;
+      } catch (e) {
+        console.warn('获取总览指标失败:', e.message);
+      }
+    }
+
+    // ==================== 3. 加载消息流 ====================
+    async function loadMessages() {
+      const container = document.getElementById('messagesContainer');
+      const accountId = document.getElementById('msgFilterAccount').value;
+      const type = document.getElementById('msgFilterType').value;
+      const q = document.getElementById('msgFilterQuery').value;
+
+      const params = new URLSearchParams();
+      if (accountId) params.set('accountId', accountId);
+      if (type) params.set('type', type);
+      if (q) params.set('q', q);
+
+      try {
+        const res = await apiFetch(`/v1/admin/messages?${params.toString()}`);
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+
+        const list = json.data.messages || [];
+        document.getElementById('msgTotalCount').innerText = `共 ${json.data.total} 条`;
+
+        if (list.length === 0) {
+          container.innerHTML = '<div class="p-8 text-center text-[var(--muted-foreground)] text-xs">无匹配消息记录</div>';
+          return;
+        }
+
+        container.innerHTML = list.map(m => {
+          const typeNames = { text: '文字私信', image: '图片写真', audio: '语音来电', video: '视频动态' };
+          const typeBadgeColors = {
+            text: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
+            image: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+            audio: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
+            video: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+          };
+
+          const mediaUrl = m.media_url || m.media_local_path;
+          let mediaBlock = '';
+          if (m.type === 'audio' && mediaUrl) {
+            mediaBlock = `
+              <div class="mt-2">
+                <audio controls src="${mediaUrl}" class="h-8 max-w-xs"></audio>
+              </div>
+            `;
+          } else if (m.type === 'image' && mediaUrl) {
+            mediaBlock = `
+              <div class="mt-2">
+                <a href="${mediaUrl}" target="_blank">
+                  <img src="${mediaUrl}" class="max-h-36 rounded-lg border border-[var(--border)] object-cover hover:opacity-90">
+                </a>
+              </div>
+            `;
+          }
+
+          const sourceBadges = (m.source_accounts || []).map(sa => `
+            <span class="px-1.5 py-0.2 rounded text-[10px] bg-[var(--muted)] text-[var(--muted-foreground)] font-mono">${escapeHtml(sa)}</span>
+          `).join(' ');
+
+          return `
+            <div class="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-start justify-between gap-4">
+              <div class="flex items-start gap-3">
+                <div class="w-10 h-10 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm shrink-0">
+                  ${m.member_avatar_url ? `<img src="${m.member_avatar_url}" class="w-10 h-10 rounded-full object-cover">` : escapeHtml(m.member_name.charAt(0))}
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="font-bold text-sm">${escapeHtml(m.member_name)}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-medium ${typeBadgeColors[m.type] || ''}">${typeNames[m.type] || m.type}</span>
+                    <span class="text-xs text-[var(--muted-foreground)] font-mono">${formatTime(m.sent_at)}</span>
+                    ${sourceBadges}
+                  </div>
+                  ${m.text ? `<p class="text-xs text-[var(--foreground)] mt-1 whitespace-pre-wrap">${escapeHtml(m.text)}</p>` : ''}
+                  ${mediaBlock}
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        container.innerHTML = `<div class="p-6 text-center text-rose-600 text-xs">加载消息失败: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    // ==================== 4. 加载设备 ====================
+    async function loadDevices() {
+      const tbody = document.getElementById('devicesTableBody');
+      try {
+        const res = await apiFetch('/v1/devices');
+        const json = await res.json();
+        const devices = json.devices || [];
+
+        if (devices.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="p-4 text-center text-[var(--muted-foreground)]">暂无已注册设备</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = devices.map(d => `
+          <tr class="hover:bg-[var(--accent)]">
+            <td class="p-2.5 font-mono text-xs">${d.id}</td>
+            <td class="p-2.5 uppercase font-semibold text-xs">${escapeHtml(d.platform)}</td>
+            <td class="p-2.5 text-xs">${escapeHtml(d.label || d.user_id || 'Android Client')}</td>
+            <td class="p-2.5 text-xs text-[var(--muted-foreground)]">${formatTime(d.last_seen_at)}</td>
+            <td class="p-2.5 text-xs text-[var(--muted-foreground)]">${formatTime(d.created_at)}</td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-rose-600">加载失败: ${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    // ==================== 5. 加载日志 ====================
+    async function loadLogs() {
+      const viewer = document.getElementById('logsViewer');
+      const level = document.getElementById('logFilterLevel').value;
+      const q = document.getElementById('logFilterQuery').value;
+
+      const params = new URLSearchParams({ limit: '100' });
+      if (level) params.set('level', level);
+      if (q) params.set('q', q);
+
+      try {
+        const res = await apiFetch(`/v1/admin/error-logs?${params.toString()}`);
+        const json = await res.json();
+        const logs = json.logs || [];
+
+        if (logs.length === 0) {
+          viewer.innerHTML = '<div class="text-[var(--muted-foreground)]">暂无审计日志</div>';
+          return;
+        }
+
+        viewer.innerHTML = logs.map(l => {
+          const isErr = l.level === 'error';
+          return `
+            <div class="${isErr ? 'text-rose-600 font-semibold' : 'text-[var(--foreground)]'}">
+              <span class="text-[var(--muted-foreground)]">[${formatTime(l.created_at)}]</span>
+              <span class="px-1 rounded bg-[var(--muted)]">[${escapeHtml(l.scope || 'system')}]</span>
+              ${escapeHtml(l.message)}
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        viewer.innerHTML = `<div class="text-rose-600">加载日志失败: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    // ==================== 操作处理函数 ====================
+    async function syncAccount(id) {
+      try {
+        await apiFetch(`/v1/admin/accounts/${id}/sync`, { method: 'POST' });
+        alert(`已触发账号 [${id}] 的立即同步任务！`);
+        loadAccounts();
+      } catch (err) {
+        alert(`同步请求失败: ${err.message}`);
+      }
+    }
+
+    async function toggleAccountStatus(id, currentStatus) {
+      const newStatus = currentStatus === 'disabled' ? 'active' : 'disabled';
+      try {
+        await apiFetch(`/v1/admin/accounts/${id}`, {
+          method: 'PATCH',
+          body: { status: newStatus },
+        });
+        loadAccounts();
+      } catch (err) {
+        alert(`切换状态失败: ${err.message}`);
+      }
+    }
+
+    async function deleteAccount(id) {
+      if (!confirm(`确定要删除账号 [${id}] 吗？`)) return;
+      try {
+        await apiFetch(`/v1/admin/accounts/${id}`, { method: 'DELETE' });
+        loadAccounts();
+      } catch (err) {
+        alert(`删除失败: ${err.message}`);
+      }
+    }
+
+    async function sendTestPush(type) {
+      try {
+        const res = await apiFetch('/v1/push/test', {
+          method: 'POST',
+          body: { type },
+        });
+        const json = await res.json();
+        alert(`推送测试指令已成功发出！响应结果: ${JSON.stringify(json)}`);
+      } catch (err) {
+        alert(`下发测试推送失败: ${err.message}`);
+      }
+    }
+
+    // 拖拽与文件上传
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('border-purple-600', 'bg-purple-50/20');
+    });
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('border-purple-600', 'bg-purple-50/20');
+    });
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-purple-600', 'bg-purple-50/20');
+      if (e.dataTransfer.files?.length) {
+        handleFileSelect(e.dataTransfer.files[0]);
+      }
+    });
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files?.length) {
+        handleFileSelect(e.target.files[0]);
+      }
+    });
+
+    let uploadedSessionObj = null;
+
+    function handleFileSelect(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          uploadedSessionObj = parsed;
+          document.getElementById('dropZonePrompt').innerText = `已载入文件: ${file.name}`;
+
+          // 自动尝试提取 cookie
+          let cookie = '';
+          if (parsed.sessionCookie) cookie = parsed.sessionCookie;
+          else if (Array.isArray(parsed.cookies)) {
+            const c = parsed.cookies.find(x => x.name === 'session');
+            if (c) cookie = c.value;
+          }
+          if (cookie) {
+            document.getElementById('accCookieInput').value = cookie;
+          }
+        } catch (err) {
+          alert('JSON 解析失败，请确认文件格式');
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    async function submitAccountForm() {
+      const btn = document.getElementById('submitSessionBtn');
+      const targetAccId = document.getElementById('targetAccountId').value;
+      const accId = document.getElementById('accIdInput').value.trim();
+      const accName = document.getElementById('accNameInput').value.trim();
+      const cookie = document.getElementById('accCookieInput').value.trim();
+
+      if (!cookie && !uploadedSessionObj) {
+        alert('请提供 Session Cookie 或上传 JSON 会话文件');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span>正在向官方接口验证...</span>';
+
+      try {
+        if (targetAccId) {
+          // 更新已有账号凭据
+          const res = await apiFetch(`/v1/admin/accounts/${targetAccId}/session`, {
+            method: 'POST',
+            body: {
+              sessionCookie: cookie,
+              session: uploadedSessionObj,
+            },
+          });
+          const json = await res.json();
+          if (!json.success) throw new Error(json.error);
+        } else {
+          // 创建新账号
+          const res = await apiFetch('/v1/admin/accounts', {
+            method: 'POST',
+            body: {
+              id: accId || undefined,
+              name: accName || undefined,
+              sessionCookie: cookie,
+              session: uploadedSessionObj,
+            },
+          });
+          const json = await res.json();
+          if (!json.success) throw new Error(json.error);
+        }
+
+        btn.innerHTML = '<span>✓ 验证成功！</span>';
+        btn.classList.add('bg-emerald-600');
+        setTimeout(() => {
+          closeModal('uploadModal');
+          btn.disabled = false;
+          btn.innerHTML = '<span>验证并激活</span>';
+          btn.classList.remove('bg-emerald-600');
+          loadAccounts();
+          loadOverview();
+        }, 800);
+
+      } catch (err) {
+        alert(`验证激活失败: ${err.message}`);
+        btn.disabled = false;
+        btn.innerHTML = '<span>重试验证</span>';
+      }
+    }
+
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    // 初始化启动
+    loadAccounts();
+    loadOverview();
+  </script>
+</body>
+</html>

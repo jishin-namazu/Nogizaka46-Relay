@@ -49,8 +49,8 @@ export function extractSessionCredentials(state) {
 
   if (Array.isArray(state.cookies)) {
     const sessionCookieObj = state.cookies.find(
-      c => c.name === 'session' && (c.path === '/v2/update_token' || (c.domain && c.domain.includes('message.nogizaka46.com'))),
-    );
+      c => c.name === 'session' && (c.path === '/v2/update_token' || (c.domain && c.domain.includes('nogizaka46.com'))),
+    ) || state.cookies.find(c => c.name === 'session');
     if (sessionCookieObj && sessionCookieObj.value) {
       sessionCookie = sessionCookieObj.value;
     }

@@ -45,17 +45,24 @@ class MessageService {
     }
 
     const archived = await mediaArchive.archiveMessage(message);
+    const sourceAccount = message.source_account_id ? [String(message.source_account_id)] : [];
+    const sourceAccountsJson = JSON.stringify(sourceAccount);
 
-    // 插入新消息
+    // 插入新消息或更新来源账号列表
     const result = await db.queryOne(
       `INSERT INTO messages (
         id, member_id, member_name, member_avatar_url, phone_image_url,
         type, text, media_url, thumbnail_url, duration_seconds,
         sent_at, incoming_call_from, ringtone_url, is_played, original_data,
-        media_local_path, thumbnail_local_path, phone_image_local_path
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-      ON CONFLICT (id) DO NOTHING
-      RETURNING *`,
+        media_local_path, thumbnail_local_path, phone_image_local_path,
+        source_accounts
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        source_accounts = CASE
+          WHEN messages.source_accounts @> $19::jsonb THEN messages.source_accounts
+          ELSE messages.source_accounts || $19::jsonb
+        END
+      RETURNING (xmax = 0) AS is_new_insert, *`,
       [
         message.id,
         message.member_id || null,
@@ -75,13 +82,16 @@ class MessageService {
         archived.mediaLocalPath,
         archived.thumbnailLocalPath,
         archived.phoneImageLocalPath,
+        sourceAccountsJson,
       ]
     );
 
-    if (result) return { message: result, isNew: true };
+    if (result) {
+      const isNew = Boolean(result.is_new_insert);
+      delete result.is_new_insert;
+      return { message: result, isNew };
+    }
 
-    // 在 PostgreSQL 提交插入之后连接可能丢失。重试
-    // 随后会看到冲突；将这种竞态视为一行已存在的成功记录。
     const racedMessage = await db.queryOne(
       'SELECT * FROM messages WHERE id = $1',
       [message.id],
@@ -113,7 +123,7 @@ class MessageService {
   /**
    * 获取消息列表
    */
-  async getMessages({ limit = 50, offset = 0, type = null, memberId = null }) {
+  async getMessages({ limit = 50, offset = 0, type = null, memberId = null, accountId = null }) {
     let query = `SELECT * FROM messages WHERE ${NON_TEST_MESSAGE}`;
     const params = [];
     let paramCount = 0;
@@ -128,6 +138,12 @@ class MessageService {
       paramCount++;
       query += ` AND member_id = $${paramCount}`;
       params.push(memberId);
+    }
+
+    if (accountId) {
+      paramCount++;
+      query += ` AND source_accounts @> $${paramCount}::jsonb`;
+      params.push(JSON.stringify([String(accountId)]));
     }
 
     query += ` ORDER BY sent_at DESC, id DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;

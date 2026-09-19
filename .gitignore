@@ -24,3 +24,12 @@ logs/
 # Cloud service-account keys, whatever the download names them
 **/*service-account*.json
 **/*firebase-adminsdk*.json
+
+# Runtime signals and temporary data
+**/nogi-accounts-signal.json*
+*.zip
+*.zip.*
+_work/
+data/
+manifest.json
+

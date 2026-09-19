@@ -40,6 +40,26 @@ CREATE TABLE IF NOT EXISTS messages (
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_local_path TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS thumbnail_local_path TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS phone_image_local_path TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS source_accounts JSONB DEFAULT '[]';
+
+-- 创建官方订阅账号表
+CREATE TABLE IF NOT EXISTS accounts (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    session_cookie TEXT NOT NULL,
+    access_token TEXT,
+    token_expires_at TIMESTAMPTZ,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_sync_at TIMESTAMPTZ,
+    last_error TEXT,
+    subscribed_groups JSONB DEFAULT '[]',
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
 
 CREATE INDEX idx_messages_type ON messages(type);
 CREATE INDEX idx_messages_member_id ON messages(member_id);

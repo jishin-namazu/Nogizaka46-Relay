@@ -4,6 +4,8 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { initializeFirebase } from './services/firebase.js';
 import { authenticate, errorHandler, notFound, requestLogger } from './middleware/auth.js';
 import devicesRouter from './routes/devices.js';
@@ -13,8 +15,13 @@ import adminRouter from './routes/admin.js';
 import { pool, query as dbQuery } from './db/index.js';
 import mediaArchive from './services/media.js';
 import { recordError } from './services/error-log.js';
+import { ensureAccountsSchema } from './services/account-service.js';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const adminPublicDir = path.resolve(__dirname, '../public/admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,11 +35,20 @@ try {
 }
 
 // 中间件
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(requestLogger);
+
+// 挂载管理端图形化 Web UI
+app.use('/admin', express.static(adminPublicDir));
+app.get(['/admin', '/admin/*'], (req, res, next) => {
+  if (req.path.startsWith('/admin') && !req.path.includes('.')) {
+    return res.sendFile(path.join(adminPublicDir, 'index.html'));
+  }
+  next();
+});
 
 // 速率限制
 const limiter = rateLimit({
@@ -270,6 +286,7 @@ async function ensureMessageMediaColumns() {
 }
 
 await ensureMessageMediaColumns();
+await ensureAccountsSchema();
 
 // 移除旧版测试调用实现写入的行，以免它们在重启后被
 // 历史同步返回或被计为真实消息。
