@@ -285,7 +285,6 @@ fun SettingsSection(
                     value = userNickname,
                     onValueChange = { userNickname = it },
                     label = { Text("你的昵称") },
-                    placeholder = { Text("例如：小明") },
                     singleLine = true,
                     shape = RelayControlShape,
                     colors = textFieldColors,
