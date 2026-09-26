@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
@@ -527,7 +528,7 @@ fun BlogScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
-                            .animateItemPlacement()
+                            .animateItem()
                             .fillMaxWidth()
                             .padding(vertical = 64.dp),
                     ) {
@@ -547,7 +548,7 @@ fun BlogScreen(
                     BlogSummaryCard(
                         modifier = Modifier
                             .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
-                            .animateItemPlacement(),
+                            .animateItem(),
                         blog = blog,
                         searchQuery = searchQuery,
                         bodyPreviews = bodyPreviews[blog.id].orEmpty(),
@@ -1063,6 +1064,8 @@ private fun BlogDetail(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            // 该详情页没有 TopAppBar，自行避让状态栏。
+            .statusBarsPadding()
             .clearSelectionOnTap(focusManager, textToolbar)
     ) {
         item {

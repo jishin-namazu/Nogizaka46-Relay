@@ -91,7 +91,7 @@ fun MemberInbox(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .animateItemPlacement()
+                                .animateItem()
                                 .width(74.dp)
                                 .clickable { onSelect(thread) },
                         ) {
@@ -167,7 +167,7 @@ fun MemberInbox(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
                 modifier = Modifier
-                    .animateItemPlacement()
+                    .animateItem()
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
             ) {
