@@ -1,0 +1,8 @@
+Lcom/nogirelay/app/NogiRelayApplication;
+Lcom/nogirelay/app/MainActivity;
+Lcom/nogirelay/app/MainActivityKt;
+Lcom/nogirelay/app/blog/**;
+Lcom/nogirelay/app/data/BlogRepository;
+Lcom/nogirelay/app/data/MessageDatabase;
+Lcom/nogirelay/app/performance/**;
+Lcom/nogirelay/app/ui/RemoteImageKt;

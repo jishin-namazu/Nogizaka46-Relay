@@ -1,0 +1,350 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
+
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { initializeFirebase } from './services/firebase.js';
+import { authenticate, configuredTokens, errorHandler, notFound, requestLogger } from './middleware/auth.js';
+import devicesRouter from './routes/devices.js';
+import messagesRouter from './routes/messages.js';
+import pushRouter from './routes/push.js';
+import adminRouter from './routes/admin.js';
+import { pool, query as dbQuery } from './db/index.js';
+import mediaArchive from './services/media.js';
+import { recordError } from './services/error-log.js';
+import { ensureAccountsSchema } from './services/account-service.js';
+
+dotenv.config();
+configuredTokens();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const adminPublicDir = path.resolve(__dirname, '../public/admin');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// 初始化 Firebase
+try {
+  initializeFirebase();
+} catch (error) {
+  await recordError('server.firebase_initialize', error);
+  process.exit(1);
+}
+
+// 中间件
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(requestLogger);
+
+// 挂载管理端图形化 Web UI
+app.use('/admin', express.static(adminPublicDir));
+app.get(['/admin', '/admin/*'], (req, res, next) => {
+  if (req.path.startsWith('/admin') && !req.path.includes('.')) {
+    return res.sendFile(path.join(adminPublicDir, 'index.html'));
+  }
+  next();
+});
+
+// 部署在 Fly.io 边缘代理之后：代理会终止 TLS 并附加 X-Forwarded-For。
+// 信任最近的一跳，让 req.ip 取到代理写入的真实客户端 IP，而不是所有请求
+// 共用的代理地址；用数字而非 true，避免客户端伪造该头绕过 IP 限流。
+// 若将来在前面再叠加一层代理（如 Cloudflare），调大 TRUST_PROXY_HOPS 即可。
+const trustProxyHops = Number.parseInt(process.env.TRUST_PROXY_HOPS || '1', 10);
+app.set('trust proxy', Number.isInteger(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
+
+// 速率限制
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 分钟
+  max: 100, // 限制 100 个请求
+  message: 'Too many requests from this IP, please try again later.',
+});
+app.use('/v1/', limiter);
+
+// 健康检查
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
+// 数据库初始化端点（仅用于首次部署）
+app.post('/init-db', authenticate, async (req, res) => {
+  try {
+    const schemaSQL = `
+      -- 创建设备表
+      CREATE TABLE IF NOT EXISTS devices (
+          id SERIAL PRIMARY KEY,
+          fcm_token TEXT NOT NULL UNIQUE,
+          platform VARCHAR(20) NOT NULL CHECK (platform IN ('android', 'ios')),
+          label VARCHAR(255),
+          user_id VARCHAR(255),
+          last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
+      CREATE INDEX IF NOT EXISTS idx_devices_fcm_token ON devices(fcm_token);
+
+      -- 创建消息表
+      CREATE TABLE IF NOT EXISTS messages (
+          id VARCHAR(255) PRIMARY KEY,
+          member_id VARCHAR(255),
+          member_name VARCHAR(255) NOT NULL,
+          member_avatar_url TEXT,
+          phone_image_url TEXT,
+          type VARCHAR(20) NOT NULL CHECK (type IN ('text', 'image', 'audio', 'video')),
+          text TEXT,
+          media_url TEXT,
+          thumbnail_url TEXT,
+          duration_seconds INTEGER,
+          sent_at TIMESTAMP NOT NULL,
+          incoming_call_from VARCHAR(255),
+          ringtone_url TEXT,
+          is_played BOOLEAN DEFAULT false,
+          original_data JSONB,
+          media_local_path TEXT,
+          thumbnail_local_path TEXT,
+          phone_image_local_path TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_local_path TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS thumbnail_local_path TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS phone_image_local_path TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
+      CREATE INDEX IF NOT EXISTS idx_messages_member_id ON messages(member_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_sent_at ON messages(sent_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_messages_is_played ON messages(is_played) WHERE type = 'audio';
+
+      -- 创建推送日志表
+      CREATE TABLE IF NOT EXISTS push_logs (
+          id SERIAL PRIMARY KEY,
+          message_id VARCHAR(255) NOT NULL,
+          device_id INTEGER,
+          fcm_message_id TEXT,
+          status VARCHAR(20) NOT NULL CHECK (status IN ('success', 'failed')),
+          error_message TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+          FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE SET NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_push_logs_message_id ON push_logs(message_id);
+      CREATE INDEX IF NOT EXISTS idx_push_logs_device_id ON push_logs(device_id);
+      CREATE INDEX IF NOT EXISTS idx_push_logs_status ON push_logs(status);
+      CREATE INDEX IF NOT EXISTS idx_push_logs_created_at ON push_logs(created_at DESC);
+
+      -- 持久化结构化错误日志，便于在 Fly 日志轮转后追查故障
+      CREATE TABLE IF NOT EXISTS error_logs (
+          id BIGSERIAL PRIMARY KEY,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          level VARCHAR(20) NOT NULL,
+          scope VARCHAR(255) NOT NULL,
+          message TEXT NOT NULL,
+          error_name VARCHAR(255),
+          error_code VARCHAR(100),
+          stack TEXT,
+          context JSONB,
+          process_group VARCHAR(100),
+          machine_id VARCHAR(255)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_scope ON error_logs(scope);
+
+      -- 创建成员表
+      CREATE TABLE IF NOT EXISTS members (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          avatar_url TEXT,
+          phone_image_url TEXT,
+          generation INTEGER,
+          is_active BOOLEAN DEFAULT true,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_members_name ON members(name);
+      CREATE INDEX IF NOT EXISTS idx_members_generation ON members(generation);
+
+      CREATE TABLE IF NOT EXISTS blog_posts (
+          id VARCHAR(255) PRIMARY KEY,
+          member_id VARCHAR(255),
+          member_name VARCHAR(255) NOT NULL,
+          member_avatar_url TEXT,
+          title TEXT NOT NULL,
+          image_url TEXT,
+          published_at TIMESTAMPTZ,
+          post_url TEXT NOT NULL,
+          notification_suppressed BOOLEAN NOT NULL DEFAULT false,
+          notification_attempted_at TIMESTAMPTZ,
+          discovered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_published_at ON blog_posts(published_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_member_id ON blog_posts(member_id);
+      CREATE TABLE IF NOT EXISTS blog_sync_state (
+          state_key TEXT PRIMARY KEY,
+          state_value TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 插入测试数据
+      INSERT INTO members (id, name, generation) VALUES
+          ('saito_asuka', '齋藤飛鳥', 1),
+          ('shiraishi_mai', '白石麻衣', 1),
+          ('ikuta_erika', '生田絵梨花', 1),
+          ('nishino_nanase', '西野七瀬', 1)
+      ON CONFLICT (id) DO NOTHING;
+
+      -- 创建触发器
+      CREATE OR REPLACE FUNCTION update_updated_at_column()
+      RETURNS TRIGGER AS $$
+      BEGIN
+          NEW.updated_at = CURRENT_TIMESTAMP;
+          RETURN NEW;
+      END;
+      $$ language 'plpgsql';
+
+      DROP TRIGGER IF EXISTS update_members_updated_at ON members;
+      CREATE TRIGGER update_members_updated_at BEFORE UPDATE ON members
+          FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    `;
+
+    await dbQuery(schemaSQL);
+
+    res.json({
+      success: true,
+      message: 'Database initialized successfully',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    await recordError('server.database_initialize', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+// API 路由（需要认证）
+app.use('/v1/devices', devicesRouter);
+app.use('/v1/messages', messagesRouter);
+app.use('/v1/push', authenticate, pushRouter);
+app.use('/v1/admin', authenticate, adminRouter);
+
+// 保持现有部署与媒体归档列兼容，这些列是在原始 messages 表
+// 创建之后才添加的。两条语句都是幂等的，
+// 并且不会更改已有的 message 行。
+async function ensureMessageMediaColumns() {
+  try {
+    await dbQuery(`
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_local_path TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS thumbnail_local_path TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS phone_image_local_path TEXT;
+      CREATE TABLE IF NOT EXISTS error_logs (
+          id BIGSERIAL PRIMARY KEY,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          level VARCHAR(20) NOT NULL,
+          scope VARCHAR(255) NOT NULL,
+          message TEXT NOT NULL,
+          error_name VARCHAR(255),
+          error_code VARCHAR(100),
+          stack TEXT,
+          context JSONB,
+          process_group VARCHAR(100),
+          machine_id VARCHAR(255)
+      );
+      CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_error_logs_scope ON error_logs(scope);
+      CREATE TABLE IF NOT EXISTS blog_posts (
+          id VARCHAR(255) PRIMARY KEY,
+          member_id VARCHAR(255),
+          member_name VARCHAR(255) NOT NULL,
+          member_avatar_url TEXT,
+          title TEXT NOT NULL,
+          image_url TEXT,
+          published_at TIMESTAMPTZ,
+          post_url TEXT NOT NULL,
+          notification_suppressed BOOLEAN NOT NULL DEFAULT false,
+          notification_attempted_at TIMESTAMPTZ,
+          discovered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_published_at ON blog_posts(published_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_blog_posts_member_id ON blog_posts(member_id);
+      CREATE TABLE IF NOT EXISTS blog_sync_state (
+          state_key TEXT PRIMARY KEY,
+          state_value TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Database message media columns verified');
+  } catch (error) {
+    await recordError('server.database_migration', error);
+  }
+}
+
+await ensureMessageMediaColumns();
+await ensureAccountsSchema();
+
+// 移除旧版测试调用实现写入的行，以免它们在重启后被
+// 历史同步返回或被计为真实消息。
+async function cleanupTransientTestMessages() {
+  try {
+    const result = await dbQuery("DELETE FROM messages WHERE id ~ '^test[-_]'");
+    if (result.rowCount > 0) {
+      console.log(`Removed ${result.rowCount} transient test message(s)`);
+    }
+  } catch (error) {
+    await recordError('server.test_message_cleanup', error);
+  }
+}
+
+await cleanupTransientTestMessages();
+
+// 404 处理
+app.use(notFound);
+
+// 错误处理
+app.use(errorHandler);
+
+// 启动服务器
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Nogi Relay Server running on port ${PORT}`);
+  console.log(`📱 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔥 Firebase initialized`);
+});
+
+// 优雅关闭
+const shutdown = async (signal) => {
+  console.log(`${signal} signal received: closing HTTP server`);
+  try {
+    await pool.end();
+  } finally {
+    server.close(() => {
+      console.log('HTTP server closed');
+      process.exit(0);
+    });
+  }
+};
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
+
+process.on('uncaughtException', error => {
+  void recordError('server.uncaught_exception', error).finally(() => process.exit(1));
+});
+process.on('unhandledRejection', reason => {
+  void recordError('server.unhandled_rejection', reason instanceof Error ? reason : new Error(String(reason)));
+});
+
+export default app;

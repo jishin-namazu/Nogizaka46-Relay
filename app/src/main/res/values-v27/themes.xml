@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 在限定文件夹中声明的 style 会替换默认 bag，而不是与之合并，
+         因此启动主题要重复列出每一项。缺少这些项时，API 27-30 会丢失
+         android:windowBackground，并显示空白启动画面而不是 launch_background。 -->
+    <style name="Theme.NogiRelay.Launch" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:statusBarColor">@color/splash_background</item>
+        <item name="android:navigationBarColor">@color/splash_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Theme.NogiRelay.Call" parent="@style/Theme.NogiRelay.CallBase">
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
