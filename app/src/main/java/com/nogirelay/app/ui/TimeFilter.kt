@@ -1,5 +1,13 @@
 package com.nogirelay.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,28 +30,35 @@ import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -125,6 +140,10 @@ fun TimeFilterSection(
     var preset by remember {
         mutableStateOf(matchingPreset(filter, Instant.now(), zone))
     }
+    // 自定义按钮是开关：记住进入自定义之前选中的预设，再次点击时恢复它。
+    var presetBeforeCustom by remember {
+        mutableStateOf(preset.takeIf { it != TimePreset.CUSTOM } ?: TimePreset.ALL)
+    }
     var startDay by remember(filter) {
         mutableStateOf(filter.startMillis?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() })
     }
@@ -136,6 +155,10 @@ fun TimeFilterSection(
         )
     }
     var picking by remember { mutableStateOf<PickTarget?>(null) }
+    // 收回日期行时 filter 已经切回预设，日期字段会被重置；这里留一份收起前的
+    // 快照，让收起动画期间仍然显示原来的日期，而不是闪过占位符。
+    var collapsedStartDay by remember { mutableStateOf<LocalDate?>(null) }
+    var collapsedEndDay by remember { mutableStateOf<LocalDate?>(null) }
 
     fun applyCustom(start: LocalDate?, end: LocalDate?) {
         startDay = start
@@ -143,6 +166,16 @@ fun TimeFilterSection(
         preset = TimePreset.CUSTOM
         onFilterChange(customBounds(start, end, zone))
     }
+
+    val customSelected = preset == TimePreset.CUSTOM
+    // 日期行收起过程中读的是收起前的日期；展开时始终读当前编辑值。
+    val shownStartDay = if (customSelected) startDay else collapsedStartDay
+    val shownEndDay = if (customSelected) endDay else collapsedEndDay
+    // 与主页设置抽屉里各段展开/收起用的是同一套弹簧参数。
+    val customRowSpring = spring<IntSize>(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessMediumLow,
+    )
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("时间", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -166,11 +199,22 @@ fun TimeFilterSection(
                         )
                     }
                 }
-            val customSelected = preset == TimePreset.CUSTOM
             val chipShape = RoundedCornerShape(10.dp)
             Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
                 Surface(
-                    onClick = { preset = TimePreset.CUSTOM },
+                    onClick = {
+                        if (customSelected) {
+                            // 再次点击：收回日期行，恢复进入自定义之前的选择状态。
+                            collapsedStartDay = startDay
+                            collapsedEndDay = endDay
+                            preset = presetBeforeCustom
+                            onFilterChange(timePresetBounds(presetBeforeCustom, Instant.now(), zone))
+                        } else {
+                            // 第一次点击：记住当前预设，展开自定义日期行。
+                            presetBeforeCustom = preset
+                            preset = TimePreset.CUSTOM
+                        }
+                    },
                     shape = chipShape,
                     color = if (customSelected) {
                         BrandPurpleLight
@@ -204,28 +248,42 @@ fun TimeFilterSection(
                 }
             }
         }
-        if (preset == TimePreset.CUSTOM) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // 与预设 chip 同为 32dp 高度，使两行的节奏一致。
-                Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
-                    RangeDateChip(
-                        text = startDay?.let(::formatDay) ?: "开始日期",
-                        onClick = { picking = PickTarget.START },
-                    )
+        // 与主页设置抽屉里各段展开/收起完全相同的过渡：弹簧展开/收起 + 淡入淡出。
+        // 容器换成同款底部抽屉后，跟随内容的平滑长高由抽屉负责，不会再逐帧重排对话框窗口。
+        AnimatedVisibility(
+            visible = customSelected,
+            enter = expandVertically(
+                expandFrom = Alignment.Top,
+                animationSpec = customRowSpring,
+            ) + fadeIn(animationSpec = tween(200)),
+            exit = shrinkVertically(
+                shrinkTowards = Alignment.Top,
+                animationSpec = customRowSpring,
+            ) + fadeOut(animationSpec = tween(200)),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    // 与预设 chip 同为 32dp 高度，使两行的节奏一致。
+                    Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
+                        RangeDateChip(
+                            text = shownStartDay?.let(::formatDay) ?: "开始日期",
+                            onClick = { picking = PickTarget.START },
+                        )
+                    }
+                    Text("至", fontSize = 12.sp)
+                    Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
+                        RangeDateChip(
+                            text = shownEndDay?.let(::formatDay) ?: "结束日期",
+                            onClick = { picking = PickTarget.END },
+                        )
+                    }
                 }
-                Text("至", fontSize = 12.sp)
-                Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
-                    RangeDateChip(
-                        text = endDay?.let(::formatDay) ?: "结束日期",
-                        onClick = { picking = PickTarget.END },
-                    )
+                if (shownStartDay != null && shownEndDay != null && shownEndDay.isBefore(shownStartDay)) {
+                    Text("结束日期早于开始日期", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
-            }
-            if (startDay != null && endDay != null && endDay!!.isBefore(startDay)) {
-                Text("结束日期早于开始日期", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
             }
         }
     }
@@ -328,7 +386,11 @@ private fun RangeDateChip(text: String, onClick: () -> Unit) {
     }
 }
 
-/** 独立筛选对话框，供只需要时间筛选的界面使用。 */
+/**
+ * 独立的时间筛选抽屉，供只需要时间筛选的界面使用。
+ * 与主页的设置抽屉保持一致：底部弹出，内部内容平滑展开/收起。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TimeFilterDialog(
     filter: TimeFilter,
@@ -336,31 +398,64 @@ fun TimeFilterDialog(
     onConfirm: (TimeFilter) -> Unit,
 ) {
     var draft by remember(filter) { mutableStateOf(filter) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
-        title = { Text("消息时间筛选", fontWeight = FontWeight.Bold) },
-        text = {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+
+    // 先播放抽屉收起动画，再从组合里移除，避免直接消失。
+    fun closeSheet(after: () -> Unit) {
+        scope.launch {
+            sheetState.hide()
+            after()
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = { closeSheet(onDismiss) },
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text(
+                text = "消息时间筛选",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(14.dp))
             TimeFilterSection(
                 filter = draft,
                 onFilterChange = { draft = it },
                 modifier = Modifier.fillMaxWidth(),
             )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(draft) },
-                enabled = !draft.hasInvertedRange(),
-                colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
-            ) { Text("确定", fontWeight = FontWeight.Bold) }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
-            ) { Text("取消") }
-        },
-    )
+            Spacer(Modifier.height(18.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                OutlinedButton(
+                    onClick = { closeSheet(onDismiss) },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
+                ) {
+                    Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Button(
+                    onClick = { closeSheet { onConfirm(draft) } },
+                    enabled = !draft.hasInvertedRange(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
+                    modifier = Modifier.weight(1f).height(44.dp),
+                ) {
+                    Text("确定", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
+        }
+    }
 }
 
 /**
