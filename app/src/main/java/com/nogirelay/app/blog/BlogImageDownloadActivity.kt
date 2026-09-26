@@ -4,11 +4,21 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,8 +28,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.BorderStroke
@@ -28,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
@@ -63,8 +76,18 @@ import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.RemoteImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** 下载按钮的三种状态，用来驱动图标与文案之间的平滑过渡。 */
+private enum class BlogDownloadButtonState { IDLE, DOWNLOADING, DONE }
+
+/** 下载快到一瞬间完成时，进度动画至少显示这么久，避免一闪而过。 */
+private const val MIN_DOWNLOAD_FEEDBACK_MILLIS = 650L
+
+/** 保存成功后的短暂反馈时长。 */
+private const val DOWNLOAD_DONE_FEEDBACK_MILLIS = 1600L
 
 class BlogImageDownloadActivity : ComponentActivity() {
     companion object {
@@ -76,6 +99,11 @@ class BlogImageDownloadActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 顶栏/底栏背景延伸到系统栏下面，图标保持深色，避免标题压到状态栏。
+        androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
         AppGraph.initialize(this)
         val blog = intent.getStringExtra(EXTRA_BLOG_ID)?.let(AppGraph.database::findBlog)
         if (blog == null) {
@@ -97,13 +125,16 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
     val urls = remember(blog.id, blog.bodyHtml, blog.imageUrl) { BlogMediaDownloader.imageUrls(blog) }
     var selectedUrls by remember(urls) { mutableStateOf(emptySet<String>()) }
     var downloading by remember { mutableStateOf(false) }
+    var downloadCompleted by remember { mutableStateOf(false) }
     var waitingForPermission by remember { mutableStateOf(false) }
 
     fun downloadSelected() {
         val requested = urls.filter(selectedUrls::contains)
         if (requested.isEmpty() || downloading) return
         downloading = true
+        downloadCompleted = false
         scope.launch {
+            val startedAt = SystemClock.elapsedRealtime()
             val results = withContext(Dispatchers.IO) {
                 requested.map { url ->
                     val imageNumber = urls.indexOf(url) + 1
@@ -116,6 +147,12 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                     }
                 }
             }
+            // 图片往往一瞬间就下载完：让进度状态至少完整显示一小段时间，
+            // 否则按钮会从"下载"直接跳到结果，中间的进度一闪而过。
+            val elapsed = SystemClock.elapsedRealtime() - startedAt
+            if (elapsed < MIN_DOWNLOAD_FEEDBACK_MILLIS) {
+                delay(MIN_DOWNLOAD_FEEDBACK_MILLIS - elapsed)
+            }
             downloading = false
             val savedCount = results.count(Result<*>::isSuccess)
             val failedCount = results.size - savedCount
@@ -125,6 +162,12 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                 else -> "已保存 $savedCount 张图片，$failedCount 张失败"
             }
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            if (savedCount > 0) {
+                // 与媒体查看器的下载按钮一致：成功状态短暂停留后再回到"下载"。
+                downloadCompleted = true
+                delay(DOWNLOAD_DONE_FEEDBACK_MILLIS)
+                downloadCompleted = false
+            }
         }
     }
 
@@ -148,7 +191,10 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
             ) {
                 IconButton(onClick = onBack, enabled = !downloading) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客", tint = MaterialTheme.colorScheme.onSurface)
@@ -215,7 +261,10 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 IconButton(onClick = { selectedUrls = urls.toSet() }, enabled = urls.isNotEmpty() && !downloading) {
                     Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
@@ -243,13 +292,60 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                     shape = RelayControlShape,
                     colors = ButtonDefaults.buttonColors(containerColor = BrandPurple),
                 ) {
-                    if (downloading) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                    } else {
-                        Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    AnimatedContent(
+                        targetState = when {
+                            downloading -> BlogDownloadButtonState.DOWNLOADING
+                            downloadCompleted -> BlogDownloadButtonState.DONE
+                            else -> BlogDownloadButtonState.IDLE
+                        },
+                        transitionSpec = {
+                            (
+                                fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                                    scaleIn(
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
+                                        initialScale = 0.8f,
+                                    )
+                                ).togetherWith(
+                                fadeOut(animationSpec = tween(120)) +
+                                    scaleOut(targetScale = 0.8f, animationSpec = tween(120)),
+                            )
+                        },
+                        contentAlignment = Alignment.Center,
+                        label = "blog_download_button",
+                    ) { state ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            when (state) {
+                                BlogDownloadButtonState.DOWNLOADING -> CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.White,
+                                )
+                                BlogDownloadButtonState.DONE -> Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                BlogDownloadButtonState.IDLE -> Icon(
+                                    Icons.Rounded.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                            Spacer(Modifier.size(6.dp))
+                            Text(
+                                text = when (state) {
+                                    BlogDownloadButtonState.DOWNLOADING -> "下载中"
+                                    BlogDownloadButtonState.DONE -> "已保存"
+                                    BlogDownloadButtonState.IDLE -> "下载"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                        }
                     }
-                    Spacer(Modifier.size(6.dp))
-                    Text(if (downloading) "下载中" else "下载", fontWeight = FontWeight.Bold)
                 }
             }
         }
