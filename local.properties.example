@@ -1,0 +1,3 @@
+sdk.dir=C\:/Users/YOUR_USER/AppData/Local/Android/Sdk
+relay.baseUrl=https://your-server.example
+relay.access.token=replace-with-your-token

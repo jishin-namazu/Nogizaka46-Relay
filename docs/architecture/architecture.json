@@ -1,0 +1,491 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Nogi Relay 完整运行架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/jishin-namazu/Nogizaka46-Relay",
+      "provider": "github",
+      "revision": "f0817c8c8a89cc4b07957d1817c28c7aa7914481"
+    },
+    "viewBox": [
+      1150,
+      660
+    ],
+    "views": [
+      {
+        "id": "message-path",
+        "label": "消息主链路",
+        "focus": [
+          "officialApi",
+          "monitorProcess",
+          "fcmDelivery",
+          "androidIngress",
+          "androidExperience",
+          "androidStorage"
+        ],
+        "note": "官方轮询 → 入库与媒体归档 → FCM data 推送 → 客户端接收、入库与来电/通知。"
+      },
+      {
+        "id": "admin-path",
+        "label": "管理与运维",
+        "focus": [
+          "adminAccess",
+          "apiProcess",
+          "serverStores",
+          "monitorProcess"
+        ],
+        "note": "Web 控制台与运维 CLI 经 ADMIN 令牌管理多账号、会话热更新、推送与审计。"
+      },
+      {
+        "id": "blog-ai-path",
+        "label": "博客与翻译",
+        "focus": [
+          "officialPublic",
+          "androidEnrichment",
+          "aiProviders",
+          "androidStorage"
+        ],
+        "note": "博客正文/图片与 AI 翻译均由客户端直连,不经 Relay 服务端。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "officialApi",
+      "type": "external",
+      "label": "乃木坂46 官方 Message API",
+      "sublabel": "Web JWT · /v2 轮询接口",
+      "pos": [
+        40,
+        60
+      ],
+      "size": [
+        210,
+        84
+      ],
+      "sources": [
+        {
+          "path": "server/src/monitor/nogi-browser.js",
+          "label": "轮询与续期"
+        }
+      ]
+    },
+    {
+      "id": "monitorProcess",
+      "type": "backend",
+      "label": "Monitor 进程",
+      "sublabel": "多账号轮询 · 博客监控 · 媒体归档 · 媒体流 :8081",
+      "pos": [
+        330,
+        60
+      ],
+      "size": [
+        230,
+        96
+      ],
+      "sources": [
+        {
+          "path": "server/src/monitor/index.js",
+          "label": "进程入口"
+        },
+        {
+          "path": "server/src/monitor/media-server.js",
+          "label": "媒体流 :8081"
+        }
+      ]
+    },
+    {
+      "id": "apiProcess",
+      "type": "backend",
+      "label": "API 进程",
+      "sublabel": "Express :8080 · /v1 REST · 托管 /admin",
+      "pos": [
+        620,
+        60
+      ],
+      "size": [
+        230,
+        96
+      ],
+      "sources": [
+        {
+          "path": "server/src/index.js",
+          "label": "进程入口"
+        },
+        {
+          "path": "server/src/middleware/auth.js",
+          "label": "双令牌鉴权"
+        }
+      ]
+    },
+    {
+      "id": "serverStores",
+      "type": "database",
+      "label": "PostgreSQL + /data 持久卷",
+      "sublabel": "消息/账号/日志 · 媒体对象与会话",
+      "brand": "postgresql",
+      "pos": [
+        920,
+        60
+      ],
+      "size": [
+        200,
+        96
+      ],
+      "sources": [
+        {
+          "path": "server/database/schema.sql",
+          "label": "表结构"
+        },
+        {
+          "path": "server/src/services/media.js",
+          "label": "内容寻址归档"
+        }
+      ]
+    },
+    {
+      "id": "adminAccess",
+      "type": "frontend",
+      "label": "管理端",
+      "sublabel": "Web 控制台 /admin · 运维 CLI",
+      "pos": [
+        920,
+        240
+      ],
+      "size": [
+        200,
+        84
+      ],
+      "sources": [
+        {
+          "path": "server/public/admin/index.html",
+          "label": "控制台 SPA"
+        },
+        {
+          "path": "server/upload-session.js",
+          "label": "会话上传 CLI"
+        }
+      ]
+    },
+    {
+      "id": "fcmDelivery",
+      "type": "messagebus",
+      "label": "Firebase FCM",
+      "sublabel": "data-only · high priority",
+      "brand": "firebase",
+      "pos": [
+        40,
+        170
+      ],
+      "size": [
+        200,
+        84
+      ]
+    },
+    {
+      "id": "androidIngress",
+      "type": "frontend",
+      "label": "接收层",
+      "sublabel": "FCM Service · RelayClient · PushRegistrar",
+      "pos": [
+        330,
+        240
+      ],
+      "size": [
+        230,
+        88
+      ],
+      "sources": [
+        {
+          "path": "app/src/main/java/com/nogirelay/app/push/NogiFirebaseMessagingService.kt",
+          "label": "推送接收"
+        }
+      ]
+    },
+    {
+      "id": "androidExperience",
+      "type": "frontend",
+      "label": "交互层",
+      "sublabel": "Compose 三 Tab · 来电链",
+      "pos": [
+        630,
+        240
+      ],
+      "size": [
+        240,
+        88
+      ],
+      "sources": [
+        {
+          "path": "app/src/main/java/com/nogirelay/app/ui/navigation/RelayApp.kt",
+          "label": "三 Tab 导航"
+        },
+        {
+          "path": "app/src/main/java/com/nogirelay/app/call/IncomingCallActivity.kt",
+          "label": "来电"
+        }
+      ]
+    },
+    {
+      "id": "androidStorage",
+      "type": "database",
+      "label": "本地存储",
+      "sublabel": "SQLite v11 · 设置 · 媒体缓存",
+      "pos": [
+        630,
+        420
+      ],
+      "size": [
+        240,
+        88
+      ],
+      "sources": [
+        {
+          "path": "app/src/main/java/com/nogirelay/app/data/MessageDatabase.kt",
+          "label": "SQLite v11"
+        }
+      ]
+    },
+    {
+      "id": "androidEnrichment",
+      "type": "frontend",
+      "label": "内容处理",
+      "sublabel": "BlogClient 直连 · 翻译 · 导入导出",
+      "pos": [
+        330,
+        420
+      ],
+      "size": [
+        260,
+        88
+      ],
+      "sources": [
+        {
+          "path": "app/src/main/java/com/nogirelay/app/data/BlogClient.kt",
+          "label": "博客直连"
+        },
+        {
+          "path": "app/src/main/java/com/nogirelay/app/data/transfer/DataTransferManager.kt",
+          "label": "导入导出"
+        }
+      ]
+    },
+    {
+      "id": "aiProviders",
+      "type": "external",
+      "label": "11 家大模型 API",
+      "sublabel": "OpenAI · Kimi · Claude 等 · 自带 Key",
+      "pos": [
+        40,
+        420
+      ],
+      "size": [
+        200,
+        84
+      ],
+      "sources": [
+        {
+          "path": "app/src/main/java/com/nogirelay/app/translation/AIProviderFactory.kt",
+          "label": "11 家提供商"
+        }
+      ]
+    },
+    {
+      "id": "officialPublic",
+      "type": "external",
+      "label": "官网公开 BLOG / 媒体 CDN",
+      "sublabel": "JSONP 列表 · 正文 HTML · 图片直链",
+      "pos": [
+        40,
+        530
+      ],
+      "size": [
+        200,
+        84
+      ],
+      "sources": [
+        {
+          "path": "app/src/main/java/com/nogirelay/app/data/BlogClient.kt",
+          "label": "JSONP 解析"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Fly.io · nrt · 单容器双 Node 进程",
+      "wraps": [
+        "monitorProcess",
+        "apiProcess"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Android 设备",
+      "wraps": [
+        "androidIngress",
+        "androidExperience",
+        "androidStorage",
+        "androidEnrichment"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "official-poll",
+      "from": "officialApi",
+      "to": "monitorProcess",
+      "label": "HTTPS 轮询"
+    },
+    {
+      "id": "admin-ops",
+      "from": "adminAccess",
+      "to": "apiProcess",
+      "label": "ADMIN 令牌 · 账号/会话/推送/审计",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "api-store",
+      "from": "apiProcess",
+      "to": "serverStores",
+      "label": "SQL / 文件",
+      "labelDy": -40
+    },
+    {
+      "id": "monitor-store",
+      "from": "monitorProcess",
+      "to": "serverStores",
+      "label": "SQL 入库 · 媒体归档 · 写盘",
+      "fromSide": "top",
+      "toSide": "top"
+    },
+    {
+      "id": "api-monitor-signal",
+      "from": "apiProcess",
+      "to": "monitorProcess",
+      "label": "信号文件",
+      "variant": "dashed"
+    },
+    {
+      "id": "monitor-push",
+      "from": "monitorProcess",
+      "to": "fcmDelivery",
+      "label": "新消息/新博客推送",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "fcm-receive",
+      "from": "fcmDelivery",
+      "to": "androidIngress",
+      "label": "data 推送",
+      "labelAt": [
+        285,
+        330
+      ]
+    },
+    {
+      "id": "client-rest",
+      "from": "androidIngress",
+      "to": "apiProcess",
+      "label": "CLIENT 令牌 · 注册/同步/补拉",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "id": "client-media",
+      "from": "androidIngress",
+      "to": "monitorProcess",
+      "label": ":8081 媒体流",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "ingress-persist",
+      "from": "androidIngress",
+      "to": "androidStorage",
+      "label": "去重入库 · 媒体预取",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "ingress-notify",
+      "from": "androidIngress",
+      "to": "androidExperience",
+      "label": "通知/来电链",
+      "labelDy": 22
+    },
+    {
+      "id": "experience-read",
+      "from": "androidExperience",
+      "to": "androidStorage",
+      "label": "本地查询 · 播放状态",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        750,
+        362
+      ]
+    },
+    {
+      "id": "enrich-store",
+      "from": "androidEnrichment",
+      "to": "androidStorage",
+      "label": "正文/译文/图片缓存",
+      "labelAt": [
+        615,
+        522
+      ]
+    },
+    {
+      "id": "direct-blog",
+      "from": "androidEnrichment",
+      "to": "officialPublic",
+      "label": "博客正文/图片直连",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "direct-ai",
+      "from": "androidEnrichment",
+      "to": "aiProviders",
+      "label": "HTTPS 直连翻译",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "right"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "服务端",
+      "items": [
+        "单容器双进程:API :8080 + Monitor(轮询/博客监控/媒体流 :8081);推送测试与撤回由 API 直达 FCM",
+        "PostgreSQL 外部托管;媒体以 SHA-256 内容寻址落 /data 卷"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "客户端",
+      "items": [
+        "双通道:服务端同步消息,官网直连博客正文/图片",
+        "本地优先:SQLite v11 + 私有媒体缓存;FCM 超载时回源补拉"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "安全边界",
+      "items": [
+        "ADMIN / CLIENT 双令牌,管理端为客户端超集",
+        "媒体流 Bearer 校验;会话文件原子写入 0600 权限"
+      ]
+    }
+  ]
+}

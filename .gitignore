@@ -1,0 +1,38 @@
+.gradle/
+**/local.properties
+**/build/
+app/google-services.json
+fly.toml
+**/.env
+
+# Runtime credentials and session files written by the monitor
+**/firebase-admin-key.json
+**/nogi-browser-state.json
+**/nogi-browser-state.json.upload-status.json
+**/nogi-browser-state.json.activation-status.json
+**/nogi-browser-state.json.tmp-*
+**/nogi-access-token.json
+**/nogi-access-token.json.tmp-*
+
+# Server error logs (LOG_STORAGE_DIR falls back to ./logs outside production)
+logs/
+
+# Local signing keys and database files that must never reach the repository
+*.jks
+*.keystore
+!app/debug.keystore
+*.db
+*.db-*
+
+# Cloud service-account keys, whatever the download names them
+**/*service-account*.json
+**/*firebase-adminsdk*.json
+
+# Runtime signals and temporary data
+**/nogi-accounts-signal.json*
+*.zip
+*.zip.*
+_work/
+data/
+manifest.json
+
