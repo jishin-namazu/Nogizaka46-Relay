@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -26,7 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Inbox
-import androidx.compose.material.ripple.rememberRipple
+import androidx.compose.material3.ripple
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -120,7 +121,7 @@ fun RowScope.RelayNavigationBarItem(
                 )
                 .indication(
                     interactionSource = interactionSource,
-                    indication = rememberRipple(bounded = true),
+                    indication = ripple(bounded = true),
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -181,7 +182,7 @@ fun RelayIconButton(
             .clickable(
                 enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
-                indication = rememberRipple(bounded = true),
+                indication = ripple(bounded = true),
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
@@ -305,6 +306,9 @@ fun RelayApp(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        // 顶部状态栏 inset 由各页面自己的 TopAppBar（或详情页的 statusBarsPadding）消费；
+        // 这里若沿用默认的 systemBars 内边距，会和它叠加成两倍状态栏高度的留白。
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.background,

@@ -51,12 +51,12 @@ if (googleServicesFile.exists()) {
 
 android {
     namespace = "com.nogirelay.app"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.nogirelay.app"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 37
         versionCode = 12
         versionName = "1.0.0"
 
@@ -133,18 +133,28 @@ tasks.matching { it.name in setOf("assembleDebug", "assembleRelease") }.configur
 }
 
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2024.05.00"))
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.activity:activity-compose:1.9.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
+    // Compose BOM 2026.09.00 = ui/foundation 1.12.1 + material3 1.4.0（Material 3 Expressive）。
+    // 注意：Compose 1.12.x 与 Haze 2.0.0 都要求 compileSdk >= 37。
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-    implementation(platform("com.google.firebase:firebase-bom:33.1.2"))
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
     implementation("com.google.firebase:firebase-messaging")
+
+    // 液态玻璃（Liquid Glass）：Haze 2.0.0
+    // haze              背景内容采集 + 效果基础设施
+    // haze-glass        折射驱动的玻璃材质（折射/模糊/染色/菲涅尔/镜面高光/色散）
+    // haze-glass-material3  将玻璃表面容器色接到 Material 3 的 colorScheme.surface
+    implementation("dev.chrisbanes.haze:haze:2.0.0")
+    implementation("dev.chrisbanes.haze:haze-glass:2.0.0")
+    implementation("dev.chrisbanes.haze:haze-glass-material3:2.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
