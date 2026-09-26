@@ -329,6 +329,8 @@ fun DataTransferDrawer(
                                         progress = {
                                             (scanned.toFloat() / count.toFloat()).coerceIn(0f, 1f)
                                         },
+                                        // 去掉轨道最右端的紫色端点圆点，统计进度条只保留进度本身。
+                                        drawStopIndicator = {},
                                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                                     )
                                 } else {
@@ -604,6 +606,8 @@ private fun TransferStatusCard(
                     if (transfer.total > 0) {
                         LinearProgressIndicator(
                             progress = { transfer.done.toFloat() / transfer.total.toFloat() },
+                            // 与统计进度条一致：不显示轨道末端的端点圆点。
+                            drawStopIndicator = {},
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {

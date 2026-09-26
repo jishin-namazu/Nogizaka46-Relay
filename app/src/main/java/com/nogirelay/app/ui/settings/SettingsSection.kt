@@ -1,10 +1,14 @@
 package com.nogirelay.app.ui.settings
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -59,7 +63,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nogirelay.app.BuildConfig
@@ -78,7 +84,6 @@ import com.nogirelay.app.ui.BrandPurpleLight
 import com.nogirelay.app.ui.RelayCardShape
 import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.SignalGreen
-import com.nogirelay.app.ui.navigation.RelayIconButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -118,6 +123,10 @@ fun SettingsSection(
     val selectedModelSupport = remember(selectedProvider, aiModel) {
         selectedProvider.jsonOutputSupport(aiModel)
     }
+    // 模型列表按接口返回的原始顺序展示会很乱，选择器统一按名称排序。
+    val sortedModelOptions = remember(modelOptions) {
+        modelOptions.sortedBy { it.displayName.lowercase() }
+    }
 
     // 除昵称外正在编辑的全部设置：昵称有自己的输入框与保存按钮，
     // 这里保存其它设置时不会带上半途输入的昵称。
@@ -153,13 +162,17 @@ fun SettingsSection(
         onSettingsChanged()
     }
 
-    fun saveTranslationSettings() {
+    /**
+     * 保存 AI 翻译相关设置。[showSavedLabel] 为 false 时不弹出"翻译设置已保存"，
+     * 供全量翻译开关使用：开关本身有明确的状态反馈，不需要额外的保存提示。
+     */
+    fun saveTranslationSettings(showSavedLabel: Boolean = true) {
         AppGraph.settings.save(currentSettings())
         TranslationManager.resetRetries()
         BlogTranslationManager.resetRetries()
         TranslationManager.enqueue(context)
         BlogTranslationManager.enqueuePending(context)
-        translationSavedLabel = "翻译设置已保存"
+        if (showSavedLabel) translationSavedLabel = "翻译设置已保存"
         onSettingsChanged()
     }
 
@@ -241,13 +254,13 @@ fun SettingsSection(
                     onClick = {
                         AppGraph.settings.save(currentSettings())
                         pushStatusLabel = "正在注册 FCM 设备..."
+                        // PushRegistrar 保证结果在主线程且只回调一次（含超时兜底），
+                        // 这里不再依赖 Activity 类型转换，避免窗口 Context 变化后结果丢失。
                         PushRegistrar.registerCurrentToken(context) { result ->
-                            (context as? android.app.Activity)?.runOnUiThread {
-                                pushStatusLabel = result.fold(
-                                    onSuccess = { "设备已注册，系统推送已就绪" },
-                                    onFailure = { it.message ?: "FCM 设备注册失败" },
-                                )
-                            }
+                            pushStatusLabel = result.fold(
+                                onSuccess = { "设备已注册，系统推送已就绪" },
+                                onFailure = { it.message?.takeIf(String::isNotBlank) ?: "FCM 设备注册失败" },
+                            )
                         }
                     },
                     shape = RoundedCornerShape(12.dp),
@@ -258,14 +271,11 @@ fun SettingsSection(
                     Spacer(Modifier.size(8.dp))
                     Text("保存并注册推送", fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
-                if (pushStatusLabel.isNotBlank()) {
-                    Text(
-                        text = pushStatusLabel,
-                        color = if (pushStatusLabel.contains("失败")) MaterialTheme.colorScheme.error else SignalGreen,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
+                AnimatedStatusText(
+                    text = pushStatusLabel,
+                    color = if (pushStatusLabel.contains("失败")) MaterialTheme.colorScheme.error else SignalGreen,
+                    fontSize = 13.sp,
+                )
             }
         }
 
@@ -303,9 +313,11 @@ fun SettingsSection(
                     Spacer(Modifier.size(8.dp))
                     Text("保存昵称", fontWeight = FontWeight.SemiBold, maxLines = 1)
                 }
-                if (nicknameLabel.isNotBlank()) {
-                    Text(nicknameLabel, color = SignalGreen, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                }
+                AnimatedStatusText(
+                    text = nicknameLabel,
+                    color = SignalGreen,
+                    fontSize = 13.sp,
+                )
             }
         }
 
@@ -456,9 +468,7 @@ fun SettingsSection(
                             Text(if (validatingApiKey) "校验中…" else "校验模型", fontWeight = FontWeight.SemiBold, maxLines = 1)
                         }
                     }
-                    if (modelStatus.isNotBlank()) {
-                        Text(modelStatus, color = BrandPurpleDark, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
-                    }
+                    AnimatedStatusText(text = modelStatus, color = BrandPurpleDark)
                     Box {
                         OutlinedTextField(
                             value = aiModel,
@@ -467,12 +477,24 @@ fun SettingsSection(
                             label = { Text("翻译模型") },
                             placeholder = { Text("请先校验 API Key 并选择模型") },
                             trailingIcon = {
-                                RelayIconButton(
-                                    onClick = { modelMenuExpanded = true },
-                                    enabled = modelOptions.isNotEmpty(),
-                                    imageVector = Icons.Rounded.ArrowDropDown,
-                                    contentDescription = "选择翻译模型",
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    // 与选择器条目右侧的标签保持一致：选中的模型直接继承显示。
+                                    if (selectedModelSupport.isSupported) {
+                                        SupportBadge(selectedModelSupport.label)
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Rounded.ArrowDropDown,
+                                        contentDescription = "选择翻译模型",
+                                        tint = if (modelOptions.isNotEmpty()) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                        },
+                                    )
+                                }
                             },
                             singleLine = true,
                             shape = RelayControlShape,
@@ -497,7 +519,7 @@ fun SettingsSection(
                                 Modifier
                             },
                         ) {
-                            modelOptions.forEach { model ->
+                            sortedModelOptions.forEach { model ->
                                 val support = selectedProvider.jsonOutputSupport(model.id)
                                 DropdownMenuItem(
                                     text = { Text(model.displayName) },
@@ -516,35 +538,21 @@ fun SettingsSection(
                             }
                         }
                     }
-                    if (aiModel.isNotBlank()) {
-                        Text(
-                            text = if (selectedModelSupport.isSupported) {
-                                "结构化输出：${selectedModelSupport.label}"
-                            } else {
-                                "结构化输出：不支持，仅用提示词约束"
-                            },
-                            color = if (selectedModelSupport.isSupported) SignalGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
                     if (modelOptions.isEmpty() && aiApiKey.isNotBlank()) {
-                        Text(
-                            "请点击\"校验模型\"获取可用模型列表",
+                        AnimatedStatusText(
+                            text = "请点击\"校验模型\"获取可用模型列表",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp,
                         )
                     }
-                    if (translationSavedLabel.isNotBlank()) {
-                        Text(translationSavedLabel, color = SignalGreen, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
-                    }
+                    AnimatedStatusText(text = translationSavedLabel, color = SignalGreen)
                     FullTranslationToggle(
                         title = "消息全量翻译",
                         description = "开启后自动翻译所有历史未翻译的消息；关闭时只自动翻译新收到的消息，查看历史消息需要手动点击翻译。",
                         checked = messageFullTranslation,
                         onCheckedChange = {
                             messageFullTranslation = it
-                            saveTranslationSettings()
+                            saveTranslationSettings(showSavedLabel = false)
                         },
                     )
                     FullTranslationToggle(
@@ -553,7 +561,7 @@ fun SettingsSection(
                         checked = blogFullTranslation,
                         onCheckedChange = {
                             blogFullTranslation = it
-                            saveTranslationSettings()
+                            saveTranslationSettings(showSavedLabel = false)
                         },
                     )
                     OutlinedButton(
@@ -567,9 +575,7 @@ fun SettingsSection(
                         Spacer(Modifier.size(6.dp))
                         Text("重新翻译全部", fontWeight = FontWeight.SemiBold, maxLines = 1)
                     }
-                    if (retranslateStatus.isNotBlank()) {
-                        Text(retranslateStatus, color = BrandPurpleDark, fontSize = 12.5.sp, fontWeight = FontWeight.Medium)
-                    }
+                    AnimatedStatusText(text = retranslateStatus, color = BrandPurpleDark)
                     if (showRetranslateAllDialog) {
                         AlertDialog(
                             onDismissRequest = { showRetranslateAllDialog = false },
@@ -676,4 +682,68 @@ fun SupportBadge(label: String) {
         fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
     )
+}
+
+/** 状态文字展开用的弹簧：高度变化不能过冲，否则文字块会顶出去再弹回来。 */
+private val statusVisibilitySpring = spring<IntSize>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMedium,
+)
+
+/** 状态文字切换用的弹簧：不抖动、跟上节奏即可。 */
+private val statusTextSpring = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+)
+
+/** 状态文字切换时的位移弹簧：与高度动画一致，不做回弹，避免文字被裁切抖动。 */
+private val statusSlideSpring = spring<IntOffset>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMedium,
+)
+
+private val statusFadeIn = tween<Float>(durationMillis = 180)
+private val statusFadeOut = tween<Float>(durationMillis = 140)
+
+/**
+ * 设置抽屉里所有弹出文字的公共外壳：
+ * 出现时用弹簧展开并淡入，文案变化（例如"正在注册"变成结果）也用弹簧淡入切换，
+ * 避免文字突然出现或突然跳变；文字为空时不占位，直接移除。
+ */
+@Composable
+private fun AnimatedStatusText(
+    text: String,
+    color: Color,
+    fontSize: TextUnit = 12.5.sp,
+    fontWeight: FontWeight = FontWeight.Medium,
+) {
+    // 隐藏时整块移除：否则 Column 的 spacedBy 会在空元素处留下多余间距。
+    if (text.isBlank()) return
+    // 首次出现时从收起状态弹出，弹簧展开 + 淡入。
+    val visibleState = remember { MutableTransitionState(false).apply { targetState = true } }
+    AnimatedVisibility(
+        visibleState = visibleState,
+        enter = expandVertically(
+            expandFrom = Alignment.Top,
+            animationSpec = statusVisibilitySpring,
+        ) + fadeIn(animationSpec = statusFadeIn),
+    ) {
+        AnimatedContent(
+            targetState = text,
+            transitionSpec = {
+                (
+                    fadeIn(animationSpec = statusTextSpring) +
+                        slideInVertically(animationSpec = statusSlideSpring) { height -> height / 2 }
+                    ).togetherWith(fadeOut(animationSpec = statusFadeOut))
+            },
+            label = "settings_status_text",
+        ) { value ->
+            Text(
+                text = value,
+                color = color,
+                fontSize = fontSize,
+                fontWeight = fontWeight,
+            )
+        }
+    }
 }

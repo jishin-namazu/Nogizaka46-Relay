@@ -15,10 +15,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -201,8 +207,15 @@ private fun MediaViewer(
     val saveDownload: (RelayMessage) -> Unit = { message ->
         downloadingMessageId = message.id
         downloadScope.launch(Dispatchers.IO) {
+            val startedAt = SystemClock.elapsedRealtime()
             val result = runCatching { MediaDownloader.saveToDownloads(context, message) }
             withContext(Dispatchers.Main) {
+                // 下载往往在一瞬间完成：让进度动画至少完整播一遍，
+                // 否则会从下载图标直接跳到成功图标，中间的进度一闪而过。
+                val elapsed = SystemClock.elapsedRealtime() - startedAt
+                if (elapsed < MIN_DOWNLOAD_FEEDBACK_MILLIS) {
+                    delay(MIN_DOWNLOAD_FEEDBACK_MILLIS - elapsed)
+                }
                 downloadingMessageId = null
                 if (result.isSuccess) {
                     downloadedMessageId = message.id
@@ -269,6 +282,12 @@ private fun MediaViewer(
     }
 }
 
+/** 下载按钮的三种状态，用来驱动按钮图标之间的平滑过渡。 */
+private enum class DownloadButtonState { IDLE, DOWNLOADING, DONE }
+
+/** 下载快到一瞬间完成时，进度动画至少显示这么久，避免一闪而过。 */
+private const val MIN_DOWNLOAD_FEEDBACK_MILLIS = 650L
+
 @Composable
 private fun MediaViewerTopBar(
     title: String,
@@ -333,29 +352,50 @@ private fun MediaViewerTopBar(
             onClick = onDownload,
             modifier = Modifier.size(44.dp),
         ) {
-            when {
-                isDownloading -> {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                isDownloaded -> {
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = "已保存",
-                        tint = Color(0xFF4ADE80),
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-                else -> {
-                    Icon(
-                        Icons.Rounded.Download,
-                        contentDescription = "保存到本地",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp),
-                    )
+            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                AnimatedContent(
+                    targetState = when {
+                        isDownloading -> DownloadButtonState.DOWNLOADING
+                        isDownloaded -> DownloadButtonState.DONE
+                        else -> DownloadButtonState.IDLE
+                    },
+                    transitionSpec = {
+                        (
+                            fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                                scaleIn(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMediumLow,
+                                    ),
+                                    initialScale = 0.6f,
+                                )
+                            ).togetherWith(
+                            fadeOut(animationSpec = tween(120)) +
+                                scaleOut(targetScale = 0.6f, animationSpec = tween(120)),
+                        )
+                    },
+                    contentAlignment = Alignment.Center,
+                    label = "download_button_state",
+                ) { state ->
+                    when (state) {
+                        DownloadButtonState.DOWNLOADING -> CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        DownloadButtonState.DONE -> Icon(
+                            Icons.Rounded.Check,
+                            contentDescription = "已保存",
+                            tint = Color(0xFF4ADE80),
+                            modifier = Modifier.size(24.dp),
+                        )
+                        DownloadButtonState.IDLE -> Icon(
+                            Icons.Rounded.Download,
+                            contentDescription = "保存到本地",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
                 }
             }
         }

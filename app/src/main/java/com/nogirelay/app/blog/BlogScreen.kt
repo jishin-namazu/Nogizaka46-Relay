@@ -61,10 +61,12 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Icon
@@ -76,6 +78,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -657,6 +660,7 @@ private fun BlogSortSwitcher(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BlogFilterDialog(
     members: List<BlogMember>,
@@ -667,40 +671,58 @@ private fun BlogFilterDialog(
 ) {
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     var draftTimeFilter by remember(timeFilter) { mutableStateOf(timeFilter) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
-        title = { Text("博客筛选", fontWeight = FontWeight.Bold) },
-        text = {
-            Column {
-                if (members.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(120.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "正在加载成员...",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp,
-                        )
-                    }
-                } else {
-                    MemberPickerGrid(
-                        members = members,
-                        selectedIds = draft,
-                        onSelectedChange = { draft = it },
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+
+    // 与主页设置抽屉、时间筛选抽屉一致：先播放收起动画再从组合里移除。
+    fun closeSheet(after: () -> Unit) {
+        scope.launch {
+            sheetState.hide()
+            after()
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = { closeSheet(onDismiss) },
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+        ) {
+            Text("博客筛选", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            if (members.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "正在加载成员...",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
                     )
                 }
-                Spacer(Modifier.height(10.dp))
-                TimeFilterSection(
-                    filter = draftTimeFilter,
-                    onFilterChange = { draftTimeFilter = it },
+            } else {
+                MemberPickerGrid(
+                    members = members,
+                    selectedIds = draft,
+                    onSelectedChange = { draft = it },
+                    modifier = Modifier.heightIn(max = 340.dp),
                 )
             }
-        },
-        confirmButton = {
+            Spacer(Modifier.height(10.dp))
+            TimeFilterSection(
+                filter = draftTimeFilter,
+                onFilterChange = { draftTimeFilter = it },
+            )
+            Spacer(Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 IconButton(onClick = { draft = members.mapTo(linkedSetOf(), BlogMember::id) }) {
                     Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
@@ -709,16 +731,26 @@ private fun BlogFilterDialog(
                     Icon(Icons.Rounded.ClearAll, contentDescription = "全部清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDismiss) { Text("取消") }
-                TextButton(
-                    onClick = { onConfirm(draft, draftTimeFilter) },
+                OutlinedButton(
+                    onClick = { closeSheet(onDismiss) },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.height(44.dp),
+                ) {
+                    Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = { closeSheet { onConfirm(draft, draftTimeFilter) } },
                     enabled = !draftTimeFilter.hasInvertedRange(),
-                    colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
-                ) { Text("确定", fontWeight = FontWeight.Bold) }
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
+                    modifier = Modifier.height(44.dp),
+                ) {
+                    Text("确定", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
             }
-        },
-        dismissButton = {},
-    )
+        }
+    }
 }
 
 @Composable

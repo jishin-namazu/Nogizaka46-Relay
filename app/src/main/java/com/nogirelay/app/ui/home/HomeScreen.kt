@@ -739,7 +739,7 @@ fun LatestBlogSection(
                             text = blog.title,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold,
-                            maxLines = 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         if (!blog.imageUrl.isNullOrBlank()) {
