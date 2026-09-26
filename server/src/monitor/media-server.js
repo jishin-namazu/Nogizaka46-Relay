@@ -1,0 +1,126 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import messageService from '../services/message.js';
+import { configuredTokens, isClientToken } from '../middleware/auth.js';
+
+const DEFAULT_PORT = 8081;
+const MIME_BY_EXTENSION = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+};
+
+// services/media.js 的 publicUrl() 会为来电背景生成 phone_image URL，
+// 因此媒体服务器也必须提供该类型。
+const SERVED_MEDIA_KINDS = ['media', 'thumbnail', 'phone_image'];
+
+function parseMediaRequest(pathname) {
+  const match = pathname.match(/^\/v1\/messages\/([^/]+)\/media\/([A-Za-z_]+)$/);
+  if (!match) return null;
+  const kind = match[2];
+  if (!SERVED_MEDIA_KINDS.includes(kind)) return null;
+  return { messageId: decodeURIComponent(match[1]), kind };
+}
+
+function bearerToken(request) {
+  const value = request.headers.authorization || '';
+  return value.toLowerCase().startsWith('bearer ') ? value.slice(7).trim() : '';
+}
+
+function sendJson(response, statusCode, body) {
+  response.statusCode = statusCode;
+  response.setHeader('Content-Type', 'application/json; charset=utf-8');
+  response.end(JSON.stringify(body));
+}
+
+class NogiMediaServer {
+  constructor({ port = Number.parseInt(process.env.NOGI_MEDIA_PORT || `${DEFAULT_PORT}`, 10) } = {}) {
+    this.port = Number.isInteger(port) && port > 0 ? port : DEFAULT_PORT;
+    this.server = null;
+  }
+
+  async start() {
+    if (this.server) return;
+    const { adminTokens, clientToken } = configuredTokens();
+    if (adminTokens.length === 0 && !clientToken) {
+      throw new Error('ADMIN_TOKEN or CLIENT_TOKEN is required for the monitor media server');
+    }
+
+    this.server = http.createServer((request, response) => {
+      this.handle(request, response).catch(error => {
+        console.error('Nogi media server request failed:', error.message);
+        if (!response.headersSent) sendJson(response, 500, { error: 'Media server failure' });
+        else response.destroy();
+      });
+    });
+
+    await new Promise((resolve, reject) => {
+      const onError = error => {
+        this.server?.off('listening', onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        this.server?.off('error', onError);
+        resolve();
+      };
+      this.server.once('error', onError);
+      this.server.once('listening', onListening);
+      this.server.listen(this.port, '0.0.0.0');
+    });
+    console.log(`Nogi media server listening on port ${this.port}`);
+  }
+
+  async stop() {
+    if (!this.server) return;
+    const server = this.server;
+    this.server = null;
+    await new Promise(resolve => server.close(() => resolve()));
+  }
+
+  async handle(request, response) {
+    if (request.method === 'GET' && request.url === '/health') {
+      return sendJson(response, 200, { status: 'ok' });
+    }
+    if (request.method !== 'GET') {
+      response.setHeader('Allow', 'GET');
+      return sendJson(response, 405, { error: 'Method not allowed' });
+    }
+    if (!isClientToken(bearerToken(request))) {
+      return sendJson(response, 401, { error: 'Unauthorized' });
+    }
+
+    const parsed = new URL(request.url, 'http://127.0.0.1');
+    const target = parseMediaRequest(parsed.pathname);
+    if (!target) return sendJson(response, 404, { error: 'Not found' });
+
+    const { messageId, kind } = target;
+    const filePath = await messageService.getStoredMediaPath(messageId, kind);
+    if (!filePath) return sendJson(response, 404, { error: 'Media not archived' });
+
+    const stat = await fsp.stat(filePath);
+    if (!stat.isFile() || stat.size <= 0) return sendJson(response, 404, { error: 'Media not archived' });
+
+    const extension = path.extname(filePath).slice(1).toLowerCase();
+    response.statusCode = 200;
+    response.setHeader('Cache-Control', 'private, max-age=86400');
+    response.setHeader('Content-Type', MIME_BY_EXTENSION[extension] || 'application/octet-stream');
+    response.setHeader('Content-Length', String(stat.size));
+    fs.createReadStream(filePath).on('error', error => {
+      console.error('Nogi media stream failed:', error.message);
+      response.destroy(error);
+    }).pipe(response);
+  }
+}
+
+const mediaServer = new NogiMediaServer();
+
+export { NogiMediaServer, parseMediaRequest };
+export default mediaServer;
