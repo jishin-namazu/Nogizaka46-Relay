@@ -677,7 +677,7 @@ fun MessagesScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
                                     .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
-                                    .animateItemPlacement()
+                                    .animateItem()
                                     .fillMaxWidth()
                                     .padding(vertical = 32.dp),
                             )
@@ -687,7 +687,7 @@ fun MessagesScreen(
                             MessageCard(
                                 modifier = Modifier
                                     .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
-                                    .animateItemPlacement(),
+                                    .animateItem(),
                                 message = message,
                                 isUnread = message.isUnread || message.id in sessionUnreadIds,
                                 audioState = playbackState.takeIf { it.messageId == message.id },

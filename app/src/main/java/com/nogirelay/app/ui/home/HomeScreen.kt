@@ -18,7 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.material.ripple.rememberRipple
+import androidx.compose.material3.ripple
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -470,7 +470,7 @@ fun SystemHealthSection(
                 .heightIn(min = 52.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
-                    indication = rememberRipple(color = BrandPurple.copy(alpha = 0.15f)),
+                    indication = ripple(color = BrandPurple.copy(alpha = 0.15f)),
                     onClick = onToggleExpand,
                 )
                 .padding(horizontal = 16.dp),
