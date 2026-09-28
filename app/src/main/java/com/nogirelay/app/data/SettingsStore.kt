@@ -1,8 +1,9 @@
 package com.nogirelay.app.data
 
 import android.content.Context
-import com.nogirelay.app.translation.AIProviderType
+import androidx.core.content.edit
 import com.nogirelay.app.translation.AIModel
+import com.nogirelay.app.translation.AIProviderType
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -13,6 +14,8 @@ import org.json.JSONObject
  */
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val modelCatalogs = mutableMapOf<AIProviderType, Pair<String, List<AIModel>>>()
+    private var sortedCatalog: Pair<List<AIModel>, List<AIModel>>? = null
 
     init {
         migrateLegacyProviderSlots()
@@ -31,22 +34,24 @@ class SettingsStore(context: Context) {
             messageFullTranslation = prefs.getBoolean(KEY_MESSAGE_FULL_TRANSLATION, false),
             blogFullTranslation = prefs.getBoolean(KEY_BLOG_FULL_TRANSLATION, false),
             userNickname = prefs.getString(KEY_USER_NICKNAME, "").orEmpty(),
+            incomingCallStyle = readIncomingCallStyle(),
         )
     }
 
     fun save(settings: AppSettings) {
-        prefs.edit()
-            .putString(KEY_RELAY_URL, settings.relayUrl.trim().trimEnd('/'))
-            .putString(KEY_ACCESS_TOKEN, settings.accessToken.trim())
-            .putString(KEY_AI_PROVIDER, settings.aiProvider.name)
-            .putString(apiKeyKey(settings.aiProvider), settings.aiApiKey.trim())
-            .putString(modelKey(settings.aiProvider), settings.aiModel.trim())
-            .putString(modelsKey(settings.aiProvider), serializeModels(settings.cachedAiModels))
-            .putBoolean(KEY_TRANSLATION_ENABLED, settings.translationEnabled)
-            .putBoolean(KEY_MESSAGE_FULL_TRANSLATION, settings.messageFullTranslation)
-            .putBoolean(KEY_BLOG_FULL_TRANSLATION, settings.blogFullTranslation)
-            .putString(KEY_USER_NICKNAME, settings.userNickname.trim())
-            .apply()
+        prefs.edit {
+            putString(KEY_RELAY_URL, settings.relayUrl.trim().trimEnd('/'))
+            putString(KEY_ACCESS_TOKEN, settings.accessToken.trim())
+            putString(KEY_AI_PROVIDER, settings.aiProvider.name)
+            putString(apiKeyKey(settings.aiProvider), settings.aiApiKey.trim())
+            putString(modelKey(settings.aiProvider), settings.aiModel.trim())
+            putString(modelsKey(settings.aiProvider), serializeModels(settings.cachedAiModels))
+            putBoolean(KEY_TRANSLATION_ENABLED, settings.translationEnabled)
+            putBoolean(KEY_MESSAGE_FULL_TRANSLATION, settings.messageFullTranslation)
+            putBoolean(KEY_BLOG_FULL_TRANSLATION, settings.blogFullTranslation)
+            putString(KEY_USER_NICKNAME, settings.userNickname.trim())
+            putString(KEY_INCOMING_CALL_STYLE, settings.incomingCallStyle.name)
+        }
     }
 
     /** 为 [provider] 保存的 API Key，即使当前激活的是另一个提供方。 */
@@ -56,18 +61,36 @@ class SettingsStore(context: Context) {
     fun modelFor(provider: AIProviderType): String = prefs.getString(modelKey(provider), "").orEmpty()
 
     /** 最近一次校验成功后为 [provider] 缓存的模型列表。 */
-    fun cachedModelsFor(provider: AIProviderType): List<AIModel> =
-        readCachedModels(prefs.getString(modelsKey(provider), "[]"))
+    @Synchronized
+    fun cachedModelsFor(provider: AIProviderType): List<AIModel> {
+        val serialized = prefs.getString(modelsKey(provider), "[]").orEmpty()
+        modelCatalogs[provider]?.takeIf { it.first == serialized }?.let { return it.second }
+        return readCachedModels(serialized).also { modelCatalogs[provider] = serialized to it }
+    }
+
+    @Synchronized
+    fun sortedModels(models: List<AIModel>): List<AIModel> {
+        sortedCatalog?.takeIf { it.first == models }?.let { return it.second }
+        return models.sortedBy { it.displayName.lowercase(java.util.Locale.ROOT) }
+            .also { sortedCatalog = models.toList() to it }
+    }
 
     fun pushToken(): String = prefs.getString(KEY_PUSH_TOKEN, "").orEmpty()
 
     fun savePushToken(token: String) {
-        prefs.edit().putString(KEY_PUSH_TOKEN, token).apply()
+        if (pushToken() == token) return
+        prefs.edit { putString(KEY_PUSH_TOKEN, token) }
+        AppGraph.notifyDataChanged(DataChange.SETTINGS)
     }
 
     private fun readProvider(): AIProviderType {
         val stored = prefs.getString(KEY_AI_PROVIDER, null) ?: return AIProviderType.OPENAI
         return runCatching { AIProviderType.valueOf(stored) }.getOrDefault(AIProviderType.OPENAI)
+    }
+
+    private fun readIncomingCallStyle(): IncomingCallStyle {
+        val stored = prefs.getString(KEY_INCOMING_CALL_STYLE, null) ?: return IncomingCallStyle.CLASSIC
+        return runCatching { IncomingCallStyle.valueOf(stored) }.getOrDefault(IncomingCallStyle.CLASSIC)
     }
 
     /**
@@ -78,21 +101,27 @@ class SettingsStore(context: Context) {
     private fun migrateLegacyProviderSlots() {
         if (prefs.getBoolean(KEY_PROVIDER_SLOTS_MIGRATED, false)) return
         val provider = readProvider()
-        val editor = prefs.edit()
-        if (!prefs.contains(apiKeyKey(provider))) {
-            prefs.getString(KEY_LEGACY_AI_API_KEY, null)?.let { editor.putString(apiKeyKey(provider), it) }
+        val hasApiKey = prefs.contains(apiKeyKey(provider))
+        val hasModel = prefs.contains(modelKey(provider))
+        val hasModels = prefs.contains(modelsKey(provider))
+        val legacyApiKey = prefs.getString(KEY_LEGACY_AI_API_KEY, null)
+        val legacyModel = prefs.getString(KEY_LEGACY_AI_MODEL, null)
+        val legacyModels = prefs.getString(KEY_LEGACY_CACHED_AI_MODELS, null)
+        prefs.edit {
+            if (!hasApiKey) {
+                legacyApiKey?.let { putString(apiKeyKey(provider), it) }
+            }
+            if (!hasModel) {
+                legacyModel?.let { putString(modelKey(provider), it) }
+            }
+            if (!hasModels) {
+                legacyModels?.let { putString(modelsKey(provider), it) }
+            }
+            remove(KEY_LEGACY_AI_API_KEY)
+            remove(KEY_LEGACY_AI_MODEL)
+            remove(KEY_LEGACY_CACHED_AI_MODELS)
+            putBoolean(KEY_PROVIDER_SLOTS_MIGRATED, true)
         }
-        if (!prefs.contains(modelKey(provider))) {
-            prefs.getString(KEY_LEGACY_AI_MODEL, null)?.let { editor.putString(modelKey(provider), it) }
-        }
-        if (!prefs.contains(modelsKey(provider))) {
-            prefs.getString(KEY_LEGACY_CACHED_AI_MODELS, null)?.let { editor.putString(modelsKey(provider), it) }
-        }
-        editor.remove(KEY_LEGACY_AI_API_KEY)
-            .remove(KEY_LEGACY_AI_MODEL)
-            .remove(KEY_LEGACY_CACHED_AI_MODELS)
-            .putBoolean(KEY_PROVIDER_SLOTS_MIGRATED, true)
-            .apply()
     }
 
     private fun readCachedModels(serialized: String?): List<AIModel> = runCatching {
@@ -131,6 +160,7 @@ class SettingsStore(context: Context) {
         const val KEY_MESSAGE_FULL_TRANSLATION = "message_full_translation"
         const val KEY_BLOG_FULL_TRANSLATION = "blog_full_translation"
         const val KEY_USER_NICKNAME = "user_nickname"
+        const val KEY_INCOMING_CALL_STYLE = "incoming_call_style"
         const val KEY_PUSH_TOKEN = "push_token"
         const val KEY_LEGACY_AI_API_KEY = "ai_api_key"
         const val KEY_LEGACY_AI_MODEL = "ai_model"

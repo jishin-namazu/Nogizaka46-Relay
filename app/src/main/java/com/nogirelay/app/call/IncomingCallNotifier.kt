@@ -1,5 +1,6 @@
 package com.nogirelay.app.call
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.ActivityManager
@@ -37,7 +38,7 @@ object IncomingCallNotifier {
         val fullScreenPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val creatorOptions = ActivityOptions.makeBasic().apply {
                 setPendingIntentCreatorBackgroundActivityStartMode(
-                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
+                    backgroundActivityStartMode(),
                 )
             }
             PendingIntent.getActivity(
@@ -110,7 +111,7 @@ object IncomingCallNotifier {
             if (isAppInForeground(context)) {
                 Log.d("NogiRelay", "App in foreground, starting IncomingCallActivity directly")
                 context.startActivity(fullScreenIntent)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(context)) {
+            } else if (Settings.canDrawOverlays(context)) {
                 Log.d("NogiRelay", "App in background but has overlay permission, starting IncomingCallActivity directly")
                 context.startActivity(fullScreenIntent)
             } else {
@@ -119,6 +120,18 @@ object IncomingCallNotifier {
         }.onFailure { error ->
             Log.w("NogiRelay", "Call activity launch failed", error)
         }
+    }
+
+    @SuppressLint("InlinedApi")
+    private fun backgroundActivityStartMode(): Int {
+        if (Build.VERSION.SDK_INT >= 36) {
+            return ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            @Suppress("DEPRECATION")
+            return ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+        }
+        return ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED
     }
 
     /** 显示一个可重试的通知，而不提前打开通话页面。 */

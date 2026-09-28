@@ -3,6 +3,12 @@ package com.nogirelay.app.data
 import com.nogirelay.app.translation.AIProviderType
 import com.nogirelay.app.translation.AIModel
 
+/** 枚举名称沿用已保存的设置，所有全屏来电入口按此偏好选择页面。 */
+enum class IncomingCallStyle {
+    CLASSIC,
+    LIQUID_GLASS,
+}
+
 data class AppSettings(
     val relayUrl: String = "",
     val accessToken: String = "",
@@ -19,4 +25,5 @@ data class AppSettings(
     /** 博客版的全量开关，语义同 [messageFullTranslation]。 */
     val blogFullTranslation: Boolean = false,
     val userNickname: String = "",
+    val incomingCallStyle: IncomingCallStyle = IncomingCallStyle.CLASSIC,
 )

@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
+import androidx.core.net.toUri
 import com.nogirelay.app.BuildConfig
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.MessageType
@@ -181,7 +182,7 @@ object MediaDownloader {
         if (isNotFound(appContext, url)) {
             throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $url", url)
         }
-        val uri = Uri.parse(url)
+        val uri = url.toUri()
         val target = cacheFile(appContext, url, type)
         target.takeIf { it.isFile && it.length() > 0L }?.let { return it }
 
@@ -364,6 +365,7 @@ object MediaDownloader {
             temp.copyTo(target, overwrite = true)
             temp.delete()
         }
+        MediaCacheRevision.changed()
     }
 
     private fun authorizationFor(context: Context, host: String?): String? {
@@ -371,7 +373,7 @@ object MediaDownloader {
         AppGraph.initialize(context)
         val settings = runCatching { AppGraph.settings.read() }.getOrNull() ?: return null
         val relayUrl = settings.relayUrl.ifBlank { ApiConfig.BASE_URL }
-        val relayHost = runCatching { Uri.parse(relayUrl).host }.getOrNull()
+        val relayHost = runCatching { relayUrl.toUri().host }.getOrNull()
         val token = settings.accessToken.ifBlank { ApiConfig.ACCESS_TOKEN }
         return if (relayHost != null && relayHost.equals(host, ignoreCase = true) && token.isNotBlank()) {
             "Bearer $token"
@@ -417,6 +419,7 @@ object MediaDownloader {
             return false
         }
         clearNotFound(appContext, toUrl)
+        MediaCacheRevision.changed()
         return true
     }
 
@@ -424,7 +427,7 @@ object MediaDownloader {
         cacheFileForUrl(context, url, extensionFor(url, type))
 
     private fun extensionFor(url: String, type: MessageType): String {
-        val path = Uri.parse(url).path.orEmpty()
+        val path = url.toUri().path.orEmpty()
         val extension = path.substringAfterLast('.', "").lowercase().takeIf {
             it.matches(Regex("[a-z0-9]{2,5}"))
         }

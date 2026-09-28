@@ -4,7 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioAttributes
-import android.net.Uri
+import androidx.core.net.toUri
 import com.nogirelay.app.R
 
 object NotificationChannels {
@@ -17,7 +17,7 @@ object NotificationChannels {
 
     fun create(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
-        val ringtone = Uri.parse("android.resource://${context.packageName}/${R.raw.ringtone}")
+        val ringtone = "android.resource://${context.packageName}/${R.raw.ringtone}".toUri()
         val ringtoneAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)

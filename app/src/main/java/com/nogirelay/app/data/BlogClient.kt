@@ -1,6 +1,6 @@
 package com.nogirelay.app.data
 
-import android.net.Uri
+import androidx.core.net.toUri
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -71,7 +71,7 @@ class BlogClient {
 
     fun fetchMembers(): List<BlogMember> {
         val root = requestJsonp(
-            Uri.parse(MEMBER_API_URL).buildUpon()
+            MEMBER_API_URL.toUri().buildUpon()
                 .appendQueryParameter("rw", "500")
                 .appendQueryParameter("st", "0")
                 .build()
@@ -111,7 +111,7 @@ class BlogClient {
     }
 
     private fun requestPage(limit: Int, offset: Int, memberId: String? = null): BlogPage {
-        val builder = Uri.parse(BLOG_API_URL).buildUpon()
+        val builder = BLOG_API_URL.toUri().buildUpon()
             .appendQueryParameter("rw", limit.toString())
             .appendQueryParameter("st", offset.toString())
         if (!memberId.isNullOrBlank()) {

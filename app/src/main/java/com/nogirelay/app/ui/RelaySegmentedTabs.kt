@@ -1,9 +1,12 @@
 package com.nogirelay.app.ui
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 
 /**
@@ -41,38 +46,71 @@ fun RelaySegmentedTabs(
     modifier: Modifier = Modifier,
 ) {
     if (labels.isEmpty()) return
+    val mirrorStyle = LocalRelayMirrorStyle.current
+    // Keep the visual shell compact while preserving a full 48dp selectable row.
+    // The 4dp outer inset leaves only a small glass rim around the selection.
+    val trackHeight = if (mirrorStyle) 56.dp else 48.dp
+    val trackShape = if (mirrorStyle) RelayNavigationBarShape else RoundedCornerShape(21.dp)
+    val indicatorShape = if (mirrorStyle) RelayNavigationSelectionShape else RoundedCornerShape(19.dp)
+    val trackInset = if (mirrorStyle) 4.dp else 0.dp
     BoxWithConstraints(
         modifier = modifier
-            .height(42.dp)
-            .clip(RoundedCornerShape(21.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            .height(trackHeight)
+            .then(
+                if (mirrorStyle) Modifier else Modifier
+                    .clip(trackShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
+                    .relayGlass(shape = trackShape),
+            ),
     ) {
-        val tabWidth = maxWidth / labels.size
+        if (mirrorStyle) {
+            RelayMirrorGlassBackground(shape = trackShape, modifier = Modifier.matchParentSize())
+        }
+        val contentWidth = (maxWidth - trackInset * 2).coerceAtLeast(0.dp)
+        val tabWidth = contentWidth / labels.size
+        val maxIndicatorOffset = (contentWidth - tabWidth).coerceAtLeast(0.dp)
         val indicatorOffset by animateDpAsState(
             targetValue = tabWidth * selectedIndex.coerceIn(0, labels.lastIndex),
-            animationSpec = tween(durationMillis = 220),
+            animationSpec = if (mirrorStyle) {
+                spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessLow)
+            } else {
+                tween(durationMillis = 220)
+            },
             label = "relay-segmented-indicator",
         )
-        Surface(
-            shape = RoundedCornerShape(19.dp),
-            color = BrandPurple,
-            modifier = Modifier
+        val indicatorModifier = Modifier
                 .align(Alignment.CenterStart)
-                .offset(x = indicatorOffset)
-                .padding(3.dp)
+                .offset {
+                    androidx.compose.ui.unit.IntOffset(
+                        (trackInset + indicatorOffset.coerceIn(0.dp, maxIndicatorOffset)).roundToPx(),
+                        0,
+                    )
+                }
                 .width(tabWidth)
-                .fillMaxHeight(),
-        ) {
-            Box(Modifier.fillMaxSize())
+        if (mirrorStyle) {
+            RelayMirrorGlassSelection(
+                shape = indicatorShape,
+                modifier = indicatorModifier.height(trackHeight - trackInset * 2),
+            )
+        } else {
+            Surface(
+                shape = indicatorShape,
+                color = BrandPurple,
+                // Keep the padding inside the measured tab slot, including the final tab.
+                modifier = indicatorModifier.fillMaxHeight().padding(3.dp),
+            ) { Box(Modifier.fillMaxSize()) }
         }
-        Row(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxSize().padding(trackInset).selectableGroup()) {
             labels.forEachIndexed { index, label ->
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxSize()
-                        .clickable(
+                        .clip(indicatorShape)
+                        .selectable(
+                            selected = index == selectedIndex,
+                            role = Role.Tab,
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             onClick = { onSelected(index) },
@@ -81,11 +119,18 @@ fun RelaySegmentedTabs(
                     Text(
                         text = label,
                         color = if (index == selectedIndex) {
-                            Color.White
+                            if (mirrorStyle) MaterialTheme.colorScheme.primary else Color.White
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
-                        fontWeight = if (index == selectedIndex) FontWeight.Bold else FontWeight.Medium,
+                        fontWeight = if (index == selectedIndex) {
+                            if (mirrorStyle) FontWeight.SemiBold else FontWeight.Bold
+                        } else {
+                            FontWeight.Medium
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }
             }

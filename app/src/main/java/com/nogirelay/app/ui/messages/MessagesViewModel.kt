@@ -3,8 +3,10 @@ package com.nogirelay.app.ui.messages
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.RelayMessage
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,7 +23,6 @@ data class MemberThread(
 
 data class MessagesUiState(
     val loading: Boolean = true,
-    val messages: List<RelayMessage> = emptyList(),
     val threads: List<MemberThread> = emptyList(),
     val unreadCounts: Map<String, Int> = emptyMap(),
     val translationEnabled: Boolean = false,
@@ -33,38 +34,34 @@ class MessagesViewModel : ViewModel() {
     val uiState: StateFlow<MessagesUiState> = _uiState.asStateFlow()
     private var loadJob: Job? = null
 
-    init {
-        load()
-    }
-
-    fun load() {
+    fun load(versions: DataVersions) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch(AppGraph.dispatchers.databaseRead) {
             val settings = AppGraph.settings.read()
-            val messages = AppGraph.database.latest()
-            val latestPerMember = AppGraph.database.latestMessagePerMember()
-            val unreadCounts = AppGraph.database.unreadCountsByMember()
-            val threads = latestPerMember
-                .map { latestMsg ->
+            val summaries = AppGraph.memberSummaries.load(versions)
+            val threads = summaries
+                .map { (latestMsg, unreadCount) ->
                     MemberThread(
                         id = latestMsg.memberKey,
                         name = latestMsg.memberName,
                         avatarUrl = latestMsg.memberAvatarUrl,
                         latest = latestMsg,
-                        unreadCount = unreadCounts[latestMsg.memberKey] ?: 0,
+                        unreadCount = unreadCount,
                     )
                 }
                 .sortedByDescending { it.latest.sentAt }
+            coroutineContext.ensureActive()
             _uiState.update { current ->
                 current.copy(
                     loading = false,
-                    messages = messages,
                     threads = threads,
-                    unreadCounts = unreadCounts,
+                    unreadCounts = threads.associate { it.id to it.unreadCount },
                     translationEnabled = settings.translationEnabled,
                     userNickname = settings.userNickname,
                 )
             }
         }
     }
+
+    fun stopLoading() { loadJob?.cancel() }
 }

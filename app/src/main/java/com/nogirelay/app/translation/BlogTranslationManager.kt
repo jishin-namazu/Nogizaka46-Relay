@@ -4,14 +4,14 @@ import android.content.Context
 import android.util.Log
 import com.nogirelay.app.blog.BlogContentParser
 import com.nogirelay.app.data.AppGraph
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.withContext
 
 object BlogTranslationManager {
     private const val TAG = "NogiBlogTranslation"
@@ -21,47 +21,63 @@ object BlogTranslationManager {
     private val retryCount = ConcurrentHashMap<String, Int>()
     private val requestSlots = Semaphore(3)
 
-    fun enqueue(context: Context, blogId: String, force: Boolean = false) {
-        schedule(context.applicationContext, blogId, force, retryFailures = false)
-    }
-
-    private const val BULK_LIMIT = Int.MAX_VALUE
-
-    /** 自动入口（同步完成 / App 启动 / 设置变更）：历史积压是否顺带翻译由开关决定。 */
-    fun enqueuePending(context: Context) = enqueueAfterSync(context)
-
-    /**
-     * 自动翻译入口：先翻 [newIds] 这批刚写入的博客；只有用户打开"博客全量翻译"
-     * （默认关闭）时才会顺带扫历史积压。
-     */
-    fun enqueueAfterSync(context: Context, newIds: Collection<String> = emptyList()) {
-        val appContext = context.applicationContext
-        scope.launch {
-            AppGraph.initialize(appContext)
-            val settings = AppGraph.settings.read()
-            if (!isConfigured(settings)) return@launch
-            if (newIds.isNotEmpty()) {
-                val fresh = runCatching { AppGraph.database.pendingBlogTranslationsByIds(newIds) }.getOrNull()
-                fresh?.forEach { blogId -> schedule(appContext, blogId, force = false, retryFailures = true) }
+    private data class Work(val context: Context, val id: String, val force: Boolean, val retryFailures: Boolean)
+    private var bulkJob: kotlinx.coroutines.Job? = null
+    private val queue = com.nogirelay.app.performance.BoundedWorkQueue<Work>(
+        scope, parallelism = 3, capacity = 24, key = { it.id },
+        onFailure = { work, error ->
+            if (work.retryFailures) {
+                val attempts = (retryCount.merge(work.id, 1, Int::plus) ?: 1).coerceAtMost(8)
+                retryAfter[work.id] = System.currentTimeMillis() + (5_000L * (1L shl (attempts - 1))).coerceAtMost(300_000L)
             }
-            if (settings.blogFullTranslation) enqueuePendingInternal(appContext, BULK_LIMIT)
+            Log.w(TAG, "BLOG translation failed for ${work.id}", error)
+        },
+    ) { work ->
+        if (isConfigured(AppGraph.settings.read())) {
+            translate(work.context, work.id, work.force).getOrThrow()
+            retryAfter.remove(work.id)
+            retryCount.remove(work.id)
         }
     }
 
-    /** 强制把整批历史积压排进队列："重新翻译全部"用，无视全量开关。 */
-    fun enqueueAllPending(context: Context, limit: Int = BULK_LIMIT) {
+    fun enqueue(context: Context, blogId: String, force: Boolean = false) {
         val appContext = context.applicationContext
-        scope.launch { enqueuePendingInternal(appContext, limit) }
+        scope.launch { schedule(appContext, blogId, force, retryFailures = false) }
     }
 
-    /** @param limit 这一轮会取走多少个待处理的 BLOG；批量处理会要求全部。 */
-    private fun enqueuePendingInternal(appContext: Context, limit: Int) {
+    fun enqueuePending(context: Context) = enqueueAfterSync(context)
+
+    fun enqueueAfterSync(context: Context, newIds: Collection<String> = emptyList()) {
+        val appContext = context.applicationContext
         AppGraph.initialize(appContext)
-        val settings = AppGraph.settings.read()
-        if (!isConfigured(settings)) return
-        val pendingIds = runCatching { AppGraph.database.pendingBlogTranslations(limit) }.getOrNull() ?: return
-        pendingIds.forEach { blogId ->
-            schedule(appContext, blogId, force = false, retryFailures = true)
+        if (newIds.isNotEmpty()) scope.launch {
+            if (isConfigured(AppGraph.settings.read())) newIds.forEach { schedule(appContext, it, false, true) }
+        }
+        if (AppGraph.settings.read().blogFullTranslation) enqueueBacklog(appContext, manual = false)
+    }
+
+    fun enqueueAllPending(context: Context, limit: Int = Int.MAX_VALUE) =
+        enqueueBacklog(context.applicationContext, manual = true, limit = limit)
+
+    @Synchronized
+    private fun enqueueBacklog(context: Context, manual: Boolean, limit: Int = Int.MAX_VALUE) {
+        if (bulkJob?.isActive == true) {
+            if (!manual) return
+            bulkJob?.cancel()
+        }
+        bulkJob = scope.launch {
+            AppGraph.initialize(context)
+            var afterId: String? = null
+            var remaining = limit.coerceAtLeast(0)
+            while (remaining > 0) {
+                val settings = AppGraph.settings.read()
+                if (!isConfigured(settings) || !manual && !settings.blogFullTranslation) break
+                val ids = AppGraph.database.pendingTranslationIds(true, afterId, minOf(24, remaining))
+                if (ids.isEmpty()) break
+                ids.forEach { schedule(context, it, false, true) }
+                afterId = ids.last()
+                remaining -= ids.size
+            }
         }
     }
 
@@ -72,7 +88,8 @@ object BlogTranslationManager {
         AppGraph.initialize(context)
         if (!inFlight.add(blogId)) return@withContext Result.success(Unit)
         try {
-            translateInternal(context.applicationContext, blogId, force)
+            // The permit covers database reads and parsing as well as the network request.
+            requestSlots.withPermit { translateInternal(context.applicationContext, blogId, force) }
         } finally {
             inFlight.remove(blogId)
         }
@@ -83,28 +100,9 @@ object BlogTranslationManager {
         retryCount.clear()
     }
 
-    private fun schedule(context: Context, blogId: String, force: Boolean, retryFailures: Boolean) {
-        val now = System.currentTimeMillis()
-        if (retryFailures && (retryAfter[blogId] ?: 0L) > now) return
-        if (!inFlight.add(blogId)) return
-        scope.launch {
-            try {
-                translateInternal(context, blogId, force).getOrThrow()
-                retryAfter.remove(blogId)
-                retryCount.remove(blogId)
-            } catch (error: Exception) {
-                if (retryFailures) {
-                    val attempts = (retryCount.merge(blogId, 1, Int::plus) ?: 1).coerceAtMost(8)
-                    val delayMs = (5_000L * (1L shl (attempts - 1))).coerceAtMost(5 * 60_000L)
-                    retryAfter[blogId] = System.currentTimeMillis() + delayMs
-                    Log.w(TAG, "BLOG translation failed for $blogId; retrying in ${delayMs / 1000}s: ${error.message}", error)
-                } else {
-                    Log.w(TAG, "BLOG translation failed for $blogId: ${error.message}", error)
-                }
-            } finally {
-                inFlight.remove(blogId)
-            }
-        }
+    private suspend fun schedule(context: Context, blogId: String, force: Boolean, retryFailures: Boolean) {
+        if (retryFailures && (retryAfter[blogId] ?: 0L) > System.currentTimeMillis()) return
+        queue.enqueue(Work(context, blogId, force, retryFailures))
     }
 
     private suspend fun translateInternal(context: Context, blogId: String, force: Boolean): Result<Unit> =
@@ -130,15 +128,13 @@ object BlogTranslationManager {
                 }
                 val layout = BlogTranslationLayout.from(source)
                 val provider = AIProviderFactory.getProvider(settings.aiProvider)
-                requestSlots.withPermit {
                     val translation = provider.translate(
                         settings.aiApiKey,
                         settings.aiModel.trim(),
                         layout.requestPayload,
                     ).mapCatching(layout::validateAndSerialize).getOrThrow()
                     AppGraph.database.saveBlogTranslation(blogId, translation)
-                    AppGraph.notifyDataChanged()
-                }
+                    AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.BLOG_ROWS, setOf(blogId))
             }
         }
 }

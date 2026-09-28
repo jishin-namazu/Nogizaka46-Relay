@@ -34,4 +34,11 @@ class NogiRelayApplication : Application(), Application.ActivityLifecycleCallbac
     override fun onActivityStopped(activity: Activity) = Unit
     override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) = Unit
     override fun onActivityDestroyed(activity: Activity) = Unit
+
+    @Suppress("DEPRECATION") // Older supported releases still deliver the running-low signal.
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_UI_HIDDEN) com.nogirelay.app.ui.RemoteImageMemoryCache.trim(clear = true)
+        else if (level >= TRIM_MEMORY_RUNNING_LOW) com.nogirelay.app.ui.RemoteImageMemoryCache.trim(clear = false)
+    }
 }

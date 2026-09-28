@@ -1,9 +1,21 @@
 package com.nogirelay.app.ui.transfer
 
+import android.os.SystemClock
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,35 +38,39 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
+import com.nogirelay.app.media.MediaCacheRevision
+import com.nogirelay.app.data.transfer.ExportEstimateCache
+import com.nogirelay.app.data.transfer.ExportEstimateKey
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.transfer.DataExporter
@@ -69,12 +86,21 @@ import com.nogirelay.app.data.transfer.TransferOperation
 import com.nogirelay.app.data.transfer.TransferOutcome
 import com.nogirelay.app.ui.BrandPurple
 import com.nogirelay.app.ui.RelaySegmentedTabs
-import com.nogirelay.app.ui.RelayCardShape
-import com.nogirelay.app.ui.RelayControlShape
-import com.nogirelay.app.ui.navigation.RelayIconButton
+import com.nogirelay.app.ui.RelayModalBottomSheet
+import com.nogirelay.app.ui.RelaySheetBackdropState
+import com.nogirelay.app.ui.LocalRelayMirrorStyle
+import com.nogirelay.app.ui.RelayHomeCardShape
+import com.nogirelay.app.ui.RelayCardContentInset
+import com.nogirelay.app.ui.RelayDialogButton
+import com.nogirelay.app.ui.RelayDialogButtonStyle
+import com.nogirelay.app.ui.RelayDialogCard
+import com.nogirelay.app.ui.RelayDialogIconButton
+import com.nogirelay.app.ui.RelayMirrorGlassSwitch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private val exportEstimateCache = ExportEstimateCache(SystemClock::elapsedRealtime)
 
 /**
  * MESSAGES 与 BLOG 界面共用的数据管理抽屉。每个界面各自拥有一个 [kind]，因此导出
@@ -85,11 +111,12 @@ import kotlinx.coroutines.withContext
 @Composable
 fun DataTransferDrawer(
     kind: ExportKind,
+    backdropState: RelaySheetBackdropState,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val mirrorStyle = LocalRelayMirrorStyle.current
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val transfer by DataTransferManager.state.collectAsState()
 
     var members by remember(kind) { mutableStateOf<List<BlogMember>>(emptyList()) }
@@ -100,19 +127,31 @@ fun DataTransferDrawer(
     var importMembers by remember(kind) { mutableStateOf(true) }
     var showPicker by remember(kind) { mutableStateOf(false) }
     var pendingExport by remember(kind) { mutableStateOf<ExportRequest?>(null) }
-    var estimate by remember(kind) { mutableStateOf<ExportEstimate?>(null) }
+    var estimateResult by remember(kind) { mutableStateOf<Pair<ExportEstimateKey, ExportEstimate>?>(null) }
+    var estimateFailure by remember(kind) { mutableStateOf<String?>(null) }
     // 统计跑在 IO 线程，进度经 StateFlow 回传，避免在后台线程写 Compose 状态。
     val estimateProgress = remember(kind) { MutableStateFlow<Pair<Int, Int>?>(null) }
-    val progress by estimateProgress.collectAsState()
     var preview by remember(kind) { mutableStateOf<ImportPreview?>(null) }
     var pendingImportUri by remember(kind) { mutableStateOf<Uri?>(null) }
     // 导入成员选择：null = 归档中的全部成员。归档成员只有预览后才知道，所以换一个归档就重置。
     var importSelectedIds by remember(kind) { mutableStateOf<Set<String>?>(null) }
     var showImportPicker by remember(kind) { mutableStateOf(false) }
-    var tabIndex by remember(kind) { mutableStateOf(0) }
-    var estimateKey by remember(kind) { mutableStateOf(0) }
+    var tabIndex by remember(kind) { mutableIntStateOf(0) }
+    val uiStarted = com.nogirelay.app.performance.isRelayUiStarted()
+    val contentFlow = remember(kind) {
+        AppGraph.dataVersions.map { if (kind == ExportKind.MESSAGES) it.messageStructure else it.blogContent }
+            .distinctUntilChanged()
+    }
+    val initialContentRevision = remember(kind) {
+        AppGraph.dataVersions.value.let { if (kind == ExportKind.MESSAGES) it.messageStructure else it.blogContent }
+    }
+    val contentRevision by contentFlow.collectAsStateWithLifecycle(initialValue = initialContentRevision)
+    val mediaFlow = remember(includeMedia) { if (includeMedia) MediaCacheRevision.changes else flowOf(0L) }
+    val initialMediaRevision = remember(includeMedia) { if (includeMedia) MediaCacheRevision.changes.value else 0L }
+    val mediaRevision by mediaFlow.collectAsStateWithLifecycle(initialValue = initialMediaRevision)
 
-    LaunchedEffect(kind) {
+    LaunchedEffect(kind, contentRevision, backdropState.isSettled, uiStarted) {
+        if (!backdropState.isSettled || !uiStarted) return@LaunchedEffect
         members = withContext(Dispatchers.IO) {
             when (kind) {
                 ExportKind.MESSAGES -> AppGraph.database.messageExportMembers().map {
@@ -148,31 +187,40 @@ fun DataTransferDrawer(
     val importAllIds = remember(previewMembers) { previewMembers.mapTo(linkedSetOf(), BlogMember::id) }
     val effectiveImportSelection = importSelectedIds ?: importAllIds
 
-    // 补齐媒体期间不统计导出数据：下载会改变缓存状态。
-    // 补齐结束后 transfer.running 变回 false，下面的 estimateKey 会自增，届时再统一统计一次。
     val backfilling = transfer.running && transfer.operation == TransferOperation.BACKFILL
+    val estimateRequest = remember(kind, effectiveSelection, includeMedia, contentRevision, mediaRevision) {
+        ExportEstimateKey(kind, effectiveSelection.toSet(), includeMedia, contentRevision, mediaRevision)
+    }
+    val estimate = estimateResult?.takeIf { it.first == estimateRequest }?.second
+    val estimateActive = backdropState.isSettled && uiStarted && tabIndex == 0 &&
+        !transfer.running && !showPicker && !showImportPicker
 
-    LaunchedEffect(effectiveSelection, kind, estimateKey, backfilling, includeMedia) {
-        if (backfilling) {
-            estimateProgress.value = null
+    LaunchedEffect(estimateRequest, estimateActive) {
+        if (!estimateActive || effectiveSelection.isEmpty()) return@LaunchedEffect
+        estimateFailure = null
+        exportEstimateCache.get(estimateRequest)?.let {
+            estimateResult = estimateRequest to it
             return@LaunchedEffect
         }
-        if (effectiveSelection.isEmpty()) {
-            estimate = null
-            estimateProgress.value = null
-            return@LaunchedEffect
-        }
-        // 重新统计期间先清掉旧结果，界面切到进度条而不是继续显示上一次的数字。
-        estimate = null
         estimateProgress.value = 0 to 0
         try {
-            estimate = withContext(Dispatchers.IO) {
-                runCatching {
-                    DataExporter.estimate(context, kind, effectiveSelection, includeMedia) { done, total ->
-                        estimateProgress.value = done to total
-                    }
-                }.getOrNull()
+            val result = withContext(Dispatchers.IO) {
+                DataExporter.estimate(context, kind, effectiveSelection, includeMedia) { done, total ->
+                    estimateProgress.value = done to total
+                }
             }
+            // A concurrent download/content change must not make an old scan reusable.
+            val latest = AppGraph.dataVersions.value
+            val currentContent = if (kind == ExportKind.MESSAGES) latest.messageStructure else latest.blogContent
+            if (currentContent == estimateRequest.contentRevision &&
+                (!includeMedia || MediaCacheRevision.changes.value == estimateRequest.mediaRevision)) {
+                exportEstimateCache.put(estimateRequest, result)
+                estimateResult = estimateRequest to result
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            estimateFailure = error.message ?: "统计失败"
         } finally {
             estimateProgress.value = null
         }
@@ -207,16 +255,7 @@ fun DataTransferDrawer(
         }
     }
 
-        // 一次运行缓存的任何内容都会改变预览，包括中途被取消的运行，所以
-        // 每次传输停止运行时都会重新计算统计。
-    var transferWasRunning by remember { mutableStateOf(false) }
-    LaunchedEffect(transfer.running) {
-        if (transferWasRunning && !transfer.running) estimateKey += 1
-        transferWasRunning = transfer.running
-    }
-
-        // 结果属于产生它的那次运行：重新打开抽屉时会从干净状态开始。仍在进行中的传输
-        // 不会被 clearResult() 清除。
+    // Content and complete media publications invalidate estimates, including partial imports.
     LaunchedEffect(Unit) { DataTransferManager.clearResult() }
 
     fun startExport() {
@@ -235,41 +274,33 @@ fun DataTransferDrawer(
         createDocument.launch(name)
     }
 
-        // 与主页抽屉一致：先将面板动画收起，再将其从组合中移除。
-    fun closeDrawer() {
-        scope.launch {
-            sheetState.hide()
-            onDismiss()
-        }
-    }
-
-    ModalBottomSheet(
+    RelayModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-    ) {
+        backdropState = backdropState,
+    ) { dismiss ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(bottom = 32.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 12.dp),
             ) {
-                Column {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
                     Text(
                         text = "数据管理 · " + kind.label,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                RelayIconButton(
-                    onClick = { closeDrawer() },
+                RelayDialogIconButton(
+                    onClick = { dismiss(onDismiss) },
                     imageVector = Icons.Rounded.Close,
                     contentDescription = "关闭数据管理",
                 )
@@ -285,143 +316,121 @@ fun DataTransferDrawer(
             Spacer(Modifier.height(12.dp))
 
             SectionCard {
-                if (tabIndex == 0) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(enabled = !transfer.running) { showPicker = true }
-                            .padding(vertical = 6.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "导出成员",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f),
+                AnimatedContent(
+                    targetState = tabIndex,
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.TopStart,
+                    transitionSpec = {
+                        if (mirrorStyle) {
+                            val direction = if (targetState > initialState) 1 else -1
+                            (
+                                fadeIn(tween(durationMillis = 180, delayMillis = 40)) +
+                                    slideInHorizontally(tween(durationMillis = 220)) { direction * it / 18 }
+                            ).togetherWith(
+                                fadeOut(tween(durationMillis = 120)) +
+                                    slideOutHorizontally(tween(durationMillis = 180)) { -direction * it / 24 },
+                            ).using(
+                                SizeTransform(clip = false) { _, _ ->
+                                    tween(durationMillis = 240, easing = FastOutSlowInEasing)
+                                },
                             )
-                            Text(
-                                text = effectiveSelection.size.toString() + " / " + members.size,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Icon(
-                                Icons.Rounded.ChevronRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp),
-                            )
+                        } else {
+                            (EnterTransition.None togetherWith ExitTransition.None).using(null)
                         }
-                        val current = estimate
-                        if (current == null) {
-                            if (backfilling) {
-                                // 正在下载缺失媒体，这里不再触发全库重扫，等补齐结束后再统计。
-                                Text(
-                                    text = "补齐媒体中，完成后重新统计",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 4.dp),
+                    },
+                    label = "transfer_tab_content",
+                ) { contentTab ->
+                    // The outgoing pane can remain drawn while fading, but cannot run actions.
+                    val paneActive = contentTab == tabIndex
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .then(if (paneActive) Modifier else Modifier.clearAndSetSemantics {}),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (contentTab == 0) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = paneActive && !transfer.running) { showPicker = true }
+                                    .padding(vertical = 6.dp),
+                            ) {
+                                MemberSelectionField(
+                                    title = "导出成员",
+                                    summary = "${effectiveSelection.size} / ${members.size}",
+                                    enabled = paneActive && !transfer.running,
+                                    onClick = { showPicker = true },
                                 )
-                            } else {
-                                val scanned = progress?.first ?: 0
-                                val count = progress?.second ?: 0
-                                if (count > 0) {
-                                    LinearProgressIndicator(
-                                        progress = {
-                                            (scanned.toFloat() / count.toFloat()).coerceIn(0f, 1f)
-                                        },
-                                        // 去掉轨道最右端的紫色端点圆点，统计进度条只保留进度本身。
-                                        drawStopIndicator = {},
-                                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                                    )
-                                } else {
-                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-                                }
-                                Text(
-                                    text = if (count > 0) {
-                                        "正在统计 " + scanned + " / " + count
-                                    } else {
-                                        "正在统计..."
+                                ExportEstimateStatus(
+                                    estimate, estimateProgress, includeMedia, backfilling,
+                                    estimateActive && paneActive, estimateFailure,
+                                )
+                            }
+                            // 统计过程已经遍历过记录并保留了确切的 URL，因此补齐流程
+                            // 直接下载该列表，而不再重新扫描整个库。
+                            val missingMedia = estimate?.missing?.size ?: 0
+                            if (missingMedia > 0 && !transfer.running) {
+                                RelayDialogButton(
+                                    style = RelayDialogButtonStyle.Outlined,
+                                    enabled = paneActive && !transfer.running,
+                                    onClick = {
+                                        estimate?.let { DataTransferManager.backfillMedia(context, kind, it.missing) }
                                     },
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 4.dp),
-                                )
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = if (LocalRelayMirrorStyle.current) 48.dp else 44.dp),
+                                ) {
+                                    Text("补齐缺失媒体（" + missingMedia + "）", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            SwitchRow(
+                                label = "包含媒体（图片 / 视频 / 语音）",
+                                checked = includeMedia,
+                                enabled = paneActive && !transfer.running,
+                                onCheckedChange = { includeMedia = it },
+                            )
+                            SwitchRow(
+                                label = "包含译文",
+                                checked = includeTranslations,
+                                enabled = paneActive && !transfer.running,
+                                onCheckedChange = { includeTranslations = it },
+                            )
+                            RelayDialogButton(
+                                style = RelayDialogButtonStyle.Filled,
+                                onClick = { startExport() },
+                                enabled = paneActive && members.isNotEmpty() && effectiveSelection.isNotEmpty() && !transfer.running,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = if (LocalRelayMirrorStyle.current) 48.dp else 44.dp),
+                            ) {
+                                Icon(Icons.Rounded.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.size(8.dp))
+                                Text("导出 .zip", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         } else {
                             Text(
-                                text = current.records.toString() + " 条记录" +
-                                    if (includeMedia) mediaBreakdown(current) else " · 不含媒体",
+                                text = "增量合并：重复条目自动跳过。",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 2.dp),
                             )
+                            SwitchRow(
+                                label = "导入媒体（图片 / 视频 / 语音）",
+                                checked = importMedia,
+                                enabled = paneActive && !transfer.running,
+                                onCheckedChange = { importMedia = it },
+                            )
+                            SwitchRow(
+                                label = "导入成员目录（期别 / 头像）",
+                                checked = importMembers,
+                                enabled = paneActive && !transfer.running,
+                                onCheckedChange = { importMembers = it },
+                            )
+                            RelayDialogButton(
+                                style = RelayDialogButtonStyle.Filled,
+                                onClick = { openDocument.launch(arrayOf("*/*")) },
+                                enabled = paneActive && !transfer.running,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = if (LocalRelayMirrorStyle.current) 48.dp else 44.dp),
+                            ) {
+                                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.size(8.dp))
+                                Text("选择 .zip 文件导入", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
-                    }
-                                        // 统计过程已经遍历过记录并保留了确切的 URL，因此补齐流程
-                                        // 直接下载该列表，而不再重新扫描整个库。
-                    val missingMedia = estimate?.missing?.size ?: 0
-                    if (missingMedia > 0 && !transfer.running) {
-                        OutlinedButton(
-                            onClick = {
-                                estimate?.let { DataTransferManager.backfillMedia(context, kind, it.missing) }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().height(44.dp),
-                        ) {
-                            Text("补齐缺失媒体（" + missingMedia + "）", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        }
-                    }
-                    SwitchRow(
-                        label = "包含媒体（图片 / 视频 / 语音）",
-                        checked = includeMedia,
-                        enabled = !transfer.running,
-                        onCheckedChange = { includeMedia = it },
-                    )
-                    SwitchRow(
-                        label = "包含译文",
-                        checked = includeTranslations,
-                        enabled = !transfer.running,
-                        onCheckedChange = { includeTranslations = it },
-                    )
-                    Button(
-                        onClick = { startExport() },
-                        enabled = members.isNotEmpty() && effectiveSelection.isNotEmpty() && !transfer.running,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandPurple),
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                    ) {
-                        Icon(Icons.Rounded.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("导出 .zip", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                } else {
-                    Text(
-                        text = "增量合并：重复条目自动跳过。",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    SwitchRow(
-                        label = "导入媒体（图片 / 视频 / 语音）",
-                        checked = importMedia,
-                        enabled = !transfer.running,
-                        onCheckedChange = { importMedia = it },
-                    )
-                    SwitchRow(
-                        label = "导入成员目录（期别 / 头像）",
-                        checked = importMembers,
-                        enabled = !transfer.running,
-                        onCheckedChange = { importMembers = it },
-                    )
-                    Button(
-                        onClick = { openDocument.launch(arrayOf("*/*")) },
-                        enabled = !transfer.running,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandPurple),
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                    ) {
-                        Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("选择 .zip 文件导入", fontWeight = FontWeight.SemiBold, maxLines = 1)
                     }
                 }
             }
@@ -471,7 +480,7 @@ fun DataTransferDrawer(
                 importSelectedIds = null
                 showImportPicker = false
             },
-            shape = RoundedCornerShape(20.dp),
+            shape = if (LocalRelayMirrorStyle.current) RelayHomeCardShape else RoundedCornerShape(20.dp),
             title = { Text("确认导入", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -480,31 +489,12 @@ fun DataTransferDrawer(
                     Text("包含媒体：" + if (pendingPreview.includesMedia) "是" else "否")
                     Text("包含译文：" + if (pendingPreview.includesTranslations) "是" else "否")
                     if (previewMembers.isNotEmpty()) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !transfer.running) { showImportPicker = true }
-                                .padding(vertical = 6.dp),
-                        ) {
-                            Text(
-                                text = "导入成员",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                text = effectiveImportSelection.size.toString() + " / " + previewMembers.size,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Icon(
-                                Icons.Rounded.ChevronRight,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                        MemberSelectionField(
+                            title = "导入成员",
+                            summary = "${effectiveImportSelection.size} / ${previewMembers.size}",
+                            enabled = !transfer.running,
+                            onClick = { showImportPicker = true },
+                        )
                     } else {
                         Text("成员：" + pendingPreview.members.size + " 位")
                     }
@@ -518,7 +508,7 @@ fun DataTransferDrawer(
                 }
             },
             confirmButton = {
-                TextButton(
+                RelayDialogButton(
                     onClick = {
                         DataTransferManager.importArchive(
                             context,
@@ -537,11 +527,10 @@ fun DataTransferDrawer(
                         importSelectedIds = null
                         showImportPicker = false
                     },
-                    colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
                 ) { Text("开始导入", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(
+                RelayDialogButton(
                     onClick = {
                         preview = null
                         pendingImportUri = null
@@ -555,15 +544,109 @@ fun DataTransferDrawer(
 }
 
 @Composable
+private fun ExportEstimateStatus(
+    estimate: ExportEstimate?,
+    progressFlow: StateFlow<Pair<Int, Int>?>,
+    includeMedia: Boolean,
+    backfilling: Boolean,
+    active: Boolean,
+    failure: String?,
+) {
+    val progress by progressFlow.collectAsStateWithLifecycle()
+    // Starting progress must not change the sheet anchor and cancel its own scan.
+    Column(Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+        val current = estimate
+        if (current == null) {
+            if (backfilling) {
+                // 正在下载缺失媒体，这里不再触发全库重扫，等补齐结束后再统计。
+                Text(
+                    text = "补齐媒体中，完成后重新统计",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            } else if (failure != null) {
+                Text(failure, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            } else if (!active) {
+                Text("正在准备统计…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                val scanned = progress?.first ?: 0
+                val count = progress?.second ?: 0
+                if (count > 0) {
+                    LinearProgressIndicator(
+                        progress = {
+                            (scanned.toFloat() / count.toFloat()).coerceIn(0f, 1f)
+                        },
+                        // 去掉轨道最右端的紫色端点圆点，统计进度条只保留进度本身。
+                        drawStopIndicator = {},
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                }
+                Text(
+                    text = if (count > 0) {
+                        "正在统计 " + scanned + " / " + count
+                    } else {
+                        "正在统计..."
+                    },
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        } else {
+            Text(
+                text = current.records.toString() + " 条记录" +
+                    if (includeMedia) mediaBreakdown(current) else " · 不含媒体",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MemberSelectionField(
+    title: String,
+    summary: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
+        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1,
+            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(summary, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(Icons.Rounded.ChevronRight, contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+    }
+    if (LocalRelayMirrorStyle.current) {
+        RelayDialogButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+            style = RelayDialogButtonStyle.Outlined,
+            content = content,
+        )
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
+    }
+}
+
+@Composable
 private fun SectionCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        shape = RelayCardShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    RelayDialogCard(
         border = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.12f)),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(if (LocalRelayMirrorStyle.current) RelayCardContentInset else 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             content()
@@ -582,9 +665,13 @@ private fun SwitchRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Text(label, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Text(label, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        if (LocalRelayMirrorStyle.current) {
+            RelayMirrorGlassSwitch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled, label = label)
+        } else {
+            Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        }
     }
 }
 
@@ -593,12 +680,10 @@ private fun TransferStatusCard(
     transfer: com.nogirelay.app.data.transfer.TransferState,
     onCancel: () -> Unit,
 ) {
-    Card(
-        shape = RelayCardShape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+    RelayDialogCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(Modifier.fillMaxWidth().padding(if (LocalRelayMirrorStyle.current) RelayCardContentInset else 16.dp)) {
             when {
                 transfer.running -> {
                     Text(transfer.phase.ifBlank { "处理中" }, fontWeight = FontWeight.Medium)
@@ -626,11 +711,11 @@ private fun TransferStatusCard(
                     Spacer(Modifier.height(12.dp))
                     // 与这个抽屉中所有其他操作一样占满整宽：Material 默认的按钮
                     // 内容内边距会把标签挤到卡片的内容边界之外。
-                    OutlinedButton(
+                    RelayDialogButton(
+                        style = RelayDialogButtonStyle.Outlined,
                         onClick = onCancel,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                    ) { Text("取消", fontWeight = FontWeight.SemiBold, maxLines = 1) }
+                        modifier = Modifier.fillMaxWidth().heightIn(min = if (LocalRelayMirrorStyle.current) 48.dp else 44.dp),
+                    ) { Text("取消", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
                 transfer.error != null -> {
                     Text(

@@ -1,91 +1,69 @@
 package com.nogirelay.app.blog
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalTextToolbar
-import com.nogirelay.app.ui.AutoClearSelectionOnExit
-import com.nogirelay.app.ui.clearSelectionOnTap
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FilterList
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -93,45 +71,69 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nogirelay.app.NameWithUnreadTag
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogPost
-import android.widget.Toast
 import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.BlogSummary
+import com.nogirelay.app.data.DataChange
+import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.isRealBlogImageUrl
+import com.nogirelay.app.data.readDatabase
+import com.nogirelay.app.data.transfer.ExportKind
 import com.nogirelay.app.media.MediaDownloader
+import com.nogirelay.app.performance.isRelayUiStarted
+import com.nogirelay.app.performance.rememberSearchQuery
 import com.nogirelay.app.translation.BlogTranslationLayout
 import com.nogirelay.app.translation.BlogTranslationManager
-import com.nogirelay.app.NameWithUnreadTag
 import com.nogirelay.app.ui.AiTranslateIcon
+import com.nogirelay.app.ui.AutoClearSelectionOnExit
 import com.nogirelay.app.ui.BrandPurple
-import com.nogirelay.app.ui.BrandPurpleContainer
 import com.nogirelay.app.ui.BrandPurpleDark
 import com.nogirelay.app.ui.BrandPurpleLight
-import com.nogirelay.app.ui.RelayCardShape
+import com.nogirelay.app.ui.LocalRelayMirrorStyle
+import com.nogirelay.app.ui.MediaViewerActivity
+import com.nogirelay.app.ui.RelayCardContentInset
 import com.nogirelay.app.ui.RelayControlShape
+import com.nogirelay.app.ui.RelayDialogButton
+import com.nogirelay.app.ui.RelayDialogCard
+import com.nogirelay.app.ui.RelayDialogIconButton
+import com.nogirelay.app.ui.RelayGlassBackdrop
+import com.nogirelay.app.ui.RelayHomeCardShape
+import com.nogirelay.app.ui.RelayLightBackdrop
+import com.nogirelay.app.ui.RelayMirrorGlassBackground
+import com.nogirelay.app.ui.RelayMirrorGlassButton
+import com.nogirelay.app.ui.RelayMirrorGlassCard
+import com.nogirelay.app.ui.RelayMirrorGlassIconButton
+import com.nogirelay.app.ui.RelayModalBottomSheet
+import com.nogirelay.app.ui.RelayNavigationSelectionShape
 import com.nogirelay.app.ui.RelaySearchField
 import com.nogirelay.app.ui.RelaySegmentedTabs
+import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.SearchHighlightText
-import com.nogirelay.app.ui.transfer.MemberPickerGrid
-import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterSection
+import com.nogirelay.app.ui.clearSelectionOnTap
 import com.nogirelay.app.ui.hasInvertedRange
 import com.nogirelay.app.ui.highlightMatches
+import com.nogirelay.app.ui.relaySheetBackdrop
+import com.nogirelay.app.ui.rememberRelaySheetBackdropState
 import com.nogirelay.app.ui.searchSnippets
-import com.nogirelay.app.data.transfer.ExportKind
-import com.nogirelay.app.ui.navigation.RelayIconButton
 import com.nogirelay.app.ui.transfer.DataTransferDrawer
+import com.nogirelay.app.ui.transfer.MemberPickerGrid
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -141,18 +143,22 @@ private const val BLOG_PAGE_SIZE = 20
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun BlogScreen(
-    dataVersion: Long,
+    versions: DataVersions,
     initialBlogId: String?,
     onInitialBlogHandled: (String) -> Unit,
     onUnreadChanged: () -> Unit,
     isActive: Boolean = true,
 ) {
+    val sheetBackdrop = rememberRelaySheetBackdropState()
+    val workActive = isActive && isRelayUiStarted() && !sheetBackdrop.isAttached
     val context = androidx.compose.ui.platform.LocalContext.current
     val retranslateScope = rememberCoroutineScope()
     var selectedBlogId by remember { mutableStateOf<String?>(null) }
+    val listActive = workActive && selectedBlogId == null
     var selectedMemberIds by remember { mutableStateOf<Set<String>?>(null) }
     var oldestFirst by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    val effectiveQuery = rememberSearchQuery(searchQuery, workActive)
     var timeFilter by remember { mutableStateOf(TimeFilter()) }
     var showMemberDialog by remember { mutableStateOf(false) }
     var currentPage by remember { mutableIntStateOf(0) }
@@ -163,16 +169,19 @@ fun BlogScreen(
     var translationEnabled by remember { mutableStateOf(AppGraph.settings.read().translationEnabled) }
     var members by remember { mutableStateOf(BlogPrewarmer.cachedMembers ?: emptyList()) }
 
-    LaunchedEffect(dataVersion) {
-        withContext(AppGraph.dispatchers.databaseRead) {
-            translationEnabled = AppGraph.settings.read().translationEnabled
-            members = AppGraph.database.blogMembers()
+    LaunchedEffect(versions.blogStructure, versions.settings, listActive) {
+        if (!listActive) return@LaunchedEffect
+        val loaded = withContext(AppGraph.dispatchers.databaseRead) {
+            AppGraph.settings.read().translationEnabled to AppGraph.database.blogMembers()
         }
+        translationEnabled = loaded.first
+        members = loaded.second
     }
 
     var pendingScrollBlogId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(initialBlogId) {
+    LaunchedEffect(initialBlogId, workActive) {
+        if (!workActive) return@LaunchedEffect
         initialBlogId?.let { id ->
             searchQuery = ""
             selectedMemberIds = null
@@ -227,19 +236,21 @@ fun BlogScreen(
     // 而当时用户正在滚动。页面及其摘录作为同一个状态产出，这样卡片
     // 一次就以最终高度渲染，而不是在第二轮中逐渐撑开。
     var pageData by remember { mutableStateOf(BlogPrewarmer.cachedInitialData ?: BlogPageData()) }
-    LaunchedEffect(dataVersion, translationEnabled, selectedMemberIds, searchQuery, oldestFirst, timeFilter, currentPage) {
-        val query = searchQuery
+    LaunchedEffect(versions.blogs, listActive, translationEnabled, selectedMemberIds, effectiveQuery, oldestFirst, timeFilter, currentPage) {
+        if (!listActive) return@LaunchedEffect
+        val query = effectiveQuery
         val memberIds = selectedMemberIds
         val requestedPage = currentPage
         val oldest = oldestFirst
         val bounds = timeFilter
-        pageData = withContext(AppGraph.dispatchers.databaseRead) {
-            val total = AppGraph.database.countBlogs()
-            val matching = AppGraph.database.countBlogs(
+        pageData = readDatabase { cancellation ->
+            val total = AppGraph.database.countBlogs(cancellationSignal = cancellation)
+            val matching = if (memberIds == null && query.isBlank() && !bounds.isActive) total else AppGraph.database.countBlogs(
                 memberIds = memberIds,
                 searchQuery = query,
                 startMillis = bounds.startMillis,
                 endMillisExclusive = bounds.endMillisExclusive,
+                cancellationSignal = cancellation,
             )
             val totalPages = ((matching + BLOG_PAGE_SIZE - 1) / BLOG_PAGE_SIZE).coerceAtLeast(1)
             val page = requestedPage.coerceIn(0, totalPages - 1)
@@ -251,18 +262,20 @@ fun BlogScreen(
                 endMillisExclusive = bounds.endMillisExclusive,
                 limit = BLOG_PAGE_SIZE,
                 offset = page * BLOG_PAGE_SIZE,
+                cancellationSignal = cancellation,
             )
             val previews = if (query.isBlank() || posts.isEmpty()) {
                 emptyMap()
             } else {
                 AppGraph.database.blogSearchSources(posts.map(BlogSummary::id))
                     .mapNotNull { source ->
+                        cancellation.throwIfCanceled()
                         // 先原文正文，再其译文：一个词项可能匹配其中任意一个，
                         // 当两者都包含它时两段摘录都会显示。标签跟随来源，
                         // 因此仅命中译文的匹配永远不会被标为原文。
                         val excerpts = buildList {
                             val originalSnippets = searchSnippets(
-                                BlogContentParser.plainText(BlogContentParser.blocks(source.bodyHtml)),
+                                BlogTextCache.parse(source.id, source.bodyHtml).plainText,
                                 query,
                             )
                             originalSnippets.forEachIndexed { index, snippet ->
@@ -300,7 +313,8 @@ fun BlogScreen(
             val targetId = pendingScrollBlogId ?: return@LaunchedEffect
             val index = blogs.indexOfFirst { it.id == targetId }
             if (index >= 0) {
-                blogListState.animateScrollToItem(index + 1)
+                // Header and search field are the first two list items.
+                blogListState.animateScrollToItem(index + 2)
                 pendingScrollBlogId = null
             }
         }
@@ -308,7 +322,8 @@ fun BlogScreen(
 
     // 在后台预热当前页的封面（上限为不超过页大小，已缓存的文件会被
     // 跳过），这样滚动时从磁盘解码，而不必等待首次下载。
-    LaunchedEffect(dataVersion, blogs) {
+    LaunchedEffect(blogs, listActive) {
+        if (!listActive) return@LaunchedEffect
         BlogMediaDownloader.prefetchImages(
             context,
             blogs.mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) },
@@ -321,7 +336,7 @@ fun BlogScreen(
         pageInput = (safePage + 1).toString()
     }
 
-    LaunchedEffect(selectedMemberIds, oldestFirst, searchQuery, timeFilter) {
+    LaunchedEffect(selectedMemberIds, oldestFirst, effectiveQuery, timeFilter) {
         currentPage = 0
         pageInput = "1"
     }
@@ -403,246 +418,249 @@ fun BlogScreen(
         }
     }
 
-
-    if (showMemberDialog) {
-        BlogFilterDialog(
-            members = members,
-            selectedIds = selectedMemberIds ?: members.mapTo(linkedSetOf(), BlogMember::id),
-            timeFilter = timeFilter,
-            onDismiss = { showMemberDialog = false },
-            onConfirm = { selectedIds, selectedTimeFilter ->
-                val allIds = members.mapTo(linkedSetOf(), BlogMember::id)
-                selectedMemberIds = selectedIds.takeUnless { it == allIds }
-                timeFilter = selectedTimeFilter
-                currentPage = 0
-                pageInput = "1"
-                showMemberDialog = false
-            },
-        )
-    }
-    if (showPageDialog) {
-        BlogPageDialog(
-            pageInput = pageInput,
-            totalPages = totalPages,
-            onInputChange = { pageInput = it },
-            onDismiss = { showPageDialog = false },
-            onConfirm = { requestedPage ->
-                goToPage(requestedPage - 1)
-                showPageDialog = false
-            },
-        )
-    }
-
-    Crossfade(
-        targetState = selected,
-        animationSpec = tween(durationMillis = 220),
-        label = "blog-detail-transition",
-    ) { selectedId ->
-        if (selectedId != null) {
-            BlogDetail(
-                blogId = selectedId,
-                isActive = isActive,
-                dataVersion = dataVersion,
-                onBack = { selectedBlogId = null },
-                onUnreadChanged = onUnreadChanged,
-            )
-            LaunchedEffect(selectedId, initialBlogId) {
-                if (selectedId == initialBlogId) onInitialBlogHandled(selectedId)
-            }
-            return@Crossfade
-        }
-
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {
-                Text(
-                    text = "博客",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            },
-            actions = {
-                RelayIconButton(
-                    onClick = { showDataDrawer = true },
-                    imageVector = Icons.Rounded.Settings,
-                    contentDescription = "数据管理",
-                )
-            },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+    CompositionLocalProvider(
+        LocalRelayMirrorStyle provides true,
+        com.nogirelay.app.performance.LocalRelayPageWorkPaused provides sheetBackdrop.isAttached,
+    ) {
+        // Cards and controls only sample this empty page backdrop. The app's outer source
+        // continues to capture the completed blog page for the floating navigation.
+        RelayGlassBackdrop(
+            background = RelayLightBackdrop,
+            modifier = Modifier.fillMaxSize().relaySheetBackdrop(sheetBackdrop),
         ) {
-            BlogSortSwitcher(
-                oldestFirst = oldestFirst,
-                onOldestFirstChanged = { oldestFirst = it },
-                modifier = Modifier.weight(1f),
-            )
-            val isMemberFilterActive = selectedMemberIds != null && (members.isEmpty() || selectedMemberIds?.size != members.size)
-            val isFilterActive = timeFilter.isActive || isMemberFilterActive
-            Surface(
-                shape = CircleShape,
-                color = if (isFilterActive) BrandPurple.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface,
-                border = if (isFilterActive) BorderStroke(1.dp, BrandPurple) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                modifier = Modifier.size(42.dp),
-            ) {
-                IconButton(
-                    onClick = { showMemberDialog = true },
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    Icon(
-                        Icons.Rounded.FilterList,
-                        contentDescription = "筛选成员和时间",
-                        tint = if (isFilterActive) {
-                            BrandPurple
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-            }
-        }
-        LazyColumn(
-            state = blogListState,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxSize().padding(top = 10.dp),
-        ) {
-            item(key = "blog-search") {
-                RelaySearchField(
-                    query = searchQuery,
-                    onQueryChange = {
-                        searchQuery = it
+            if (showMemberDialog) {
+                BlogFilterDialog(
+                    members = members,
+                    backdropState = sheetBackdrop,
+                    selectedIds = selectedMemberIds ?: members.mapTo(linkedSetOf(), BlogMember::id),
+                    timeFilter = timeFilter,
+                    onDismiss = { showMemberDialog = false },
+                    onConfirm = { selectedIds, selectedTimeFilter ->
+                        val allIds = members.mapTo(linkedSetOf(), BlogMember::id)
+                        selectedMemberIds = selectedIds.takeUnless { it == allIds }
+                        timeFilter = selectedTimeFilter
                         currentPage = 0
                         pageInput = "1"
+                        showMemberDialog = false
                     },
-                    placeholder = "搜索博客标题、正文或日期",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
                 )
             }
-            // 首次加载完成前不渲染任何内容，因此空状态不会闪现。
-            if (pageData.loaded && blogs.isEmpty()) {
-                item(key = "blog-empty") {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
-                            .animateItem()
-                            .fillMaxWidth()
-                            .padding(vertical = 64.dp),
-                    ) {
-                        Icon(Icons.AutoMirrored.Rounded.Article, contentDescription = null, modifier = Modifier.size(52.dp), tint = MaterialTheme.colorScheme.outline)
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            when {
-                                totalCount == 0 -> "正在等待博客同步"
-                                searchQuery.isNotBlank() -> "没有找到相关博客"
-                                else -> "当前成员筛选下没有博客"
-                            },
-                        )
-                    }
-                }
-            } else if (blogs.isNotEmpty()) {
-                items(blogs, key = BlogSummary::id) { blog ->
-                    BlogSummaryCard(
-                        modifier = Modifier
-                            .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
-                            .animateItem(),
-                        blog = blog,
-                        searchQuery = searchQuery,
-                        bodyPreviews = bodyPreviews[blog.id].orEmpty(),
-                        translationEnabled = translationEnabled,
-                        onClick = {
-                            selectedBlogId = blog.id
-                            pendingScrollBlogId = blog.id
-                        },
-                        onDownload = {
-                            context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
-                        },
-                        onRetranslate = {
-                            retranslateScope.launch(Dispatchers.IO) {
-                                AppGraph.database.markBlogForRetranslation(blog.id)
-                                AppGraph.notifyDataChanged()
-                                BlogTranslationManager.enqueue(context, blog.id, force = true)
-                            }
-                        },
+            if (showPageDialog) {
+                BlogPageDialog(
+                    pageInput = pageInput,
+                    totalPages = totalPages,
+                    onInputChange = { pageInput = it },
+                    onDismiss = { showPageDialog = false },
+                    onConfirm = { requestedPage ->
+                        goToPage(requestedPage - 1)
+                        showPageDialog = false
+                    },
+                )
+            }
+
+            Crossfade(
+                targetState = selected,
+                animationSpec = tween(durationMillis = 220),
+                label = "blog-detail-transition",
+                modifier = Modifier.fillMaxSize(),
+            ) { selectedId ->
+                if (selectedId != null) {
+                    BlogDetail(
+                        blogId = selectedId,
+                        isActive = workActive && selectedId == selected,
+                        dataVersion = maxOf(versions.blogContent, versions.settings),
+                        onBack = { selectedBlogId = null },
+                        onUnreadChanged = onUnreadChanged,
                     )
+                    LaunchedEffect(selectedId, initialBlogId) {
+                        if (selectedId == initialBlogId) onInitialBlogHandled(selectedId)
+                    }
+                    return@Crossfade
                 }
-                item(key = "blog-pagination") {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier
-                            .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 12.dp),
-                    ) {
-                        Text(
-                            text = "共 $matchingCount 篇博客",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            OutlinedButton(
-                                onClick = { goToPage(page - 1) },
-                                enabled = page > 0,
-                                shape = RelayControlShape,
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = BrandPurple,
-                                ),
-                                modifier = Modifier.weight(1f),
-                            ) { Text("上一页", maxLines = 1, fontSize = 13.sp) }
 
-                            OutlinedButton(
-                                onClick = {
-                                    pageInput = (page + 1).toString()
-                                    showPageDialog = true
+                LazyColumn(
+                    state = blogListState,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    item(key = "blog-header") {
+                        Column(Modifier.fillMaxWidth()) {
+                            // Keep the status-bar inset in the scroll content so the toolbar follows it offscreen.
+                            Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                            TopAppBar(
+                                title = {
+                                    Text(
+                                        text = "博客",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 18.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
                                 },
-                                enabled = matchingCount > 0,
-                                shape = RelayControlShape,
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = BrandPurple,
-                                    containerColor = BrandPurple.copy(alpha = 0.06f),
+                                actions = {
+                                    RelayMirrorGlassIconButton(
+                                        onClick = { showDataDrawer = true },
+                                        imageVector = Icons.Rounded.Settings,
+                                        contentDescription = "数据管理",
+                                    )
+                                },
+                                colors = TopAppBarDefaults.topAppBarColors(
+                                    containerColor = Color.Transparent,
+                                    scrolledContainerColor = Color.Transparent,
                                 ),
-                                border = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.3f)),
-                                modifier = Modifier.weight(1.2f),
+                                windowInsets = WindowInsets(0, 0, 0, 0),
+                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                             ) {
-                                Text("${page + 1} / $totalPages", fontWeight = FontWeight.SemiBold, maxLines = 1, fontSize = 13.sp)
-                                Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码", modifier = Modifier.size(18.dp))
+                                BlogSortSwitcher(
+                                    oldestFirst = oldestFirst,
+                                    onOldestFirstChanged = { oldestFirst = it },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                val isMemberFilterActive = selectedMemberIds != null && (members.isEmpty() || selectedMemberIds?.size != members.size)
+                                val isFilterActive = timeFilter.isActive || isMemberFilterActive
+                                RelayMirrorGlassIconButton(
+                                    onClick = { showMemberDialog = true },
+                                    imageVector = Icons.Rounded.FilterList,
+                                    contentDescription = "筛选成员和时间",
+                                    active = isFilterActive,
+                                )
                             }
-
-                            OutlinedButton(
-                                onClick = { goToPage(page + 1) },
-                                enabled = page < totalPages - 1,
-                                shape = RelayControlShape,
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = BrandPurple,
-                                ),
-                                modifier = Modifier.weight(1f),
-                            ) { Text("下一页", maxLines = 1, fontSize = 13.sp) }
                         }
                     }
+                    item(key = "blog-search") {
+                        RelaySearchField(
+                            query = searchQuery,
+                            onQueryChange = {
+                                searchQuery = it
+                                currentPage = 0
+                                pageInput = "1"
+                            },
+                            placeholder = "搜索博客标题、正文或日期",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
+                    // 首次加载完成前不渲染任何内容，因此空状态不会闪现。
+                    if (pageData.loaded && blogs.isEmpty()) {
+                        item(key = "blog-empty") {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                                    .animateItem()
+                                    .fillMaxWidth()
+                                    .padding(vertical = 64.dp),
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.Article, contentDescription = null, modifier = Modifier.size(52.dp), tint = MaterialTheme.colorScheme.outline)
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    when {
+                                        totalCount == 0 -> "正在等待博客同步"
+                                        searchQuery.isNotBlank() -> "没有找到相关博客"
+                                        else -> "当前成员筛选下没有博客"
+                                    },
+                                )
+                            }
+                        }
+                    } else if (blogs.isNotEmpty()) {
+                        items(blogs, key = BlogSummary::id) { blog ->
+                            BlogSummaryCard(
+                                modifier = Modifier
+                                    .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                                    .animateItem(),
+                                blog = blog,
+                                searchQuery = effectiveQuery,
+                                bodyPreviews = bodyPreviews[blog.id].orEmpty(),
+                                translationEnabled = translationEnabled,
+                                onClick = {
+                                    selectedBlogId = blog.id
+                                    pendingScrollBlogId = blog.id
+                                },
+                                onDownload = {
+                                    context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
+                                },
+                                onRetranslate = {
+                                    retranslateScope.launch(Dispatchers.IO) {
+                                        AppGraph.database.markBlogForRetranslation(blog.id)
+                                        AppGraph.notifyDataChanged(DataChange.BLOG_ROWS, setOf(blog.id))
+                                        BlogTranslationManager.enqueue(context, blog.id, force = true)
+                                    }
+                                },
+                            )
+                        }
+                        item(key = "blog-pagination") {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier
+                                    .graphicsLayer { translationY = with(density) { springOffset.value.dp.toPx() } }
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                            ) {
+                                Text(
+                                    text = "共 $matchingCount 篇博客",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    RelayMirrorGlassButton(
+                                        onClick = { goToPage(page - 1) },
+                                        enabled = page > 0,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text("上一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp) }
+
+                                    RelayMirrorGlassButton(
+                                        onClick = {
+                                            pageInput = (page + 1).toString()
+                                            showPageDialog = true
+                                        },
+                                        enabled = matchingCount > 0,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                        modifier = Modifier.weight(1.2f),
+                                    ) {
+                                        Text(
+                                            "${page + 1} / $totalPages",
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.weight(1f, fill = false),
+                                        )
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码", modifier = Modifier.size(18.dp))
+                                    }
+
+                                    RelayMirrorGlassButton(
+                                        onClick = { goToPage(page + 1) },
+                                        enabled = page < totalPages - 1,
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                        modifier = Modifier.weight(1f),
+                                    ) { Text("下一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp) }
+                                }
+                            }
+                        }
+                        item { Spacer(Modifier.height(128.dp)) }
+                    }
                 }
-                item { Spacer(Modifier.height(12.dp)) }
+            }
+
+            if (showDataDrawer) {
+                DataTransferDrawer(
+                    kind = ExportKind.BLOGS,
+                    backdropState = sheetBackdrop,
+                    onDismiss = { showDataDrawer = false },
+                )
             }
         }
-    }
-    }
-
-    if (showDataDrawer) {
-        DataTransferDrawer(
-            kind = ExportKind.BLOGS,
-            onDismiss = { showDataDrawer = false },
-        )
     }
 }
 
@@ -664,6 +682,7 @@ private fun BlogSortSwitcher(
 @Composable
 private fun BlogFilterDialog(
     members: List<BlogMember>,
+    backdropState: RelaySheetBackdropState,
     selectedIds: Set<String>,
     timeFilter: TimeFilter,
     onDismiss: () -> Unit,
@@ -671,82 +690,101 @@ private fun BlogFilterDialog(
 ) {
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     var draftTimeFilter by remember(timeFilter) { mutableStateOf(timeFilter) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
-
-    // 与主页设置抽屉、时间筛选抽屉一致：先播放收起动画再从组合里移除。
-    fun closeSheet(after: () -> Unit) {
-        scope.launch {
-            sheetState.hide()
-            after()
-        }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = { closeSheet(onDismiss) },
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-    ) {
+    val allMemberIds = remember(members) { members.mapTo(linkedSetOf(), BlogMember::id) }
+    RelayModalBottomSheet(
+        onDismissRequest = onDismiss,
+        backdropState = backdropState,
+    ) { dismiss ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("博客筛选", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(6.dp))
-            if (members.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "正在加载成员...",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp,
-                    )
-                }
-            } else {
-                MemberPickerGrid(
-                    members = members,
-                    selectedIds = draft,
-                    onSelectedChange = { draft = it },
-                    modifier = Modifier.heightIn(max = 340.dp),
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "博客筛选",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                RelayDialogIconButton(
+                    onClick = { dismiss(onDismiss) },
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "关闭博客筛选",
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            TimeFilterSection(
-                filter = draftTimeFilter,
-                onFilterChange = { draftTimeFilter = it },
-            )
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                IconButton(onClick = { draft = members.mapTo(linkedSetOf(), BlogMember::id) }) {
-                    Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
+            RelayDialogCard {
+                Column(Modifier.fillMaxWidth().padding(RelayCardContentInset)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "成员 · 已选 ${draft.size}",
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        RelayDialogIconButton(
+                            onClick = { draft = allMemberIds },
+                            imageVector = Icons.Rounded.DoneAll,
+                            contentDescription = "全选",
+                            enabled = members.isNotEmpty(),
+                        )
+                        RelayDialogIconButton(
+                            onClick = { draft = emptySet() },
+                            imageVector = Icons.Rounded.ClearAll,
+                            contentDescription = "全不选",
+                            enabled = draft.isNotEmpty(),
+                        )
+                    }
+                    if (members.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(120.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "正在加载成员...",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    } else {
+                        MemberPickerGrid(
+                            members = members,
+                            selectedIds = draft,
+                            onSelectedChange = { draft = it },
+                            modifier = Modifier.heightIn(max = 340.dp),
+                        )
+                    }
                 }
-                IconButton(onClick = { draft = emptySet() }) {
-                    Icon(Icons.Rounded.ClearAll, contentDescription = "全部清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Spacer(Modifier.weight(1f))
-                OutlinedButton(
-                    onClick = { closeSheet(onDismiss) },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.height(44.dp),
+            }
+            RelayDialogCard {
+                TimeFilterSection(
+                    filter = draftTimeFilter,
+                    onFilterChange = { draftTimeFilter = it },
+                    modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                RelayDialogButton(
+                    onClick = { dismiss(onDismiss) },
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Spacer(Modifier.width(10.dp))
-                Button(
-                    onClick = { closeSheet { onConfirm(draft, draftTimeFilter) } },
+                RelayDialogButton(
+                    onClick = { dismiss { onConfirm(draft, draftTimeFilter) } },
                     enabled = !draftTimeFilter.hasInvertedRange(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
-                    modifier = Modifier.height(44.dp),
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Text("确定", fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -765,35 +803,48 @@ private fun BlogPageDialog(
     val canJump = requestedPage != null && requestedPage in 1..totalPages
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
+        shape = RelayHomeCardShape,
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
         title = { Text("跳转页码", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("请输入 1 ~ ${totalPages} 之间的页码", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(
-                    value = pageInput,
-                    onValueChange = { onInputChange(it.filter(Char::isDigit).take(6)) },
-                    singleLine = true,
-                    label = { Text("页码") },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BrandPurple,
-                        focusedLabelColor = BrandPurple,
-                    ),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { if (canJump) onConfirm(requestedPage!!) }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Box(Modifier.fillMaxWidth()) {
+                    RelayMirrorGlassBackground(
+                        shape = RelayControlShape,
+                        modifier = Modifier.matchParentSize(),
+                        opaqueBackground = MaterialTheme.colorScheme.surface,
+                        emphasizeEdges = true,
+                    )
+                    OutlinedTextField(
+                        value = pageInput,
+                        onValueChange = { onInputChange(it.filter(Char::isDigit).take(6)) },
+                        singleLine = true,
+                        label = { Text("页码") },
+                        shape = RelayControlShape,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BrandPurple,
+                            focusedLabelColor = BrandPurple,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
+                        keyboardActions = KeyboardActions(onGo = { requestedPage?.takeIf { canJump }?.let(onConfirm) }),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = { onConfirm(requestedPage!!) },
+            RelayDialogButton(
+                onClick = { requestedPage?.let(onConfirm) },
                 enabled = canJump,
-                colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
-            ) { Text("跳转", fontWeight = FontWeight.Bold) }
+            ) { Text("跳转", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = {
+            RelayDialogButton(onClick = onDismiss) { Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        },
     )
 }
 
@@ -811,177 +862,183 @@ private fun BlogSummaryCard(
     val highlightBackground = MaterialTheme.colorScheme.primaryContainer
     val highlightText = MaterialTheme.colorScheme.onPrimaryContainer
     var isPreviewsExpanded by remember(blog.id, searchQuery) { mutableStateOf(false) }
-    Card(
+    RelayMirrorGlassCard(
         onClick = onClick,
-        shape = RelayCardShape,
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        shape = RelayHomeCardShape,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
     ) {
-        Column {
-            Column(Modifier.padding(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RemoteImage(
-                        url = blog.memberAvatarUrl,
-                        contentDescription = blog.memberName,
-                        // 以头像尺寸在 IO 上解码：搜索结果会带来头像
-                        // 不在内存缓存中的成员，而每张卡片都在主线程同步解码
-                        // 正是导致滚动搜索结果卡顿、而最新帖子不卡的原因。
-                        loadCachedImmediately = false,
-                        maxDecodeDimension = 256,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape),
-                    )
-                    Spacer(Modifier.size(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        NameWithUnreadTag(
-                            name = highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
-                            isUnread = blog.isUnread,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            searchQuery = searchQuery,
-                            highlightBackground = highlightBackground,
-                        )
-                        SearchHighlightText(
-                            text = formatBlogDate(blog.publishedAt),
-                            query = searchQuery,
-                            highlightBackground = highlightBackground,
-                            highlightTextColor = highlightText,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 12.sp,
-                                lineHeight = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            ),
-                        )
-                    }
-                    if (translationEnabled) {
-                        IconButton(onClick = onRetranslate, modifier = Modifier.size(38.dp)) {
-                            AiTranslateIcon(
-                                tint = BrandPurple,
-                                size = 22.dp,
-                            )
-                        }
-                    }
-                    IconButton(onClick = onDownload, modifier = Modifier.size(38.dp)) {
-                        Icon(
-                            Icons.Rounded.Download,
-                            contentDescription = "选择下载博客图片",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                SearchHighlightText(
-                    text = blog.title,
-                    query = searchQuery,
-                    highlightBackground = highlightBackground,
-                    highlightTextColor = highlightText,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+        Column(Modifier.padding(RelayCardContentInset)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RemoteImage(
+                    url = blog.memberAvatarUrl,
+                    contentDescription = blog.memberName,
+                    // 以头像尺寸在 IO 上解码：搜索结果会带来头像
+                    // 不在内存缓存中的成员，而每张卡片都在主线程同步解码
+                    // 正是导致滚动搜索结果卡顿、而最新帖子不卡的原因。
+                    loadCachedImmediately = false,
+                    maxDecodeDimension = 256,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape),
                 )
-                blog.translatedTitle?.takeIf { translationEnabled }?.let {
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f)) {
+                    NameWithUnreadTag(
+                        name = highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
+                        isUnread = blog.isUnread,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        searchQuery = searchQuery,
+                        highlightBackground = highlightBackground,
+                    )
                     SearchHighlightText(
-                        text = it,
+                        text = formatBlogDate(blog.publishedAt),
                         query = searchQuery,
                         highlightBackground = highlightBackground,
                         highlightTextColor = highlightText,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            color = BrandPurpleDark,
-                            fontSize = 14.5.sp,
-                            lineHeight = 21.sp,
-                            fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         ),
-                        modifier = Modifier.padding(top = 4.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                // 匹配词项周围的摘录：显示原文正文中的所有出现位置，
-                // 以及当译文也匹配时其中的所有出现位置。
-                val visiblePreviews = if (isPreviewsExpanded || bodyPreviews.size <= 3) {
-                    bodyPreviews
-                } else {
-                    bodyPreviews.take(3)
-                }
-
-                visiblePreviews.forEach { preview ->
-                    // 基线对齐让更小的 原文/译文 标签与摘录保持在同一行。
-                    Row(modifier = Modifier.padding(top = 6.dp)) {
-                        Text(
-                            preview.label,
-                            color = BrandPurple,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .padding(end = 6.dp)
-                                .alignByBaseline(),
-                        )
-                        SearchHighlightText(
-                            text = preview.text,
-                            query = searchQuery,
-                            highlightBackground = highlightBackground,
-                            highlightTextColor = highlightText,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
-                                lineHeight = 18.sp,
-                            ),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .weight(1f)
-                                .alignByBaseline(),
-                        )
-                    }
-                }
-
-                if (bodyPreviews.size > 3) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable { isPreviewsExpanded = !isPreviewsExpanded }
-                            .padding(vertical = 2.dp, horizontal = 4.dp),
+                if (translationEnabled) {
+                    RelayMirrorGlassIconButton(
+                        onClick = onRetranslate,
+                        contentDescription = "重新翻译",
                     ) {
-                        Text(
-                            if (isPreviewsExpanded) "收起匹配项" else "展开剩余 ${bodyPreviews.size - 3} 处匹配",
-                            color = BrandPurple,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Icon(
-                            Icons.Rounded.ArrowDropDown,
-                            contentDescription = if (isPreviewsExpanded) "收起" else "展开",
-                            tint = BrandPurple,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .graphicsLayer {
-                                    rotationZ = if (isPreviewsExpanded) 180f else 0f
-                                },
+                        AiTranslateIcon(
+                            size = 22.dp,
+                            contentDescription = null,
                         )
                     }
                 }
-                blog.imageUrl?.takeIf(::isRealBlogImageUrl)?.let {
-                    Spacer(Modifier.height(12.dp))
-                    Box(
+                RelayMirrorGlassIconButton(
+                    onClick = onDownload,
+                    imageVector = Icons.Rounded.Download,
+                    contentDescription = "选择下载博客图片",
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            SearchHighlightText(
+                text = blog.title,
+                query = searchQuery,
+                highlightBackground = highlightBackground,
+                highlightTextColor = highlightText,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            blog.translatedTitle?.takeIf { translationEnabled }?.let {
+                SearchHighlightText(
+                    text = it,
+                    query = searchQuery,
+                    highlightBackground = highlightBackground,
+                    highlightTextColor = highlightText,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        color = BrandPurpleDark,
+                        fontSize = 14.5.sp,
+                        lineHeight = 21.sp,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    modifier = Modifier.padding(top = 4.dp),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            // 匹配词项周围的摘录：显示原文正文中的所有出现位置，
+            // 以及当译文也匹配时其中的所有出现位置。
+            val visiblePreviews = if (isPreviewsExpanded || bodyPreviews.size <= 3) {
+                bodyPreviews
+            } else {
+                bodyPreviews.take(3)
+            }
+
+            visiblePreviews.forEach { preview ->
+                // 基线对齐让更小的 原文/译文 标签与摘录保持在同一行。
+                Row(modifier = Modifier.padding(top = 6.dp)) {
+                    Text(
+                        preview.label,
+                        color = BrandPurple,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 180.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
-                    ) {
-                        RemoteImage(
-                            url = it,
-                            contentDescription = blog.title,
-                            contentScale = ContentScale.Fit,
-                            preserveAspectRatio = true,
-                            // 在主线程之外解码，以屏幕宽度而非完整分辨率：
-                            // 博客封面可能是高达 3700x2800 的照片。
-                            loadCachedImmediately = false,
-                            placeholderColor = Color.Transparent,
-                            maxDecodeDimension = 1440,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
+                            .padding(end = 6.dp)
+                            .alignByBaseline(),
+                    )
+                    SearchHighlightText(
+                        text = preview.text,
+                        query = searchQuery,
+                        highlightBackground = highlightBackground,
+                        highlightTextColor = highlightText,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                        ),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .alignByBaseline(),
+                    )
+                }
+            }
+
+            if (bodyPreviews.size > 3) {
+                TextButton(
+                    onClick = { isPreviewsExpanded = !isPreviewsExpanded },
+                    shape = RelayNavigationSelectionShape,
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) {
+                    Text(
+                        if (isPreviewsExpanded) "收起匹配项" else "展开剩余 ${bodyPreviews.size - 3} 处匹配",
+                        color = BrandPurple,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Icon(
+                        Icons.Rounded.ArrowDropDown,
+                        contentDescription = null,
+                        tint = BrandPurple,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .graphicsLayer {
+                                rotationZ = if (isPreviewsExpanded) 180f else 0f
+                            },
+                    )
+                }
+            }
+            blog.imageUrl?.takeIf(::isRealBlogImageUrl)?.let {
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp)
+                        .clip(RelayControlShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                ) {
+                    RemoteImage(
+                        url = it,
+                        contentDescription = blog.title,
+                        contentScale = ContentScale.Fit,
+                        preserveAspectRatio = true,
+                        // 在主线程之外解码，以屏幕宽度而非完整分辨率：
+                        // 博客封面可能是高达 3700x2800 的照片。
+                        loadCachedImmediately = false,
+                        placeholderColor = Color.Transparent,
+                        maxDecodeDimension = 1440,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
@@ -1009,15 +1066,18 @@ private fun BlogDetail(
 
     val detailState by produceState<ParsedBlogDetail?>(
         initialValue = null,
-        key1 = blogId,
-        key2 = dataVersion,
-        key3 = localRefresh,
+        blogId,
+        dataVersion,
+        localRefresh,
+        isActive,
     ) {
+        if (!isActive) return@produceState
         value = withContext(AppGraph.dispatchers.databaseRead) {
             val blog = AppGraph.database.findBlog(blogId) ?: return@withContext null
             val settings = AppGraph.settings.read()
-            val contentBlocks = BlogContentParser.blocks(blog.bodyHtml)
-            val bodyText = BlogContentParser.plainText(contentBlocks)
+            val parsed = BlogTextCache.parse(blog.id, blog.bodyHtml)
+            val contentBlocks = parsed.blocks
+            val bodyText = parsed.plainText
             val source = listOf(blog.title.trim(), bodyText).filter(String::isNotBlank).joinToString("\n\n\n")
             val layout = BlogTranslationLayout.from(source)
             val translations = if (settings.translationEnabled) layout.decode(blog.translation) else emptyList()
@@ -1039,16 +1099,21 @@ private fun BlogDetail(
         }
         onDispose { BlogReadTracker.closeBlog(blogId) }
     }
-    LaunchedEffect(blogId) {
-        val updated = withContext(AppGraph.dispatchers.databaseRead) {
-            AppGraph.database.markBlogRead(blogId)
-        }
-        if (updated > 0) {
-            localRefresh++
-            onUnreadChanged()
+    LaunchedEffect(blogId, isActive) {
+        if (!isActive) return@LaunchedEffect
+        // Once committed, deliver the badge invalidation even if the page just closed.
+        withContext(kotlinx.coroutines.NonCancellable) {
+            val updated = withContext(AppGraph.dispatchers.databaseWrite) {
+                AppGraph.database.markBlogRead(blogId)
+            }
+            if (updated > 0) {
+                localRefresh++
+                onUnreadChanged()
+            }
         }
     }
-    LaunchedEffect(detailState?.blog?.bodyHtml, dataVersion) {
+    LaunchedEffect(detailState?.blog?.bodyHtml, dataVersion, isActive) {
+        if (!isActive) return@LaunchedEffect
         val current = detailState?.blog ?: return@LaunchedEffect
         val isTranslationEnabled = detailState?.translationEnabled ?: false
         if (current.bodyHtml.isNotBlank() && isTranslationEnabled && !current.translationDone) {
@@ -1091,95 +1156,107 @@ private fun BlogDetail(
 
     val focusManager = LocalFocusManager.current
     val textToolbar = LocalTextToolbar.current
-    AutoClearSelectionOnExit(isActive = true)
+    AutoClearSelectionOnExit(isActive = isActive)
 
     LazyColumn(
+        contentPadding = PaddingValues(bottom = 128.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
             .fillMaxSize()
             // 该详情页没有 TopAppBar，自行避让状态栏。
             .statusBarsPadding()
             .clearSelectionOnTap(focusManager, textToolbar)
     ) {
-        item {
-            Surface(
-                tonalElevation = 0.dp,
-                color = MaterialTheme.colorScheme.background,
-                modifier = Modifier.fillMaxWidth(),
+        item(key = "blog-detail-toolbar") {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                ) {
-                    IconButton(onClick = {
+                RelayMirrorGlassIconButton(
+                    onClick = {
                         focusManager.clearFocus()
                         textToolbar.hide()
                         onBack()
-                    }) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客列表", tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    Text("博客详情", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
+                    },
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "返回博客列表",
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "博客详情",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
-        item {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RemoteImage(
-                        url = blog.memberAvatarUrl,
-                        contentDescription = blog.memberName,
-                        loadCachedImmediately = true,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape),
-                    )
-                    Spacer(Modifier.size(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(blog.memberName, fontWeight = FontWeight.Bold)
-                        Text(formatBlogDate(blog.publishedAt), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (translationEnabled && blog.bodyHtml.isNotBlank()) {
-                        IconButton(
-                            onClick = {
-                                retranslateScope.launch(Dispatchers.IO) {
-                                    AppGraph.database.markBlogForRetranslation(blog.id)
-                                    AppGraph.notifyDataChanged()
-                                    BlogTranslationManager.enqueue(context, blog.id, force = true)
-                                }
-                            },
-                            modifier = Modifier.size(38.dp),
-                        ) {
-                            AiTranslateIcon(
-                                tint = BrandPurple,
-                                size = 22.dp,
+        item(key = "blog-detail-heading") {
+            RelayMirrorGlassCard(
+                shape = RelayHomeCardShape,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(RelayCardContentInset)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RemoteImage(
+                            url = blog.memberAvatarUrl,
+                            contentDescription = blog.memberName,
+                            loadCachedImmediately = true,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape),
+                        )
+                        Spacer(Modifier.size(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(blog.memberName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                formatBlogDate(blog.publishedAt),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
-                    }
-                    IconButton(
-                        onClick = {
-                            context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
-                        },
-                        modifier = Modifier.size(38.dp),
-                    ) {
-                        Icon(
-                            Icons.Rounded.Download,
+                        if (translationEnabled && blog.bodyHtml.isNotBlank()) {
+                            RelayMirrorGlassIconButton(
+                                onClick = {
+                                    retranslateScope.launch(Dispatchers.IO) {
+                                        AppGraph.database.markBlogForRetranslation(blog.id)
+                                        AppGraph.notifyDataChanged(DataChange.BLOG_ROWS, setOf(blog.id))
+                                        BlogTranslationManager.enqueue(context, blog.id, force = true)
+                                    }
+                                },
+                                contentDescription = "重新翻译",
+                            ) {
+                                AiTranslateIcon(
+                                    size = 22.dp,
+                                    contentDescription = null,
+                                )
+                            }
+                        }
+                        RelayMirrorGlassIconButton(
+                            onClick = {
+                                context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
+                            },
+                            imageVector = Icons.Rounded.Download,
                             contentDescription = "选择下载博客图片",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                }
-                Spacer(Modifier.height(14.dp))
-                Text(blog.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                titleTranslation?.takeIf(String::isNotBlank)?.let {
-                    Text(
-                        it,
-                        color = BrandPurpleDark,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                }
-                if (blog.bodyHtml.isBlank()) {
-                    Text("正在从乃木坂46官网同步正文…", modifier = Modifier.padding(top = 18.dp))
+                    Spacer(Modifier.height(14.dp))
+                    Text(blog.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    titleTranslation?.takeIf(String::isNotBlank)?.let {
+                        Text(
+                            it,
+                            color = BrandPurpleDark,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    if (blog.bodyHtml.isBlank()) {
+                        Text("正在从乃木坂46官网同步正文…", modifier = Modifier.padding(top = 18.dp))
+                    }
                 }
             }
         }
@@ -1195,55 +1272,78 @@ private fun BlogDetail(
                         placeholderColor = BrandPurpleLight.copy(alpha = 0.5f),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .padding(horizontal = 12.dp)
+                            .clip(RelayControlShape)
                             .clickable { openImage(block.url) },
                     )
                 }
-                is DisplayBlock.Paragraph -> Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                is DisplayBlock.Paragraphs -> RelayMirrorGlassCard(
+                    shape = RelayHomeCardShape,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                ) {
                     SelectionContainer {
-                        Text(
-                            block.original,
-                            lineHeight = 24.sp,
-                            style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    block.translation?.takeIf(String::isNotBlank)?.let {
-                        Spacer(Modifier.height(6.dp))
-                        SelectionContainer {
-                            Text(
-                                it,
-                                color = BrandPurpleDark,
-                                fontSize = 14.5.sp,
-                                lineHeight = 21.sp,
-                            )
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            block.paragraphs.forEach { paragraph ->
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        paragraph.original,
+                                        lineHeight = 24.sp,
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    paragraph.translation?.takeIf(String::isNotBlank)?.let {
+                                        Text(
+                                            it,
+                                            color = BrandPurpleDark,
+                                            fontSize = 14.5.sp,
+                                            lineHeight = 21.sp,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        item { Spacer(Modifier.height(20.dp)) }
     }
 }
 
 private sealed interface DisplayBlock {
-    data class Paragraph(val original: String, val translation: String?) : DisplayBlock
+    data class Paragraph(val original: String, val translation: String?)
+    data class Paragraphs(val paragraphs: List<Paragraph>) : DisplayBlock
     data class Image(val url: String) : DisplayBlock
 }
 
 private fun displayBlocks(blocks: List<BlogContentBlock>, translations: List<String>): List<DisplayBlock> {
     var translationIndex = 0
     return buildList {
+        val paragraphs = mutableListOf<DisplayBlock.Paragraph>()
+        fun flushParagraphs() {
+            if (paragraphs.isNotEmpty()) {
+                add(DisplayBlock.Paragraphs(paragraphs.toList()))
+                paragraphs.clear()
+            }
+        }
         blocks.forEach { block ->
             when (block) {
-                is BlogContentBlock.Image -> add(DisplayBlock.Image(block.url))
+                is BlogContentBlock.Image -> {
+                    flushParagraphs()
+                    add(DisplayBlock.Image(block.url))
+                }
                 is BlogContentBlock.Text -> BlogContentParser.paragraphs(block.value).forEach { paragraph ->
-                    add(DisplayBlock.Paragraph(paragraph, translations.getOrNull(translationIndex)))
+                    paragraphs.add(DisplayBlock.Paragraph(paragraph, translations.getOrNull(translationIndex)))
                     translationIndex += 1
+                    // Keep long, text-only articles lazy while sharing one glass surface
+                    // across nearby paragraphs and their corresponding translations.
+                    if (paragraphs.size == 8) flushParagraphs()
                 }
             }
         }
+        flushParagraphs()
     }
 }
 

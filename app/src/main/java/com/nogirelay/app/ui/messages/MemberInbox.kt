@@ -1,8 +1,6 @@
 package com.nogirelay.app.ui.messages
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,14 +20,11 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Badge
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,7 +32,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,8 +42,10 @@ import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.translation.substituteNickname
 import com.nogirelay.app.ui.BrandPurple
-import com.nogirelay.app.ui.BrandPurpleLight
 import com.nogirelay.app.ui.RemoteImage
+import com.nogirelay.app.ui.RelayMirrorGlassCard
+import com.nogirelay.app.ui.RelayHomeCardShape
+import com.nogirelay.app.ui.RelayCardContentInset
 import com.nogirelay.app.ui.withoutTextPresentationSelector
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -59,13 +55,19 @@ fun MemberInbox(
     userNickname: String,
     onSelect: (MemberThread) -> Unit,
     state: LazyListState = rememberLazyListState(),
+    header: (@Composable () -> Unit)? = null,
 ) {
     LazyColumn(
         state = state,
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp),
+        contentPadding = PaddingValues(bottom = 128.dp),
     ) {
+        header?.let { content ->
+            item(key = "member-inbox-header") {
+                content()
+            }
+        }
         if (threads.isNotEmpty()) {
             item {
                 Column(
@@ -161,11 +163,9 @@ fun MemberInbox(
         }
 
         items(threads, key = { it.id }) { thread ->
-            Card(
+            RelayMirrorGlassCard(
                 onClick = { onSelect(thread) },
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp),
+                shape = RelayHomeCardShape,
                 modifier = Modifier
                     .animateItem()
                     .fillMaxWidth()
@@ -175,7 +175,7 @@ fun MemberInbox(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(RelayCardContentInset),
                 ) {
                     Box(
                         modifier = Modifier
@@ -246,6 +246,7 @@ fun MemberInbox(
                                 overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 13.sp,
+                                modifier = Modifier.weight(1f),
                             )
                         }
                     }

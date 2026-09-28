@@ -9,28 +9,21 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.IBinder
+import android.os.SystemClock
 import com.nogirelay.app.data.AppGraph
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.File
-
-data class VoicePlaybackState(
-    val messageId: String? = null,
-    val isPlaying: Boolean = false,
-    val positionMs: Int = 0,
-    val durationMs: Int = 0,
-    val speakerOn: Boolean = false,
-)
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class VoicePlaybackService : Service() {
     private var player: MediaPlayer? = null
@@ -39,17 +32,13 @@ class VoicePlaybackService : Service() {
     private lateinit var audioManager: AudioManager
     private var speakerOn = false
     private var outputRoutingJob: Job? = null
+    private var progressJob: Job? = null
+    private var loadJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         AppGraph.initialize(this)
         audioManager = getSystemService(AudioManager::class.java)
-        serviceScope.launch {
-            while (isActive) {
-                publishPlaybackState()
-                delay(PROGRESS_UPDATE_INTERVAL_MS)
-            }
-        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -59,6 +48,7 @@ class VoicePlaybackService : Service() {
         }
         if (intent?.action == ACTION_SET_SPEAKER) {
             speakerOn = intent.getBooleanExtra(EXTRA_SPEAKER_ON, false)
+            publishPlaybackState()
             outputRoutingJob?.cancel()
             outputRoutingJob = serviceScope.launch { setAudioOutput(speakerOn, fadeOnLegacyAndroid = true) }
             return START_NOT_STICKY
@@ -77,8 +67,9 @@ class VoicePlaybackService : Service() {
         }
 
         val messageId = intent?.getStringExtra(EXTRA_MESSAGE_ID) ?: return START_NOT_STICKY
-        val message = AppGraph.database.find(messageId) ?: return START_NOT_STICKY
-        if (message.mediaUrl.isNullOrBlank()) return START_NOT_STICKY
+        // A new play/pause request supersedes any download for another message.
+        loadJob?.cancel()
+        loadJob = null
         if (currentMessageId == messageId && player != null) {
             val activePlayer = player ?: return START_NOT_STICKY
             val isCurrentlyPlaying = runCatching { activePlayer.isPlaying }.getOrDefault(false)
@@ -97,18 +88,26 @@ class VoicePlaybackService : Service() {
             publishPlaybackState()
             return START_NOT_STICKY
         }
-        serviceScope.launch {
+        loadJob = serviceScope.launch {
             val file = runCatching {
                 withContext(Dispatchers.IO) {
+                    val message = AppGraph.database.find(messageId) ?: return@withContext null
+                    if (message.mediaUrl.isNullOrBlank()) return@withContext null
                     MediaDownloader.enqueueIfNeeded(this@VoicePlaybackService, message)
                 }
             }.getOrNull()
+            if (!isActive) return@launch
             if (file == null) {
                 stopPlayback()
                 return@launch
             }
-            runCatching { play(messageId, file) }
-                .onFailure { stopPlayback() }
+            try {
+                play(messageId, file)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                stopPlayback()
+            }
         }
         return START_NOT_STICKY
     }
@@ -129,10 +128,10 @@ class VoicePlaybackService : Service() {
         speakerOn = false
         playing = false
         publishPlaybackState()
-        
+
         // 始终使用通信模式，以便一致地控制扬声器/听筒
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        
+
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -163,15 +162,20 @@ class VoicePlaybackService : Service() {
             setVolume(1f, 1f)
             setDataSource(mediaFile.absolutePath)
             setOnPreparedListener {
-                AppGraph.database.markPlayed(messageId)
+                serviceScope.launch(AppGraph.dispatchers.databaseWrite) {
+                    AppGraph.database.markPlayed(messageId)
+                    AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.MESSAGE_ROWS, setOf(messageId))
+                }
                 it.start()
                 playing = true
                 publishPlaybackState()
             }
             setOnCompletionListener {
                 sendBroadcast(Intent(ACTION_PLAYBACK_FINISHED).setPackage(packageName))
-                stopPlayback()
+                if (loadJob?.isActive == true) releasePlayer() else stopPlayback()
             }
+            // Paused seeking still publishes the final position without a polling loop.
+            setOnSeekCompleteListener { publishPlaybackState() }
             setOnErrorListener { _, _, _ ->
                 stopPlayback()
                 true
@@ -182,6 +186,8 @@ class VoicePlaybackService : Service() {
     }
 
     private fun stopPlayback() {
+        loadJob?.cancel()
+        loadJob = null
         releasePlayer()
         stopSelf()
     }
@@ -190,6 +196,8 @@ class VoicePlaybackService : Service() {
         val activePlayer = player
         val id = currentMessageId
         if (activePlayer == null || id == null) {
+            progressJob?.cancel()
+            progressJob = null
             if (_playbackState.value != VoicePlaybackState()) {
                 _playbackState.value = VoicePlaybackState()
             }
@@ -199,11 +207,31 @@ class VoicePlaybackService : Service() {
         val position = runCatching { activePlayer.currentPosition }.getOrDefault(0).coerceAtLeast(0)
         val duration = runCatching { activePlayer.duration }.getOrDefault(0).coerceAtLeast(0)
         val isPlayingNow = playing && runCatching { activePlayer.isPlaying }.getOrDefault(false)
-        val next = VoicePlaybackState(id, isPlayingNow, position, duration, speakerOn)
+        val next = VoicePlaybackState(
+            messageId = id,
+            isPlaying = isPlayingNow,
+            positionMs = position,
+            durationMs = duration,
+            speakerOn = speakerOn,
+            sampledAtMillis = if (isPlayingNow) SystemClock.elapsedRealtime() else 0L,
+        )
         if (_playbackState.value != next) _playbackState.value = next
+        if (isPlayingNow && progressJob?.isActive != true) {
+            progressJob = serviceScope.launch {
+                while (isActive) {
+                    delay(PROGRESS_UPDATE_INTERVAL_MS)
+                    publishPlaybackState()
+                }
+            }
+        } else if (!isPlayingNow) {
+            progressJob?.cancel()
+            progressJob = null
+        }
     }
 
     private fun releasePlayer() {
+        progressJob?.cancel()
+        progressJob = null
         outputRoutingJob?.cancel()
         outputRoutingJob = null
         player?.runCatching { stop() }
@@ -214,7 +242,7 @@ class VoicePlaybackService : Service() {
         _playbackState.value = VoicePlaybackState()
         focusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
         focusRequest = null
-        
+
         if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
             audioManager.mode = AudioManager.MODE_NORMAL
         }

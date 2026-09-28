@@ -3,9 +3,7 @@ package com.nogirelay.app.ui
 import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
-import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.ViewGroup
@@ -36,6 +34,7 @@ import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,21 +44,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -77,7 +71,6 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -93,7 +86,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.MessageType
@@ -101,18 +94,18 @@ import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.performance.RefreshRatePolicy
 import com.nogirelay.app.performance.RefreshRatePolicyOwner
+import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
-import kotlin.math.abs
 
 class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
     private var viewerType: MessageType = MessageType.IMAGE
 
-    override fun refreshRatePolicy(): RefreshRatePolicy = RefreshRatePolicy.Maximum
+    override fun refreshRatePolicy(): RefreshRatePolicy = RefreshRatePolicy.FollowSystem
 
     companion object {
         private const val EXTRA_IMAGE_URL = "image_url"
@@ -186,7 +179,9 @@ class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
 
         setContent {
             NogiRelayTheme(darkTheme = true) {
-                MediaViewer(messages = messages, initialPage = initialPage, onClose = ::finish)
+                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                    MediaViewer(messages = messages, initialPage = initialPage, onClose = ::finish)
+                }
             }
         }
     }
@@ -291,110 +286,104 @@ private const val MIN_DOWNLOAD_FEEDBACK_MILLIS = 650L
 @Composable
 private fun MediaViewerTopBar(
     title: String,
+    modifier: Modifier = Modifier,
     pageIndicator: String? = null,
     isDownloading: Boolean = false,
     isDownloaded: Boolean = false,
     onClose: () -> Unit,
     onDownload: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color.Black.copy(alpha = 0.65f),
-                        Color.Black.copy(alpha = 0.25f),
-                        Color.Transparent,
-                    ),
-                ),
-            )
             .statusBarsPadding()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
+        RelayMediaGlassBackground(
+            shape = RelayHomeCardShape,
+            modifier = Modifier.matchParentSize(),
+        )
         Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.weight(1f, fill = false),
         ) {
-            IconButton(
+            RelayMediaGlassIconButton(
                 onClick = onClose,
-                modifier = Modifier.size(44.dp),
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "返回",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-            Text(
-                text = title.ifBlank { "乃木坂46" },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = "返回",
             )
-            if (pageIndicator != null) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = pageIndicator,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.75f),
+                    text = title.ifBlank { "乃木坂46" },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                if (pageIndicator != null) {
+                    Text(
+                        text = pageIndicator,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
-        }
-
-        IconButton(
-            onClick = onDownload,
-            modifier = Modifier.size(44.dp),
-        ) {
-            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-                AnimatedContent(
-                    targetState = when {
-                        isDownloading -> DownloadButtonState.DOWNLOADING
-                        isDownloaded -> DownloadButtonState.DONE
-                        else -> DownloadButtonState.IDLE
-                    },
-                    transitionSpec = {
-                        (
-                            fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
-                                scaleIn(
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                                        stiffness = Spring.StiffnessMediumLow,
-                                    ),
-                                    initialScale = 0.6f,
-                                )
+            RelayMediaGlassIconButton(
+                onClick = onDownload,
+                enabled = !isDownloading,
+                contentDescription = when {
+                    isDownloading -> "保存中"
+                    isDownloaded -> "已保存"
+                    else -> "保存到本地"
+                },
+            ) {
+                Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                    AnimatedContent(
+                        targetState = when {
+                            isDownloading -> DownloadButtonState.DOWNLOADING
+                            isDownloaded -> DownloadButtonState.DONE
+                            else -> DownloadButtonState.IDLE
+                        },
+                        transitionSpec = {
+                            (
+                                fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) +
+                                    scaleIn(
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessMediumLow,
+                                        ),
+                                        initialScale = 0.6f,
+                                    )
                             ).togetherWith(
-                            fadeOut(animationSpec = tween(120)) +
-                                scaleOut(targetScale = 0.6f, animationSpec = tween(120)),
-                        )
-                    },
-                    contentAlignment = Alignment.Center,
-                    label = "download_button_state",
-                ) { state ->
-                    when (state) {
-                        DownloadButtonState.DOWNLOADING -> CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(20.dp),
-                        )
-                        DownloadButtonState.DONE -> Icon(
-                            Icons.Rounded.Check,
-                            contentDescription = "已保存",
-                            tint = Color(0xFF4ADE80),
-                            modifier = Modifier.size(24.dp),
-                        )
-                        DownloadButtonState.IDLE -> Icon(
-                            Icons.Rounded.Download,
-                            contentDescription = "保存到本地",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp),
-                        )
+                                fadeOut(animationSpec = tween(120)) +
+                                    scaleOut(targetScale = 0.6f, animationSpec = tween(120)),
+                            )
+                        },
+                        contentAlignment = Alignment.Center,
+                        label = "download_button_state",
+                    ) { state ->
+                        when (state) {
+                            DownloadButtonState.DOWNLOADING -> CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            DownloadButtonState.DONE -> Icon(
+                                Icons.Rounded.Check,
+                                contentDescription = null,
+                                tint = SignalGreen,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            DownloadButtonState.IDLE -> Icon(
+                                Icons.Rounded.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -574,7 +563,7 @@ private fun VideoPlayer(
     var videoScale by remember(message.id) { mutableFloatStateOf(1f) }
     var videoOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var videoViewport by remember(message.id) { mutableStateOf(IntSize.Zero) }
-    val videoTransformState = rememberTransformableState { zoomChange, panChange, _ ->
+    val videoTransformState = rememberTransformableState { _, zoomChange, panChange, _ ->
         val newScale = (videoScale * zoomChange).coerceIn(1f, 5f)
         val screenPan = contentPanToScreen(panChange.x, panChange.y, newScale)
         val constrained = constrainMediaOffset(
@@ -777,10 +766,19 @@ private fun VideoPlayer(
 
         // 视频准备或下载中时的加载指示器
         if (path == null || !isPrepared) {
-            CircularProgressIndicator(
-                color = Color.White,
-                modifier = Modifier.align(Alignment.Center),
-            )
+            Box(
+                modifier = Modifier.align(Alignment.Center).size(72.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                RelayMediaGlassBackground(
+                    modifier = Modifier.matchParentSize(),
+                    shape = RelayNavigationSelectionShape,
+                )
+                CircularProgressIndicator(
+                    color = Color.White,
+                    modifier = Modifier.size(32.dp),
+                )
+            }
         }
 
         // 控制栏覆盖层（顶栏、中央播放/暂停/重播、底栏）
@@ -806,28 +804,15 @@ private fun VideoPlayer(
                 )
 
                 // 中央播放/暂停/重播按钮
-                IconButton(
+                RelayMediaPlaybackButton(
                     onClick = {
                         togglePlayPause()
                         lastInteractionTime = System.currentTimeMillis()
                     },
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(72.dp)
-                        .background(Color.Black.copy(alpha = 0.65f), CircleShape),
-                ) {
-                    val icon = when {
-                        isCompleted -> Icons.Rounded.Replay
-                        videoPlaying -> Icons.Rounded.Pause
-                        else -> Icons.Rounded.PlayArrow
-                    }
-                    Icon(
-                        icon,
-                        contentDescription = if (videoPlaying) "暂停" else "播放",
-                        tint = Color.White,
-                        modifier = Modifier.size(42.dp),
-                    )
-                }
+                    modifier = Modifier.align(Alignment.Center),
+                    isPlaying = videoPlaying,
+                    isCompleted = isCompleted,
+                )
 
                 // 底栏（播放/暂停、时间、进度条、时长）
                 VideoBottomBar(
@@ -867,7 +852,7 @@ private fun VideoPlayer(
                             finishSeek()
                         }
 
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && mp != null) {
+                        if (mp != null) {
                             mp.setOnSeekCompleteListener {
                                 timeoutJob.cancel()
                                 finishSeek()
@@ -983,80 +968,82 @@ private fun VideoBottomBar(
         }
     } else 0f
 
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
-                ),
-            )
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        IconButton(
-            onClick = onTogglePlayPause,
-            modifier = Modifier.size(36.dp),
+        RelayMediaGlassBackground(
+            shape = RelayHomeCardShape,
+            modifier = Modifier.matchParentSize(),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
+            RelayMediaGlassIconButton(
+                onClick = onTogglePlayPause,
                 imageVector = when {
                     isCompleted -> Icons.Rounded.Replay
                     videoPlaying -> Icons.Rounded.Pause
                     else -> Icons.Rounded.PlayArrow
                 },
-                contentDescription = if (videoPlaying) "暂停" else "播放",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp),
+                contentDescription = when {
+                    isCompleted -> "重播"
+                    videoPlaying -> "暂停"
+                    else -> "播放"
+                },
             )
+            Column(Modifier.weight(1f).padding(end = 6.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = formatTimeMs(displayPosition),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = formatTimeMs(duration),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                    )
+                }
+                RelayPlaybackSlider(
+                    value = progressFraction,
+                    onValueChange = { frac ->
+                        if (!isDraggingSlider) {
+                            isDraggingSlider = true
+                            onDragStart()
+                        }
+                        dragPosition = frac * duration
+                        onInteraction()
+                    },
+                    onValueChangeFinished = {
+                        val targetMs = dragPosition.toInt()
+                        playbackPositionState.floatValue = targetMs.toFloat()
+                        isSeeking = true
+                        isDraggingSlider = false
+                        onSeek(targetMs) {
+                            isSeeking = false
+                        }
+                        onInteraction()
+                    },
+                    enabled = duration > 0,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color.White,
+                )
+            }
         }
-
-        Text(
-            text = formatTimeMs(displayPosition),
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontFeatureSettings = "tnum",
-            ),
-            color = Color.White,
-            fontSize = 12.sp,
-        )
-
-        Slider(
-            value = progressFraction,
-            onValueChange = { frac ->
-                if (!isDraggingSlider) {
-                    isDraggingSlider = true
-                    onDragStart()
-                }
-                dragPosition = frac * duration
-                onInteraction()
-            },
-            onValueChangeFinished = {
-                val targetMs = dragPosition.toInt()
-                playbackPositionState.floatValue = targetMs.toFloat()
-                isSeeking = true
-                isDraggingSlider = false
-                onSeek(targetMs) {
-                    isSeeking = false
-                }
-                onInteraction()
-            },
-            modifier = Modifier.weight(1f),
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = BrandPurple,
-                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-            ),
-        )
-
-        Text(
-            text = formatTimeMs(duration),
-            style = MaterialTheme.typography.bodySmall.copy(
-                fontFeatureSettings = "tnum",
-            ),
-            color = Color.White.copy(alpha = 0.7f),
-            fontSize = 12.sp,
-        )
     }
 }
 

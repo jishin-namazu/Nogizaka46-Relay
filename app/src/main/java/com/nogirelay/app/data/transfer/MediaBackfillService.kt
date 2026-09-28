@@ -1,10 +1,13 @@
 package com.nogirelay.app.data.transfer
 
+import android.Manifest
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -82,8 +85,15 @@ class MediaBackfillService : Service() {
                     finish()
                     return@collect
                 }
-                NotificationManagerCompat.from(this@MediaBackfillService)
-                    .notify(NOTIFICATION_ID, buildNotification(snapshot.done, snapshot.total))
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(
+                        this@MediaBackfillService,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+                ) {
+                    NotificationManagerCompat.from(this@MediaBackfillService)
+                        .notify(NOTIFICATION_ID, buildNotification(snapshot.done, snapshot.total))
+                }
                 delay(NOTIFICATION_THROTTLE_MS)
             }
         }

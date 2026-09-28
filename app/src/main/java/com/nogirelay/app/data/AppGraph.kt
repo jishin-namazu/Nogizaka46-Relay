@@ -2,6 +2,9 @@ package com.nogirelay.app.data
 
 import android.content.Context
 import com.nogirelay.app.performance.PerformanceDispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 
 object AppGraph {
     @Volatile
@@ -18,11 +21,12 @@ object AppGraph {
     lateinit var dispatchers: PerformanceDispatchers
         private set
     val syncCoordinator = SyncCoordinator()
-    private val _dataVersion = kotlinx.coroutines.flow.MutableStateFlow(0L)
-    val dataVersion: kotlinx.coroutines.flow.StateFlow<Long> = _dataVersion
+    val memberSummaries = MemberSummaryRepository()
+    private val _dataVersions = MutableStateFlow(DataVersions())
+    val dataVersions: StateFlow<DataVersions> = _dataVersions
 
-    fun notifyDataChanged() {
-        _dataVersion.value += 1
+    fun notifyDataChanged(change: DataChange = DataChange.ALL, ids: Set<String> = emptySet()) {
+        _dataVersions.update { it.changed(change, ids) }
     }
 
     fun initialize(context: Context) {

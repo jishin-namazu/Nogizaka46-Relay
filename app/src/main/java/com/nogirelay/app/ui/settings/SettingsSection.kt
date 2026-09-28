@@ -12,19 +12,22 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Call
@@ -32,24 +35,16 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,6 +58,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
@@ -70,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nogirelay.app.BuildConfig
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.IncomingCallStyle
 import com.nogirelay.app.push.PushRegistrar
 import com.nogirelay.app.translation.AIProviderFactory
 import com.nogirelay.app.translation.AIProviderType
@@ -77,12 +74,16 @@ import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
 import androidx.compose.ui.graphics.Color
 import com.nogirelay.app.ui.BrandPurple
-import com.nogirelay.app.ui.BrandPurpleBorder
-import com.nogirelay.app.ui.BrandPurpleContainer
 import com.nogirelay.app.ui.BrandPurpleDark
-import com.nogirelay.app.ui.BrandPurpleLight
-import com.nogirelay.app.ui.RelayCardShape
+import com.nogirelay.app.ui.LocalRelayMirrorStyle
 import com.nogirelay.app.ui.RelayControlShape
+import com.nogirelay.app.ui.RelayNavigationSelectionShape
+import com.nogirelay.app.ui.RelayCardContentInset
+import com.nogirelay.app.ui.RelayHomeCardShape
+import com.nogirelay.app.ui.RelayMirrorGlassButton
+import com.nogirelay.app.ui.RelayMirrorGlassCard
+import com.nogirelay.app.ui.RelayMirrorGlassSwitch
+import com.nogirelay.app.ui.RelaySegmentedTabs
 import com.nogirelay.app.ui.SignalGreen
 import kotlinx.coroutines.launch
 
@@ -91,6 +92,7 @@ import kotlinx.coroutines.launch
 fun SettingsSection(
     onSettingsChanged: () -> Unit,
     onTestCall: (() -> Unit)? = null,
+    header: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -106,6 +108,7 @@ fun SettingsSection(
     var messageFullTranslation by remember { mutableStateOf(initial.messageFullTranslation) }
     var blogFullTranslation by remember { mutableStateOf(initial.blogFullTranslation) }
     var userNickname by remember { mutableStateOf(initial.userNickname) }
+    var incomingCallStyle by remember { mutableStateOf(initial.incomingCallStyle) }
     var providerMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
     var providerFieldWidthPx by remember { mutableIntStateOf(0) }
@@ -124,8 +127,8 @@ fun SettingsSection(
         selectedProvider.jsonOutputSupport(aiModel)
     }
     // 模型列表按接口返回的原始顺序展示会很乱，选择器统一按名称排序。
-    val sortedModelOptions = remember(modelOptions) {
-        modelOptions.sortedBy { it.displayName.lowercase() }
+    val sortedModelOptions = remember(modelOptions, modelMenuExpanded) {
+        if (modelMenuExpanded) AppGraph.settings.sortedModels(modelOptions) else emptyList()
     }
 
     // 除昵称外正在编辑的全部设置：昵称有自己的输入框与保存按钮，
@@ -205,429 +208,491 @@ fun SettingsSection(
         focusedLabelColor = BrandPurple,
         cursorColor = BrandPurple,
     )
-    val cardShape = RelayCardShape
-    val cardColors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    val cardBorder = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.12f))
+    val cardShape = RelayHomeCardShape
     val translationVisibilitySpring = spring<IntSize>(
         dampingRatio = Spring.DampingRatioNoBouncy,
         stiffness = Spring.StiffnessMediumLow,
     )
     val translationVisibilityFade = tween<Float>(durationMillis = 200)
 
-    Column(
+    LazyColumn(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+        overscrollEffect = null,
     ) {
-        // Card 1: FCM 推送服务
-        Card(
-            shape = cardShape,
-            colors = cardColors,
-            border = cardBorder,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+        item(key = "settings-header", contentType = "header") { header() }
+        item(key = "push", contentType = "settings-card") {
+            // Card 1: FCM 推送服务
+            RelayMirrorGlassCard(
+                shape = cardShape,
+                opaqueBackground = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("FCM 推送服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = relayUrl,
-                    onValueChange = { relayUrl = it },
-                    label = { Text("同步服务地址") },
-                    placeholder = { Text("https://relay.example.com") },
-                    singleLine = true,
-                    shape = RelayControlShape,
-                    colors = textFieldColors,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = { token = it },
-                    label = { Text("访问令牌") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    shape = RelayControlShape,
-                    colors = textFieldColors,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = {
-                        AppGraph.settings.save(currentSettings())
-                        pushStatusLabel = "正在注册 FCM 设备..."
-                        // PushRegistrar 保证结果在主线程且只回调一次（含超时兜底），
-                        // 这里不再依赖 Activity 类型转换，避免窗口 Context 变化后结果丢失。
-                        PushRegistrar.registerCurrentToken(context) { result ->
-                            pushStatusLabel = result.fold(
-                                onSuccess = { "设备已注册，系统推送已就绪" },
-                                onFailure = { it.message?.takeIf(String::isNotBlank) ?: "FCM 设备注册失败" },
-                            )
-                        }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text("保存并注册推送", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                }
-                AnimatedStatusText(
-                    text = pushStatusLabel,
-                    color = if (pushStatusLabel.contains("失败")) MaterialTheme.colorScheme.error else SignalGreen,
-                    fontSize = 13.sp,
-                )
-            }
-        }
-
-        // Card 2: 昵称设置
-        Card(
-            shape = cardShape,
-            colors = cardColors,
-            border = cardBorder,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                Text("个性化昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                OutlinedTextField(
-                    value = userNickname,
-                    onValueChange = { userNickname = it },
-                    label = { Text("你的昵称") },
-                    singleLine = true,
-                    shape = RelayControlShape,
-                    colors = textFieldColors,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = ::saveNickname,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BrandPurple,
-                        contentColor = Color.White,
-                    ),
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                ) {
-                    Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text("保存昵称", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                }
-                AnimatedStatusText(
-                    text = nicknameLabel,
-                    color = SignalGreen,
-                    fontSize = 13.sp,
-                )
-            }
-        }
-
-        // Card 3: AI翻译
-        Card(
-            shape = cardShape,
-            colors = cardColors,
-            border = cardBorder,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        "AI翻译",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Switch(
-                        checked = translationEnabled,
-                        onCheckedChange = {
-                            translationEnabled = it
-                            AppGraph.settings.save(currentSettings())
-                            TranslationManager.resetRetries()
-                            BlogTranslationManager.resetRetries()
-                            if (it) {
-                                TranslationManager.enqueue(context)
-                                BlogTranslationManager.enqueuePending(context)
-                            }
-                            onSettingsChanged()
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = BrandPurple,
-                        ),
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = translationEnabled,
-                    enter = expandVertically(
-                        expandFrom = Alignment.Top,
-                        animationSpec = translationVisibilitySpring,
-                    ) + fadeIn(
-                        animationSpec = translationVisibilityFade,
-                    ),
-                    exit = shrinkVertically(
-                        shrinkTowards = Alignment.Top,
-                        animationSpec = translationVisibilitySpring,
-                    ) + fadeOut(
-                        animationSpec = translationVisibilityFade,
-                    ),
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                        modifier = Modifier.padding(top = 14.dp),
-                    ) {
-                        Box {
-                            OutlinedTextField(
-                                value = aiProvider.displayName,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("AI 供应商") },
-                                trailingIcon = {
-                                    Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择供应商")
-                                },
-                                shape = RelayControlShape,
-                                colors = textFieldColors,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .onSizeChanged { providerFieldWidthPx = it.width },
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .matchParentSize()
-                                    .clickable { providerMenuExpanded = true },
-                            )
-                            DropdownMenu(
-                                expanded = providerMenuExpanded,
-                                onDismissRequest = { providerMenuExpanded = false },
-                                modifier = if (providerFieldWidthPx > 0) {
-                                    Modifier.width(with(density) { providerFieldWidthPx.toDp() })
-                                } else {
-                                    Modifier
-                                },
-                            ) {
-                                AIProviderType.values().forEach { provider ->
-                                    DropdownMenuItem(
-                                        text = { Text(provider.displayName) },
-                                        trailingIcon = {
-                                            if (provider.supportsStructuredOutput) SupportBadge("结构化输出")
-                                        },
-                                        onClick = {
-                                            aiProvider = provider
-                                            aiApiKey = AppGraph.settings.apiKeyFor(provider)
-                                            aiModel = AppGraph.settings.modelFor(provider)
-                                            modelOptions = AppGraph.settings.cachedModelsFor(provider)
-                                            AppGraph.settings.save(currentSettings())
-                                            modelStatus = ""
-                                            providerMenuExpanded = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
+                    Text("FCM 推送服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     OutlinedTextField(
-                        value = aiApiKey,
-                        onValueChange = { aiApiKey = it },
-                        label = { Text("${aiProvider.displayName} API Key") },
-                        placeholder = { Text("sk-... 或对应 API Key") },
+                        value = relayUrl,
+                        onValueChange = { relayUrl = it },
+                        label = { Text("同步服务地址") },
+                        placeholder = { Text("https://relay.example.com") },
+                        singleLine = true,
+                        shape = RelayControlShape,
+                        colors = textFieldColors,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = { Text("访问令牌") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         shape = RelayControlShape,
                         colors = textFieldColors,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    RelayMirrorGlassButton(
+                        onClick = {
+                            AppGraph.settings.save(currentSettings())
+                            pushStatusLabel = "正在注册 FCM 设备..."
+                            // PushRegistrar 保证结果在主线程且只回调一次（含超时兜底），
+                            // 这里不再依赖 Activity 类型转换，避免窗口 Context 变化后结果丢失。
+                            PushRegistrar.registerCurrentToken(context) { result ->
+                                pushStatusLabel = result.fold(
+                                    onSuccess = { "设备已注册，系统推送已就绪" },
+                                    onFailure = { it.message?.takeIf(String::isNotBlank) ?: "FCM 设备注册失败" },
+                                )
+                            }
+                        },
+                        shape = RelayNavigationSelectionShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) {
+                        Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            "保存并注册推送",
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    AnimatedStatusText(
+                        text = pushStatusLabel,
+                        color = if (pushStatusLabel.contains("失败")) MaterialTheme.colorScheme.error else SignalGreen,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+
+        }
+        item(key = "nickname", contentType = "settings-card") {
+            // Card 2: 昵称设置
+            RelayMirrorGlassCard(
+                shape = cardShape,
+                opaqueBackground = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Text("个性化昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    OutlinedTextField(
+                        value = userNickname,
+                        onValueChange = { userNickname = it },
+                        label = { Text("你的昵称") },
+                        singleLine = true,
+                        shape = RelayControlShape,
+                        colors = textFieldColors,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    RelayMirrorGlassButton(
+                        onClick = ::saveNickname,
+                        shape = RelayNavigationSelectionShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) {
+                        Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text("保存昵称", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    }
+                    AnimatedStatusText(
+                        text = nicknameLabel,
+                        color = SignalGreen,
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+
+        }
+        item(key = "translation", contentType = "settings-card") {
+            // Card 3: AI翻译
+            RelayMirrorGlassCard(
+                shape = cardShape,
+                opaqueBackground = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                ) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Button(
-                            onClick = ::saveTranslationSettings,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
-                            modifier = Modifier.weight(1f).height(44.dp),
-                        ) {
-                            Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.size(6.dp))
-                            Text("保存配置", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        }
-                        FilledTonalButton(
-                            onClick = ::validateApiKey,
-                            enabled = !validatingApiKey,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = BrandPurpleContainer,
-                                contentColor = BrandPurpleDark,
-                            ),
-                            modifier = Modifier.weight(1f).height(44.dp),
-                        ) {
-                            Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.size(6.dp))
-                            Text(if (validatingApiKey) "校验中…" else "校验模型", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        }
-                    }
-                    AnimatedStatusText(text = modelStatus, color = BrandPurpleDark)
-                    Box {
-                        OutlinedTextField(
-                            value = aiModel,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("翻译模型") },
-                            placeholder = { Text("请先校验 API Key 并选择模型") },
-                            trailingIcon = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    // 与选择器条目右侧的标签保持一致：选中的模型直接继承显示。
-                                    if (selectedModelSupport.isSupported) {
-                                        SupportBadge(selectedModelSupport.label)
-                                    }
-                                    Icon(
-                                        imageVector = Icons.Rounded.ArrowDropDown,
-                                        contentDescription = "选择翻译模型",
-                                        tint = if (modelOptions.isNotEmpty()) {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                                        },
-                                    )
+                        Text(
+                            "AI翻译",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        RelayMirrorGlassSwitch(
+                            checked = translationEnabled,
+                            label = "AI翻译",
+                            onCheckedChange = {
+                                translationEnabled = it
+                                AppGraph.settings.save(currentSettings())
+                                TranslationManager.resetRetries()
+                                BlogTranslationManager.resetRetries()
+                                if (it) {
+                                    TranslationManager.enqueue(context)
+                                    BlogTranslationManager.enqueuePending(context)
                                 }
+                                onSettingsChanged()
                             },
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = translationEnabled,
+                        enter = expandVertically(
+                            expandFrom = Alignment.Top,
+                            animationSpec = translationVisibilitySpring,
+                        ) + fadeIn(
+                            animationSpec = translationVisibilityFade,
+                        ),
+                        exit = shrinkVertically(
+                            shrinkTowards = Alignment.Top,
+                            animationSpec = translationVisibilitySpring,
+                        ) + fadeOut(
+                            animationSpec = translationVisibilityFade,
+                        ),
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                            modifier = Modifier.padding(top = 14.dp),
+                        ) {
+                            Box {
+                                OutlinedTextField(
+                                    value = aiProvider.displayName,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    singleLine = true,
+                                    label = { Text("AI 供应商") },
+                                    trailingIcon = {
+                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择供应商")
+                                    },
+                                    shape = RelayControlShape,
+                                    colors = textFieldColors,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .onSizeChanged { providerFieldWidthPx = it.width },
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .matchParentSize()
+                                        .clickable { providerMenuExpanded = true },
+                                )
+                                DropdownMenu(
+                                    expanded = providerMenuExpanded,
+                                    onDismissRequest = { providerMenuExpanded = false },
+                                    shape = RelayControlShape,
+                                    modifier = if (providerFieldWidthPx > 0) {
+                                        Modifier.width(with(density) { providerFieldWidthPx.toDp() })
+                                    } else {
+                                        Modifier
+                                    },
+                                ) {
+                                    AIProviderType.values().forEach { provider ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    provider.displayName,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            },
+                                            trailingIcon = {
+                                                if (provider.supportsStructuredOutput) SupportBadge("结构化输出")
+                                            },
+                                            onClick = {
+                                                aiProvider = provider
+                                                aiApiKey = AppGraph.settings.apiKeyFor(provider)
+                                                aiModel = AppGraph.settings.modelFor(provider)
+                                                modelOptions = AppGraph.settings.cachedModelsFor(provider)
+                                                AppGraph.settings.save(currentSettings())
+                                                modelStatus = ""
+                                                providerMenuExpanded = false
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        OutlinedTextField(
+                            value = aiApiKey,
+                            onValueChange = { aiApiKey = it },
+                            label = { Text("${aiProvider.displayName} API Key") },
+                            placeholder = { Text("sk-... 或对应 API Key") },
+                            visualTransformation = PasswordVisualTransformation(),
                             singleLine = true,
                             shape = RelayControlShape,
                             colors = textFieldColors,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .onSizeChanged { modelFieldWidthPx = it.width },
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                        Box(
-                            modifier = Modifier
-                                .matchParentSize()
-                                .clickable(enabled = modelOptions.isNotEmpty()) {
-                                    modelMenuExpanded = true
-                                },
-                        )
-                        DropdownMenu(
-                            expanded = modelMenuExpanded,
-                            onDismissRequest = { modelMenuExpanded = false },
-                            modifier = if (modelFieldWidthPx > 0) {
-                                Modifier.width(with(density) { modelFieldWidthPx.toDp() })
-                            } else {
-                                Modifier
-                            },
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            sortedModelOptions.forEach { model ->
-                                val support = selectedProvider.jsonOutputSupport(model.id)
-                                DropdownMenuItem(
-                                    text = { Text(model.displayName) },
-                                    trailingIcon = { if (support.isSupported) SupportBadge(support.label) },
-                                    onClick = {
-                                        aiModel = model.id
-                                        AppGraph.settings.save(currentSettings().copy(aiModel = model.id))
-                                        TranslationManager.resetRetries()
-                                        BlogTranslationManager.resetRetries()
-                                        TranslationManager.enqueue(context)
-                                        BlogTranslationManager.enqueuePending(context)
-                                        translationSavedLabel = "翻译模型已保存"
-                                        modelMenuExpanded = false
-                                    },
+                            RelayMirrorGlassButton(
+                                onClick = ::saveTranslationSettings,
+                                shape = RelayNavigationSelectionShape,
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            ) {
+                                Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.size(6.dp))
+                                Text("保存配置", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                            }
+                            RelayMirrorGlassButton(
+                                onClick = ::validateApiKey,
+                                enabled = !validatingApiKey,
+                                shape = RelayNavigationSelectionShape,
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            ) {
+                                Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.size(6.dp))
+                                Text(
+                                    if (validatingApiKey) "校验中…" else "校验模型",
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
                                 )
                             }
                         }
-                    }
-                    if (modelOptions.isEmpty() && aiApiKey.isNotBlank()) {
-                        AnimatedStatusText(
-                            text = "请点击\"校验模型\"获取可用模型列表",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                        )
-                    }
-                    AnimatedStatusText(text = translationSavedLabel, color = SignalGreen)
-                    FullTranslationToggle(
-                        title = "消息全量翻译",
-                        description = "开启后自动翻译所有历史未翻译的消息；关闭时只自动翻译新收到的消息，查看历史消息需要手动点击翻译。",
-                        checked = messageFullTranslation,
-                        onCheckedChange = {
-                            messageFullTranslation = it
-                            saveTranslationSettings(showSavedLabel = false)
-                        },
-                    )
-                    FullTranslationToggle(
-                        title = "博客全量翻译",
-                        description = "开启后自动翻译所有历史未翻译的博客；关闭时只自动翻译新发布的博客和点开阅读的博客。",
-                        checked = blogFullTranslation,
-                        onCheckedChange = {
-                            blogFullTranslation = it
-                            saveTranslationSettings(showSavedLabel = false)
-                        },
-                    )
-                    OutlinedButton(
-                        onClick = { showRetranslateAllDialog = true },
-                        enabled = aiModel.isNotBlank() && aiApiKey.isNotBlank(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurple),
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                    ) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.size(6.dp))
-                        Text("重新翻译全部", fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    }
-                    AnimatedStatusText(text = retranslateStatus, color = BrandPurpleDark)
-                    if (showRetranslateAllDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showRetranslateAllDialog = false },
-                            shape = RoundedCornerShape(20.dp),
-                            title = { Text("重新翻译全部", fontWeight = FontWeight.Bold) },
-                            text = {
-                                Text("将清空本机所有消息与博客的译文并重新翻译。内容较多时耗时较久并消耗 API 额度，确定继续？")
-                            },
-                            confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        showRetranslateAllDialog = false
-                                        retranslateAll()
+                        AnimatedStatusText(text = modelStatus, color = BrandPurpleDark)
+                        Box {
+                            OutlinedTextField(
+                                value = aiModel,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("翻译模型") },
+                                placeholder = { Text("请先校验 API Key 并选择模型") },
+                                trailingIcon = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        // 与选择器条目右侧的标签保持一致：选中的模型直接继承显示。
+                                        if (selectedModelSupport.isSupported) {
+                                            SupportBadge(selectedModelSupport.label)
+                                        }
+                                        Icon(
+                                            imageVector = Icons.Rounded.ArrowDropDown,
+                                            contentDescription = "选择翻译模型",
+                                            tint = if (modelOptions.isNotEmpty()) {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                                            },
+                                        )
+                                    }
+                                },
+                                singleLine = true,
+                                shape = RelayControlShape,
+                                colors = textFieldColors,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onSizeChanged { modelFieldWidthPx = it.width },
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable(enabled = modelOptions.isNotEmpty()) {
+                                        modelMenuExpanded = true
                                     },
-                                    colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
-                                ) { Text("开始", fontWeight = FontWeight.Bold) }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showRetranslateAllDialog = false }) { Text("取消") }
+                            )
+                            DropdownMenu(
+                                expanded = modelMenuExpanded,
+                                onDismissRequest = { modelMenuExpanded = false },
+                                shape = RelayControlShape,
+                                modifier = if (modelFieldWidthPx > 0) {
+                                    Modifier.width(with(density) { modelFieldWidthPx.toDp() })
+                                } else {
+                                    Modifier
+                                },
+                            ) {
+                                sortedModelOptions.forEach { model ->
+                                    val support = selectedProvider.jsonOutputSupport(model.id)
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                model.displayName,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        },
+                                        trailingIcon = { if (support.isSupported) SupportBadge(support.label) },
+                                        onClick = {
+                                            aiModel = model.id
+                                            AppGraph.settings.save(currentSettings().copy(aiModel = model.id))
+                                            TranslationManager.resetRetries()
+                                            BlogTranslationManager.resetRetries()
+                                            TranslationManager.enqueue(context)
+                                            BlogTranslationManager.enqueuePending(context)
+                                            translationSavedLabel = "翻译模型已保存"
+                                            modelMenuExpanded = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        if (modelOptions.isEmpty() && aiApiKey.isNotBlank()) {
+                            AnimatedStatusText(
+                                text = "请点击\"校验模型\"获取可用模型列表",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        AnimatedStatusText(text = translationSavedLabel, color = SignalGreen)
+                        FullTranslationToggle(
+                            title = "消息全量翻译",
+                            description = "开启后自动翻译所有历史未翻译的消息；关闭时只自动翻译新收到的消息，查看历史消息需要手动点击翻译。",
+                            checked = messageFullTranslation,
+                            onCheckedChange = {
+                                messageFullTranslation = it
+                                saveTranslationSettings(showSavedLabel = false)
                             },
                         )
+                        FullTranslationToggle(
+                            title = "博客全量翻译",
+                            description = "开启后自动翻译所有历史未翻译的博客；关闭时只自动翻译新发布的博客和点开阅读的博客。",
+                            checked = blogFullTranslation,
+                            onCheckedChange = {
+                                blogFullTranslation = it
+                                saveTranslationSettings(showSavedLabel = false)
+                            },
+                        )
+                        RelayMirrorGlassButton(
+                            onClick = { showRetranslateAllDialog = true },
+                            enabled = aiModel.isNotBlank() && aiApiKey.isNotBlank(),
+                            shape = RelayNavigationSelectionShape,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        ) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("重新翻译全部", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        }
+                        AnimatedStatusText(text = retranslateStatus, color = BrandPurpleDark)
+                        if (showRetranslateAllDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showRetranslateAllDialog = false },
+                                shape = RelayHomeCardShape,
+                                title = { Text("重新翻译全部", fontWeight = FontWeight.Bold) },
+                                text = {
+                                    Text("将清空本机所有消息与博客的译文并重新翻译。内容较多时耗时较久并消耗 API 额度，确定继续？")
+                                },
+                                confirmButton = {
+                                    RelayMirrorGlassButton(
+                                        onClick = {
+                                            showRetranslateAllDialog = false
+                                            retranslateAll()
+                                        },
+                                    ) { Text("开始", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                                },
+                                dismissButton = {
+                                    RelayMirrorGlassButton(onClick = { showRetranslateAllDialog = false }) {
+                                        Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                },
+                            )
+                        }
+                        }
                     }
+                }
+            }
+
+        }
+        item(key = "incoming-call-style", contentType = "settings-card") {
+            RelayMirrorGlassCard(
+                shape = cardShape,
+                opaqueBackground = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("来电页面", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    // Match BlogSortToggle's shared glass track, selection and animation.
+                    CompositionLocalProvider(LocalRelayMirrorStyle provides true) {
+                        RelaySegmentedTabs(
+                            labels = listOf("经典", "液态玻璃"),
+                            selectedIndex = if (incomingCallStyle == IncomingCallStyle.CLASSIC) 0 else 1,
+                            onSelected = { index ->
+                                incomingCallStyle = if (index == 0) IncomingCallStyle.CLASSIC else IncomingCallStyle.LIQUID_GLASS
+                                AppGraph.settings.save(AppGraph.settings.read().copy(incomingCallStyle = incomingCallStyle))
+                                onSettingsChanged()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
+                    Text(
+                        if (incomingCallStyle == IncomingCallStyle.LIQUID_GLASS) {
+                            "全屏写真与悬浮玻璃按钮，下次来电时生效"
+                        } else {
+                            "经典写真布局与来电控件，下次来电时生效"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
 
-        // Card 4: 全屏来电测试
+        // Card 5: 全屏来电测试
         if (onTestCall != null && !BuildConfig.SIMPLE_UI) {
-            Card(
-                shape = cardShape,
-                colors = cardColors,
-                border = cardBorder,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+            item(key = "test-call", contentType = "settings-card") {
+                RelayMirrorGlassCard(
+                    shape = cardShape,
+                    opaqueBackground = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("全屏来电测试", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Button(
-                        onClick = onTestCall,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        Icon(Icons.Rounded.Call, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("测试全屏来电", fontWeight = FontWeight.SemiBold)
+                        Text("全屏来电测试", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        RelayMirrorGlassButton(
+                            onClick = onTestCall,
+                            shape = RelayNavigationSelectionShape,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        ) {
+                            Icon(Icons.Rounded.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(8.dp))
+                            Text("测试全屏来电", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        }
                     }
                 }
             }
+        }
+        item(key = "settings-navigation-inset", contentType = "inset") {
+            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
         }
     }
 }
@@ -653,6 +718,8 @@ private fun FullTranslationToggle(
                 title,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 description,
@@ -662,13 +729,10 @@ private fun FullTranslationToggle(
             )
         }
         Spacer(Modifier.size(10.dp))
-        Switch(
+        RelayMirrorGlassSwitch(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = BrandPurple,
-            ),
+            label = title,
         )
     }
 }

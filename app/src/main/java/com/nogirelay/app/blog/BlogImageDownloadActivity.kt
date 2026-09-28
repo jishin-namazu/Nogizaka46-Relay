@@ -19,40 +19,35 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,7 +56,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,10 +64,17 @@ import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.media.MediaDownloader
-import com.nogirelay.app.ui.BrandPurple
-import com.nogirelay.app.ui.BrandPurpleLight
 import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.RelayControlShape
+import com.nogirelay.app.ui.LocalRelayMirrorStyle
+import com.nogirelay.app.ui.RelayCardContentInset
+import com.nogirelay.app.ui.RelayGlassBackdrop
+import com.nogirelay.app.ui.RelayHomeCardShape
+import com.nogirelay.app.ui.RelayLightBackdrop
+import com.nogirelay.app.ui.RelayMirrorGlassButton
+import com.nogirelay.app.ui.RelayMirrorGlassCard
+import com.nogirelay.app.ui.RelayMirrorGlassIconButton
+import com.nogirelay.app.ui.RelaySelectionSurface
 import com.nogirelay.app.ui.RemoteImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -112,7 +113,11 @@ class BlogImageDownloadActivity : ComponentActivity() {
         }
         setContent {
             NogiRelayTheme {
-                BlogImageDownloadScreen(blog = blog, onBack = ::finish)
+                CompositionLocalProvider(LocalRelayMirrorStyle provides true) {
+                    RelayGlassBackdrop(background = RelayLightBackdrop, modifier = Modifier.fillMaxSize()) {
+                        BlogImageDownloadScreen(blog = blog, onBack = ::finish)
+                    }
+                }
             }
         }
     }
@@ -184,23 +189,31 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Surface(
-            tonalElevation = 1.dp,
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.fillMaxWidth(),
+        RelayMirrorGlassCard(
+            shape = RelayHomeCardShape,
+            modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                    .padding(RelayCardContentInset),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                IconButton(onClick = onBack, enabled = !downloading) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回博客", tint = MaterialTheme.colorScheme.onSurface)
-                }
+                RelayMirrorGlassIconButton(
+                    onClick = onBack,
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "返回博客",
+                    enabled = !downloading,
+                )
                 Column(Modifier.weight(1f)) {
-                    Text("选择要下载的图片", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        "选择要下载的图片",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     Text(
                         blog.title,
                         maxLines = 1,
@@ -221,31 +234,26 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                 columns = GridCells.Adaptive(144.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
             ) {
                 itemsIndexed(urls, key = { _, url -> url }) { index, url ->
                     val selected = url in selectedUrls
-                    Surface(
+                    RelaySelectionSurface(
                         onClick = {
-                            if (!downloading) {
-                                selectedUrls = if (selected) selectedUrls - url else selectedUrls + url
-                            }
+                            selectedUrls = if (selected) selectedUrls - url else selectedUrls + url
                         },
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (selected) BrandPurpleLight else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = if (selected) {
-                            BorderStroke(2.dp, BrandPurple)
-                        } else {
-                            BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        },
-                    ) {
-                        Box(Modifier.fillMaxWidth().aspectRatio(1f).padding(4.dp)) {
+                        selected = selected,
+                        enabled = !downloading,
+                        emphasizeEdges = true,
+                    ) { _ ->
+                        Box(Modifier.fillMaxWidth().aspectRatio(1f).padding(6.dp)) {
                             RemoteImage(
                                 url = url,
                                 contentDescription = "第 ${index + 1} 张博客图片",
                                 contentScale = ContentScale.Fit,
                                 loadCachedImmediately = true,
-                                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                                modifier = Modifier.fillMaxSize().clip(RelayControlShape),
                             )
                         }
                     }
@@ -253,33 +261,40 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
             }
         }
 
-        Surface(
-            tonalElevation = 3.dp,
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.fillMaxWidth(),
+        RelayMirrorGlassCard(
+            shape = RelayHomeCardShape,
+            modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp),
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            ) {
-                IconButton(onClick = { selectedUrls = urls.toSet() }, enabled = urls.isNotEmpty() && !downloading) {
-                    Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
+            Column(Modifier.fillMaxWidth().padding(RelayCardContentInset)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    RelayMirrorGlassIconButton(
+                        onClick = { selectedUrls = urls.toSet() },
+                        imageVector = Icons.Rounded.DoneAll,
+                        contentDescription = "全选",
+                        enabled = urls.isNotEmpty() && !downloading,
+                    )
+                    RelayMirrorGlassIconButton(
+                        onClick = { selectedUrls = emptySet() },
+                        imageVector = Icons.Rounded.ClearAll,
+                        contentDescription = "全不选",
+                        enabled = selectedUrls.isNotEmpty() && !downloading,
+                    )
+                    Text(
+                        "已选 ${selectedUrls.size} / ${urls.size}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
-                IconButton(onClick = { selectedUrls = emptySet() }, enabled = selectedUrls.isNotEmpty() && !downloading) {
-                    Icon(Icons.Rounded.ClearAll, contentDescription = "全部清除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text(
-                    "已选 ${selectedUrls.size} / ${urls.size}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Spacer(Modifier.weight(1f))
-                Button(
+                Spacer(Modifier.height(8.dp))
+                RelayMirrorGlassButton(
                     onClick = {
                         if (MediaDownloader.needsLegacyWritePermission(context)) {
                             waitingForPermission = true
@@ -289,8 +304,7 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                         }
                     },
                     enabled = selectedUrls.isNotEmpty() && !downloading,
-                    shape = RelayControlShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     AnimatedContent(
                         targetState = when {
@@ -321,7 +335,7 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                                 BlogDownloadButtonState.DOWNLOADING -> CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.dp,
-                                    color = Color.White,
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
                                 BlogDownloadButtonState.DONE -> Icon(
                                     Icons.Rounded.Check,
@@ -343,6 +357,8 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                                 },
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
                             )
                         }
                     }
