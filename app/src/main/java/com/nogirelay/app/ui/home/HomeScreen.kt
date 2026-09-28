@@ -139,12 +139,11 @@ fun HomeScreen(
     onSelectMember: ((String) -> Unit)? = null,
     onSelectBlog: ((String) -> Unit)? = null,
 ) {
-    val settings = remember(versions.settings) { AppGraph.settings.read() }
     val context = LocalContext.current
     val firebaseConfigured = remember(versions.settings) { PushRegistrar.isConfigured(context) }
-    val tokenRegistered = remember(versions.settings) { AppGraph.settings.pushToken().isNotBlank() }
-    val pushConfigured = firebaseConfigured && tokenRegistered
-    val pushReady = pushConfigured && settings.relayUrl.isNotBlank() && settings.accessToken.isNotBlank()
+    val pushRegistered = remember(versions.settings) { AppGraph.settings.isPushRegistrationConfirmed() }
+    val pushConfigured = firebaseConfigured && pushRegistered
+    val pushReady = pushConfigured
 
     val allGranted = notificationGranted && fullScreenGranted && overlayGranted && pushConfigured
     var permissionsExpanded by remember(allGranted) { mutableStateOf(!allGranted) }
@@ -258,7 +257,7 @@ fun HomeScreen(
                         fullScreenGranted = fullScreenGranted,
                         overlayGranted = overlayGranted,
                         firebaseConfigured = firebaseConfigured,
-                        tokenRegistered = tokenRegistered,
+                        pushRegistered = pushRegistered,
                         onRequestNotifications = onRequestNotifications,
                         onOpenFullScreenSettings = onOpenFullScreenSettings,
                         onOpenOverlaySettings = onOpenOverlaySettings,
@@ -509,7 +508,7 @@ fun SystemHealthSection(
     fullScreenGranted: Boolean,
     overlayGranted: Boolean,
     firebaseConfigured: Boolean,
-    tokenRegistered: Boolean,
+    pushRegistered: Boolean,
     onRequestNotifications: () -> Unit,
     onOpenFullScreenSettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
@@ -619,10 +618,10 @@ fun SystemHealthSection(
                             title = "FCM 系统推送",
                             description = when {
                                 !firebaseConfigured -> "缺少 Firebase google-services.json"
-                                !tokenRegistered -> "设备尚未向服务器注册"
+                                !pushRegistered -> "设备尚未向服务器确认注册"
                                 else -> "服务器可直接唤醒系统通知服务"
                             },
-                            granted = firebaseConfigured && tokenRegistered,
+                            granted = firebaseConfigured && pushRegistered,
                             imageVector = Icons.Rounded.Cloud,
                             action = onOpenSettings,
                             modifier = Modifier.weight(1f).fillMaxHeight(),

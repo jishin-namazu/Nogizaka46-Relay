@@ -2,10 +2,12 @@ package com.nogirelay.app.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.nogirelay.app.data.api.ApiConfig
 import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProviderType
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 
 /**
  * 将设置持久化到 SharedPreferences。API key、模型和缓存的模型列表按提供方
@@ -39,9 +41,15 @@ class SettingsStore(context: Context) {
     }
 
     fun save(settings: AppSettings) {
+        val relayUrl = settings.relayUrl.trim().trimEnd('/')
+        val accessToken = settings.accessToken.trim()
+        val relayConfigChanged =
+            prefs.getString(KEY_RELAY_URL, "").orEmpty() != relayUrl ||
+                prefs.getString(KEY_ACCESS_TOKEN, "").orEmpty() != accessToken
+
         prefs.edit {
-            putString(KEY_RELAY_URL, settings.relayUrl.trim().trimEnd('/'))
-            putString(KEY_ACCESS_TOKEN, settings.accessToken.trim())
+            putString(KEY_RELAY_URL, relayUrl)
+            putString(KEY_ACCESS_TOKEN, accessToken)
             putString(KEY_AI_PROVIDER, settings.aiProvider.name)
             putString(apiKeyKey(settings.aiProvider), settings.aiApiKey.trim())
             putString(modelKey(settings.aiProvider), settings.aiModel.trim())
@@ -52,6 +60,9 @@ class SettingsStore(context: Context) {
             putString(KEY_USER_NICKNAME, settings.userNickname.trim())
             putString(KEY_INCOMING_CALL_STYLE, settings.incomingCallStyle.name)
         }
+
+        // A successful device registration belongs to one relay URL + access token.
+        if (relayConfigChanged) AppGraph.notifyDataChanged(DataChange.SETTINGS)
     }
 
     /** 为 [provider] 保存的 API Key，即使当前激活的是另一个提供方。 */
@@ -79,8 +90,48 @@ class SettingsStore(context: Context) {
 
     fun savePushToken(token: String) {
         if (pushToken() == token) return
-        prefs.edit { putString(KEY_PUSH_TOKEN, token) }
+        prefs.edit {
+            putString(KEY_PUSH_TOKEN, token)
+            remove(KEY_PUSH_REGISTRATION_FINGERPRINT)
+        }
         AppGraph.notifyDataChanged(DataChange.SETTINGS)
+    }
+
+    /** True only when the current token and relay configuration were confirmed by the server. */
+    fun isPushRegistrationConfirmed(): Boolean {
+        val current = currentPushRegistrationFingerprint() ?: return false
+        return prefs.getString(KEY_PUSH_REGISTRATION_FINGERPRINT, null) == current
+    }
+
+    fun markPushRegistrationConfirmed(token: String, relayUrl: String, accessToken: String) {
+        if (pushToken() != token) return
+        val current = currentPushRegistrationFingerprint() ?: return
+        if (current != pushRegistrationFingerprint(token, relayUrl, accessToken)) return
+        if (prefs.getString(KEY_PUSH_REGISTRATION_FINGERPRINT, null) == current) return
+        prefs.edit { putString(KEY_PUSH_REGISTRATION_FINGERPRINT, current) }
+        AppGraph.notifyDataChanged(DataChange.SETTINGS)
+    }
+
+    private fun currentPushRegistrationFingerprint(): String? {
+        val token = pushToken().takeIf(String::isNotBlank) ?: return null
+        val relayUrl = prefs.getString(KEY_RELAY_URL, "").orEmpty()
+            .ifEmpty { ApiConfig.BASE_URL }
+            .trimEnd('/')
+        val accessToken = prefs.getString(KEY_ACCESS_TOKEN, "").orEmpty()
+            .ifEmpty { ApiConfig.ACCESS_TOKEN }
+        if (relayUrl.isBlank() || accessToken.isBlank()) return null
+        return pushRegistrationFingerprint(token, relayUrl, accessToken)
+    }
+
+    private fun pushRegistrationFingerprint(
+        token: String,
+        relayUrl: String,
+        accessToken: String,
+    ): String {
+        val material = "$token\n${relayUrl.trimEnd('/')}\n$accessToken"
+        return MessageDigest.getInstance("SHA-256")
+            .digest(material.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
     }
 
     private fun readProvider(): AIProviderType {
@@ -162,6 +213,7 @@ class SettingsStore(context: Context) {
         const val KEY_USER_NICKNAME = "user_nickname"
         const val KEY_INCOMING_CALL_STYLE = "incoming_call_style"
         const val KEY_PUSH_TOKEN = "push_token"
+        const val KEY_PUSH_REGISTRATION_FINGERPRINT = "push_registration_fingerprint"
         const val KEY_LEGACY_AI_API_KEY = "ai_api_key"
         const val KEY_LEGACY_AI_MODEL = "ai_model"
         const val KEY_LEGACY_CACHED_AI_MODELS = "cached_ai_models"
