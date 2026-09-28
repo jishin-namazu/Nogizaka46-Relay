@@ -11,6 +11,18 @@ internal class ImageMemoryStore<T>(private val maxBytes: Long, private val sizeO
     @Synchronized fun get(key: String): T? = entries[key]?.value
     @Synchronized fun getForUrl(url: String): T? = latestByUrl[url]?.let { entries[it]?.value }
 
+    @Synchronized fun removeForUrl(url: String) {
+        val iterator = entries.entries.iterator()
+        while (iterator.hasNext()) {
+            val (_, entry) = iterator.next()
+            if (entry.url == url) {
+                bytes -= entry.bytes
+                iterator.remove()
+            }
+        }
+        latestByUrl.remove(url)
+    }
+
     @Synchronized fun put(key: String, url: String, value: T) {
         val size = sizeOf(value).coerceAtLeast(1)
         if (size > maxBytes) return

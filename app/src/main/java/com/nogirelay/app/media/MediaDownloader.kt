@@ -24,6 +24,7 @@ import java.net.HttpURLConnection
 import java.nio.file.Files
 import java.net.URL
 import java.security.MessageDigest
+import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 
 class HttpNotFoundException(
@@ -35,8 +36,10 @@ object MediaDownloader {
     private const val MAX_BYTES = 100L * 1024L * 1024L
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 90_000
+    private const val REMOTE_REVALIDATE_INTERVAL_MS = 60_000L
     private val locks = ConcurrentHashMap<String, Any>()
     private val notFoundUrls = ConcurrentHashMap.newKeySet<String>()
+    private val remoteRevalidatedAt = ConcurrentHashMap<String, Long>()
 
     fun isNotFound(context: Context?, url: String?): Boolean {
         if (url.isNullOrBlank()) return false
@@ -204,6 +207,74 @@ object MediaDownloader {
         }
     }
 
+    /**
+     * 本地文件仍然立即返回；后台再用条件请求检查同一 URL 的远端内容是否变化。
+     * 只有服务器返回新的 ETag / Last-Modified / 长度时才原子替换缓存。
+     */
+    fun revalidateCachedUrlIfChanged(context: Context, url: String, type: MessageType): Boolean {
+        if (url.isBlank()) return false
+        val appContext = context.applicationContext
+        val target = cacheFile(appContext, url, type)
+        if (!target.isFile || target.length() <= 0L) return false
+        val now = System.currentTimeMillis()
+        if (now - (remoteRevalidatedAt[url] ?: 0L) < REMOTE_REVALIDATE_INTERVAL_MS) return false
+
+        val lockKey = "revalidate:$url"
+        val lock = locks.computeIfAbsent(lockKey) { Any() }
+        var changed = false
+        try {
+            synchronized(lock) {
+                if (System.currentTimeMillis() - (remoteRevalidatedAt[url] ?: 0L) < REMOTE_REVALIDATE_INTERVAL_MS) {
+                    return@synchronized
+                }
+
+                val metadata = readRemoteMetadata(target)
+                    ?.takeIf { it.contentLength <= 0L || it.contentLength == target.length() }
+                val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = CONNECT_TIMEOUT_MS
+                    readTimeout = READ_TIMEOUT_MS
+                    instanceFollowRedirects = true
+                    doInput = true
+                    setRequestProperty("Accept", acceptType(type))
+                    setRequestProperty("User-Agent", "NogiRelay/${BuildConfig.VERSION_NAME}")
+                    authorizationFor(appContext, url.toUri().host)?.let { setRequestProperty("Authorization", it) }
+                    metadata?.etag?.let { setRequestProperty("If-None-Match", it) }
+                    metadata?.lastModified?.let { setRequestProperty("If-Modified-Since", it) }
+                }
+
+                try {
+                    when (val status = connection.responseCode) {
+                        HttpURLConnection.HTTP_NOT_MODIFIED -> Unit
+                        HttpURLConnection.HTTP_NOT_FOUND -> {
+                            markNotFound(appContext, url)
+                            target.delete()
+                            metadataFile(target).delete()
+                            MediaCacheRevision.changed()
+                            changed = true
+                        }
+                        in 200..299 -> {
+                            if (metadata == null || !metadata.matches(connection)) {
+                                copyResponseToTarget(connection, target)
+                                writeRemoteMetadata(target, connection)
+                                changed = true
+                            }
+                        }
+                    }
+                } finally {
+                    connection.disconnect()
+                }
+                remoteRevalidatedAt[url] = System.currentTimeMillis()
+            }
+        } catch (error: Exception) {
+            remoteRevalidatedAt[url] = System.currentTimeMillis()
+            if (error is kotlinx.coroutines.CancellationException) throw error
+        } finally {
+            locks.remove(lockKey, lock)
+        }
+        return changed
+    }
+
     private fun downloadHttps(
         context: Context,
         uri: Uri,
@@ -221,9 +292,6 @@ object MediaDownloader {
             setRequestProperty("User-Agent", "NogiRelay/${BuildConfig.VERSION_NAME}")
             authorizationFor(context, uri.host)?.let { setRequestProperty("Authorization", it) }
         }
-        val parent = target.parentFile ?: error("无法创建媒体目录")
-        if (!parent.exists() && !parent.mkdirs()) error("无法创建媒体目录")
-        val temp = File(parent, "${target.name}.part-${System.nanoTime()}")
         return try {
             val status = connection.responseCode
             if (status == HttpURLConnection.HTTP_NOT_FOUND) {
@@ -232,9 +300,22 @@ object MediaDownloader {
                 throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $uri", originalUrl)
             }
             if (status !in 200..299) error("媒体服务返回 HTTP $status")
+            copyResponseToTarget(connection, target)
+            writeRemoteMetadata(target, connection)
+            remoteRevalidatedAt[originalUrl] = System.currentTimeMillis()
+            target
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun copyResponseToTarget(connection: HttpURLConnection, target: File) {
+        val parent = target.parentFile ?: error("无法创建媒体目录")
+        if (!parent.exists() && !parent.mkdirs()) error("无法创建媒体目录")
+        val temp = File(parent, "${target.name}.part-${System.nanoTime()}")
+        try {
             val contentLength = connection.getHeaderFieldLong("Content-Length", -1L)
             if (contentLength > MAX_BYTES) error("媒体文件超过 100 MB 限制")
-
             connection.inputStream.use { input ->
                 FileOutputStream(temp).use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -250,10 +331,62 @@ object MediaDownloader {
                 }
             }
             replaceAtomically(temp, target)
-            target
         } finally {
-            connection.disconnect()
             if (temp.exists()) temp.delete()
+        }
+    }
+
+    private data class RemoteCacheMetadata(
+        val etag: String?,
+        val lastModified: String?,
+        val contentLength: Long,
+    ) {
+        fun matches(connection: HttpURLConnection): Boolean {
+            val responseEtag = connection.getHeaderField("ETag")?.takeIf(String::isNotBlank)
+            if (etag != null && responseEtag != null) return etag == responseEtag
+
+            val responseLastModified = connection.getHeaderField("Last-Modified")
+                ?.takeIf(String::isNotBlank)
+            if (lastModified != null && responseLastModified != null) {
+                return lastModified == responseLastModified
+            }
+
+            val responseLength = connection.getHeaderFieldLong("Content-Length", -1L)
+            return contentLength > 0L && responseLength > 0L && contentLength == responseLength
+        }
+    }
+
+    private fun metadataFile(target: File): File = File("${target.absolutePath}.meta")
+
+    private fun readRemoteMetadata(target: File): RemoteCacheMetadata? {
+        val file = metadataFile(target)
+        if (!file.isFile) return null
+        return runCatching {
+            val properties = Properties()
+            file.inputStream().use(properties::load)
+            RemoteCacheMetadata(
+                etag = properties.getProperty("etag")?.takeIf(String::isNotBlank),
+                lastModified = properties.getProperty("last_modified")?.takeIf(String::isNotBlank),
+                contentLength = properties.getProperty("content_length")?.toLongOrNull() ?: -1L,
+            )
+        }.getOrNull()
+    }
+
+    private fun writeRemoteMetadata(target: File, connection: HttpURLConnection) {
+        runCatching {
+            val properties = Properties().apply {
+                connection.getHeaderField("ETag")?.takeIf(String::isNotBlank)?.let {
+                    setProperty("etag", it)
+                }
+                connection.getHeaderField("Last-Modified")?.takeIf(String::isNotBlank)?.let {
+                    setProperty("last_modified", it)
+                }
+                val length = connection.getHeaderFieldLong("Content-Length", -1L)
+                if (length >= 0L) setProperty("content_length", length.toString())
+            }
+            val file = metadataFile(target)
+            file.parentFile?.mkdirs()
+            file.outputStream().use { properties.store(it, "remote media validators") }
         }
     }
 
