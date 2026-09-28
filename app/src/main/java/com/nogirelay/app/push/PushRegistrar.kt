@@ -133,6 +133,7 @@ object PushRegistrar {
             val status = connection.responseCode
             if (status !in 200..299) error("设备注册失败：HTTP $status")
             connection.inputStream.close()
+            AppGraph.settings.markPushRegistrationConfirmed(token, baseUrl, accessToken)
         } finally {
             connection.disconnect()
         }
