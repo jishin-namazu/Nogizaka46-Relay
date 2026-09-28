@@ -318,8 +318,9 @@ fun RelayApp(
         }
     }
 
-    LaunchedEffect(uiStarted) {
-        if (!uiStarted) return@LaunchedEffect
+    // 语音播放期间听筒靠近熄屏由此处同步：即使界面已经停止，
+    // 播放停止时也要释放锁，避免播放结束后仍然“靠近就熄屏”。
+    LaunchedEffect(Unit) {
         VoicePlaybackService.playbackState
             .map { it.copy(positionMs = 0, durationMs = 0, sampledAtMillis = 0) }
             .distinctUntilChanged()

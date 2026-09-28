@@ -945,11 +945,10 @@ private fun BlogSummaryCard(
                 RemoteImage(
                     url = blog.memberAvatarUrl,
                     contentDescription = blog.memberName,
-                    // 以头像尺寸在 IO 上解码：搜索结果会带来头像
+                    // 头像按自身 44dp 的实测尺寸在 IO 上解码：搜索结果会带来头像
                     // 不在内存缓存中的成员，而每张卡片都在主线程同步解码
                     // 正是导致滚动搜索结果卡顿、而最新帖子不卡的原因。
                     loadCachedImmediately = false,
-                    maxDecodeDimension = 256,
                     modifier = Modifier
                         .size(44.dp)
                         .clip(CircleShape),
@@ -1103,11 +1102,10 @@ private fun BlogSummaryCard(
                         contentDescription = blog.title,
                         contentScale = ContentScale.Fit,
                         preserveAspectRatio = true,
-                        // 在主线程之外解码，以屏幕宽度而非完整分辨率：
+                        // 在主线程之外解码，且按卡片实测宽度（而非完整分辨率）采样：
                         // 博客封面可能是高达 3700x2800 的照片。
                         loadCachedImmediately = false,
                         placeholderColor = Color.Transparent,
-                        maxDecodeDimension = 1440,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

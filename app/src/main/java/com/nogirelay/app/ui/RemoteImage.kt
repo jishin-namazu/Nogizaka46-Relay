@@ -124,6 +124,12 @@ internal fun isGifSignature(header: ByteArray): Boolean {
     return signature == "GIF87a" || signature == "GIF89a"
 }
 
+/**
+ * 所有远程图片（包括消息、媒体二级页、博客列表与正文、图片下载选择页、主页卡片）共用的加载入口：
+ * 解码尺寸一律取控件实测尺寸（按 64px 取整），不会为预览解码整张原图，
+ * 也不允许调用方另设固定上限把小预览按大尺寸解码。全屏查看器和来电写真
+ * 自然会得到屏幕尺寸的位图。调整此处等于同时调整 App 内所有媒体预览的开销。
+ */
 @Composable
 fun RemoteImage(
     url: String?,
@@ -137,15 +143,14 @@ fun RemoteImage(
     message: RelayMessage? = null,
     placeholderResId: Int? = null,
     placeholderColor: Color = Color(0xFFE7E2EA),
-    maxDecodeDimension: Int? = null,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val active = LocalRelayPageActive.current && isRelayUiStarted() &&
         !com.nogirelay.app.performance.LocalRelayPageWorkPaused.current
     var measuredSize by remember(url) { mutableStateOf(IntSize.Zero) }
     fun bucket(value: Int) = if (value <= 0) 0 else ((value + SIZE_BUCKET_PX - 1) / SIZE_BUCKET_PX) * SIZE_BUCKET_PX
-    val targetWidth = bucket(maxDecodeDimension ?: measuredSize.width)
-    val targetHeight = if (preserveAspectRatio) 0 else bucket(maxDecodeDimension ?: measuredSize.height)
+    val targetWidth = bucket(measuredSize.width)
+    val targetHeight = if (preserveAspectRatio) 0 else bucket(measuredSize.height)
     val cacheKey = "${targetWidth}x$targetHeight@$contentScale@$url"
 
     var retryCount by remember(url) { mutableIntStateOf(0) }

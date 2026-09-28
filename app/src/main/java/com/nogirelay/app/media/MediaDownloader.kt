@@ -26,6 +26,8 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class HttpNotFoundException(
     message: String = "媒体文件不存在 (HTTP 404)",
@@ -94,9 +96,10 @@ object MediaDownloader {
         val mediaUrl = mediaUrlFor(message)
         val file = mediaUrl?.let { downloadUrl(appContext, it, message.type) }
 
-        // 如果是视频，下载完成后生成高清缩略图
+        // 如果是视频，下载完成后生成高清缩略图，并顺手记下音轨情况
         if (message.type == MessageType.VIDEO) {
             generateVideoThumbnail(appContext, message)
+            persistVideoAudioTrack(appContext, message)
         }
 
         // 只有语音消息会触发全屏来电，因此只有它需要缓存照片。
@@ -158,6 +161,33 @@ object MediaDownloader {
     fun cachedFileForUrl(context: Context, url: String, type: MessageType): File? {
         val file = cacheFile(context.applicationContext, url, type)
         return file.takeIf { it.isFile && it.length() > 0L }
+    }
+
+    /**
+     * 解析视频有没有音轨：优先用库里已记录的结果，只有从未记录且视频已下载时才检测一次，
+     * 检测完立即写回数据库，之后的预览直接读库，不会每次重复检测。
+     */
+    suspend fun resolveVideoHasAudio(context: Context, message: RelayMessage): Boolean? {
+        if (message.type != MessageType.VIDEO) return null
+        message.videoHasAudio?.let { return it }
+        // 列表里的条目可能还是旧数据，先确认库里有没有记录。
+        val stored = withContext(AppGraph.dispatchers.databaseRead) {
+            runCatching { AppGraph.database.find(message.id)?.videoHasAudio }.getOrNull()
+        }
+        if (stored != null) return stored
+        val detected = withContext(Dispatchers.IO) { cachedVideoHasAudioTrack(context, message) } ?: return null
+        withContext(AppGraph.dispatchers.databaseWrite) {
+            runCatching { AppGraph.database.setVideoHasAudio(message.id, detected) }
+        }
+        return detected
+    }
+
+    /** 下载完成后记下音轨情况；已有记录时不再重复检测。 */
+    private fun persistVideoAudioTrack(context: Context, message: RelayMessage) {
+        val existing = runCatching { AppGraph.database.find(message.id)?.videoHasAudio }.getOrNull()
+        if (existing != null) return
+        val hasAudio = cachedVideoHasAudioTrack(context, message) ?: return
+        runCatching { AppGraph.database.setVideoHasAudio(message.id, hasAudio) }
     }
 
     /** 返回已缓存视频是否包含音轨；未缓存或不可读时返回 null。 */

@@ -148,6 +148,7 @@ fun RelaySelectionSurface(
     useNavigationStyle: Boolean = false,
     enabled: Boolean = true,
     visualHeight: Dp? = null,
+    announceSelected: Boolean = true,
     content: @Composable BoxScope.(selectionProgress: Float) -> Unit,
 ) {
     val mirrorStyle = LocalRelayMirrorStyle.current
@@ -211,7 +212,7 @@ fun RelaySelectionSurface(
             } else {
                 BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             },
-            modifier = Modifier.semantics { this.selected = selected },
+            modifier = if (announceSelected) Modifier.semantics { this.selected = selected } else Modifier,
         ) { Box { content(selectionProgress) } }
     }
 }

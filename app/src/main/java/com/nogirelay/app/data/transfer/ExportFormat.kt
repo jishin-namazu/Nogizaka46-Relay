@@ -173,6 +173,8 @@ object ExportFormat {
         putNullable("incoming_call_from", message.incomingCallFrom)
         putNullable("ringtone_url", message.ringtoneUrl)
         put("is_played", message.isPlayed)
+        put("is_favorite", message.isFavorite)
+        putNullable("video_has_audio", message.videoHasAudio)
         if (includeTranslations) {
             putNullable("translation", message.translation)
             put("translation_done", message.translationDone)
@@ -199,6 +201,12 @@ object ExportFormat {
         translationDone = json.optBoolean("translation_done", false),
         // 已读状态是设备本地的：导入绝不能重新唤起未读角标。
         isUnread = false,
+        isFavorite = json.optBoolean("is_favorite", false),
+        videoHasAudio = if (json.has("video_has_audio") && !json.isNull("video_has_audio")) {
+            json.optBoolean("video_has_audio", false)
+        } else {
+            null
+        },
     )
 
     fun blogToJson(
