@@ -209,6 +209,7 @@ fun TimeFilterSection(
                     selected = customSelected,
                     useNavigationStyle = true,
                     legacyShape = chipShape,
+                    visualHeight = if (LocalRelayMirrorStyle.current) 40.dp else null,
                     modifier = Modifier
                         .height(if (LocalRelayMirrorStyle.current) 48.dp else 32.dp),
                 ) {
@@ -318,6 +319,7 @@ private fun TimePresetChip(
         selected = selected,
         useNavigationStyle = true,
         legacyShape = RoundedCornerShape(10.dp),
+        visualHeight = if (LocalRelayMirrorStyle.current) 40.dp else null,
         modifier = Modifier.height(if (LocalRelayMirrorStyle.current) 48.dp else 32.dp),
     ) {
         Box(
@@ -342,6 +344,7 @@ private fun RangeDateChip(text: String, onClick: () -> Unit) {
         selected = true,
         useNavigationStyle = true,
         legacyShape = RoundedCornerShape(10.dp),
+        visualHeight = if (LocalRelayMirrorStyle.current) 40.dp else null,
         modifier = Modifier.height(if (LocalRelayMirrorStyle.current) 48.dp else 32.dp)
             .then(if (LocalRelayMirrorStyle.current) Modifier.fillMaxWidth() else Modifier),
     ) {

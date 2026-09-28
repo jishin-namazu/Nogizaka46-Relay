@@ -213,9 +213,8 @@ private fun MemberTimelineHeader(
                 modifier = Modifier.matchParentSize(),
             )
             Row(
-                // Match the navigation shell's 7dp inset: the 24dp button corners sit
-                // concentrically inside the card's 31dp outer corners.
-                Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 8.dp),
+                // Keep the card border flush with the controls' layout edges.
+                Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {

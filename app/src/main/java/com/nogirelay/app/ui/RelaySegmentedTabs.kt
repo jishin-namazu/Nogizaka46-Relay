@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -47,12 +48,13 @@ fun RelaySegmentedTabs(
 ) {
     if (labels.isEmpty()) return
     val mirrorStyle = LocalRelayMirrorStyle.current
-    // Keep the visual shell compact while preserving a full 48dp selectable row.
-    // The 4dp outer inset leaves only a small glass rim around the selection.
-    val trackHeight = if (mirrorStyle) 56.dp else 48.dp
+    // Keep the same compact geometry for every segmented selector: 48dp layout
+    // and touch target, with a 42dp visible glass track and selection.
+    val trackHeight = 48.dp
+    val visualTrackHeight = if (mirrorStyle) 42.dp else trackHeight
     val trackShape = if (mirrorStyle) RelayNavigationBarShape else RoundedCornerShape(21.dp)
     val indicatorShape = if (mirrorStyle) RelayNavigationSelectionShape else RoundedCornerShape(19.dp)
-    val trackInset = if (mirrorStyle) 4.dp else 0.dp
+    val trackInset = 0.dp
     BoxWithConstraints(
         modifier = modifier
             .height(trackHeight)
@@ -64,7 +66,13 @@ fun RelaySegmentedTabs(
             ),
     ) {
         if (mirrorStyle) {
-            RelayMirrorGlassBackground(shape = trackShape, modifier = Modifier.matchParentSize())
+            RelayMirrorGlassBackground(
+                shape = trackShape,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .height(visualTrackHeight),
+            )
         }
         val contentWidth = (maxWidth - trackInset * 2).coerceAtLeast(0.dp)
         val tabWidth = contentWidth / labels.size
@@ -90,7 +98,7 @@ fun RelaySegmentedTabs(
         if (mirrorStyle) {
             RelayMirrorGlassSelection(
                 shape = indicatorShape,
-                modifier = indicatorModifier.height(trackHeight - trackInset * 2),
+                modifier = indicatorModifier.height(visualTrackHeight - trackInset * 2),
             )
         } else {
             Surface(

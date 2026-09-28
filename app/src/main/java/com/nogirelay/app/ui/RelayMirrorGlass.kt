@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -234,18 +235,27 @@ fun RelayMirrorGlassButton(
         },
         propagateMinConstraints = true,
     ) {
-        RelayMirrorGlassActionBackground(
-            shape = shape,
+        // Keep the 48dp touch target while matching the segmented selector's 42dp visible surface.
+        Box(
             modifier = Modifier.matchParentSize(),
-            enabled = enabled,
-            opaqueBackground = opaqueBackground,
-            enabledProgress = enabledProgress,
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            RelayMirrorGlassActionBackground(
+                shape = shape,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp),
+                enabled = enabled,
+                opaqueBackground = opaqueBackground,
+                enabledProgress = enabledProgress,
+            )
+        }
         // Retain Material's text style, focus, button role and disabled semantics. Only the
         // empty sibling above samples the backdrop; the button itself stays transparent.
         Button(
             onClick = onClick,
             enabled = enabled,
+            modifier = Modifier.heightIn(min = 48.dp),
             shape = shape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Transparent,

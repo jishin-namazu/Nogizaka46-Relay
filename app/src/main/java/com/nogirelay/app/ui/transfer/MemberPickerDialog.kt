@@ -115,59 +115,73 @@ private fun MemberPickerGridContent(
                 )
             }
             gridItems(groupMembers, key = BlogMember::id) { member ->
-                val isSelected = member.id in selectedIds
-                RelaySelectionSurface(
+                MemberPickerCard(
+                    member = member,
+                    selected = member.id in selectedIds,
                     onClick = {
                         onSelectedChange(
-                            if (isSelected) selectedIds - member.id else selectedIds + member.id,
+                            if (member.id in selectedIds) selectedIds - member.id else selectedIds + member.id,
                         )
                     },
-                    selected = isSelected,
-                    emphasizeEdges = mirrorStyle,
+                    modifier = Modifier.fillMaxWidth().height(94.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Shared member card used by the lazy blog filter and the modal picker grid. */
+@Composable
+fun MemberPickerCard(
+    member: BlogMember,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val mirrorStyle = LocalRelayMirrorStyle.current
+    RelaySelectionSurface(
+        onClick = onClick,
+        selected = selected,
+        emphasizeEdges = mirrorStyle,
+        modifier = modifier,
+    ) { selectionProgress ->
+        Box(Modifier.fillMaxSize()) {
+            // 卒業标记只出现在成员卡片的右上角：其余位置（博客列表、首页轮播）不再显示。
+            if (member.graduated) {
+                GraduatedTag(
+                    compact = true,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp),
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 8.dp),
+            ) {
+                RemoteImage(
+                    url = member.avatarUrl,
+                    contentDescription = member.name,
+                    loadCachedImmediately = false,
+                    // 本地头像先显示；官网同 URL 换图时，后台条件校验会刷新缓存。
+                    revalidateRemote = true,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(94.dp),
-                ) { selectionProgress ->
-                    Box(Modifier.fillMaxSize()) {
-                        // 卒業标记只出现在成员卡片的右上角：其余位置（博客列表、首页轮播）不再显示。
-                        if (member.graduated) {
-                            GraduatedTag(
-                                compact = true,
-                                modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp),
-                            )
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 8.dp),
-                        ) {
-                            RemoteImage(
-                                url = member.avatarUrl,
-                                contentDescription = member.name,
-                                loadCachedImmediately = false,
-                                // 本地头像先显示；官网同 URL 换图时，后台条件校验会刷新缓存。
-                                revalidateRemote = true,
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .clip(CircleShape)
-                                    .border(
-                                        1.5.dp,
-                                        BrandPurple.copy(alpha = selectionProgress),
-                                        CircleShape,
-                                    ),
-                            )
-                            Text(
-                                member.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontSize = 12.sp,
-                                fontWeight = if (mirrorStyle) FontWeight.Medium else if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = lerp(MaterialTheme.colorScheme.onSurface, BrandPurpleDark, selectionProgress),
-                                modifier = Modifier.padding(top = 5.dp),
-                            )
-                        }
-                    }
-                }
+                        .size(46.dp)
+                        .clip(CircleShape)
+                        .border(
+                            1.5.dp,
+                            BrandPurple.copy(alpha = selectionProgress),
+                            CircleShape,
+                        ),
+                )
+                Text(
+                    member.name,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 12.sp,
+                    fontWeight = if (mirrorStyle) FontWeight.Medium else if (selected) FontWeight.Bold else FontWeight.Normal,
+                    color = lerp(MaterialTheme.colorScheme.onSurface, BrandPurpleDark, selectionProgress),
+                    modifier = Modifier.padding(top = 5.dp),
+                )
             }
         }
     }
