@@ -123,12 +123,17 @@ private fun RelayMirrorSearchField(
     enabled: Boolean,
 ) {
     Box(modifier) {
-        RelayMirrorGlassBackground(
-            shape = RelayControlShape,
+        Box(
             modifier = Modifier.matchParentSize(),
-            reflectionTint = BrandPurple,
-            preserveSourceColors = true,
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            RelayMirrorGlassBackground(
+                shape = RelayControlShape,
+                modifier = Modifier.fillMaxWidth().height(40.dp),
+                reflectionTint = BrandPurple,
+                preserveSourceColors = true,
+            )
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 14.dp, end = 4.dp),

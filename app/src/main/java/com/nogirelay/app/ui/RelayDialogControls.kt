@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -25,6 +26,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
@@ -32,6 +34,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Shared dialogs adopt the host page's styling without changing other tabs. */
@@ -144,6 +147,7 @@ fun RelaySelectionSurface(
     emphasizeEdges: Boolean = false,
     useNavigationStyle: Boolean = false,
     enabled: Boolean = true,
+    visualHeight: Dp? = null,
     content: @Composable BoxScope.(selectionProgress: Float) -> Unit,
 ) {
     val mirrorStyle = LocalRelayMirrorStyle.current
@@ -163,21 +167,31 @@ fun RelaySelectionSurface(
     val selectedGlass = BrandPurple.copy(alpha = 0.16f).compositeOver(glassBase)
     Box(modifier = modifier, propagateMinConstraints = true) {
         if (mirrorStyle) {
-            if (useNavigationStyle) {
-                RelayMirrorGlassActionBackground(
-                    shape = shape,
-                    modifier = Modifier.matchParentSize(),
-                    opaqueBackground = glassBase,
-                    emphasis = 0.35f + 0.65f * selectionProgress,
-                )
-            } else {
-                RelayMirrorGlassBackground(
-                    shape = shape,
-                    modifier = Modifier.matchParentSize(),
-                    opaqueBackground = lerp(unselectedGlass, selectedGlass, selectionProgress),
-                    reflectionTint = BrandPurple,
-                    emphasizeEdges = emphasizeEdges,
-                )
+            Box(
+                modifier = Modifier.matchParentSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                val backgroundModifier = if (visualHeight == null) {
+                    Modifier.matchParentSize()
+                } else {
+                    Modifier.fillMaxWidth().height(visualHeight)
+                }
+                if (useNavigationStyle) {
+                    RelayMirrorGlassActionBackground(
+                        shape = shape,
+                        modifier = backgroundModifier,
+                        opaqueBackground = glassBase,
+                        emphasis = 0.35f + 0.65f * selectionProgress,
+                    )
+                } else {
+                    RelayMirrorGlassBackground(
+                        shape = shape,
+                        modifier = backgroundModifier,
+                        opaqueBackground = lerp(unselectedGlass, selectedGlass, selectionProgress),
+                        reflectionTint = BrandPurple,
+                        emphasizeEdges = emphasizeEdges,
+                    )
+                }
             }
         }
         Surface(

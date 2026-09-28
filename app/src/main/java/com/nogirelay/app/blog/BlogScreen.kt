@@ -10,8 +10,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,19 +25,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Article
@@ -47,6 +49,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -76,6 +79,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -108,7 +115,6 @@ import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.RelayCardContentInset
 import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.RelayDialogButton
-import com.nogirelay.app.ui.RelayDialogCard
 import com.nogirelay.app.ui.RelayDialogIconButton
 import com.nogirelay.app.ui.RelayGlassBackdrop
 import com.nogirelay.app.ui.RelayHomeCardShape
@@ -133,7 +139,8 @@ import com.nogirelay.app.ui.relaySheetBackdrop
 import com.nogirelay.app.ui.rememberRelaySheetBackdropState
 import com.nogirelay.app.ui.searchSnippets
 import com.nogirelay.app.ui.transfer.DataTransferDrawer
-import com.nogirelay.app.ui.transfer.MemberPickerGrid
+import com.nogirelay.app.ui.transfer.MemberPickerCard
+import com.nogirelay.app.ui.transfer.memberGroups
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -694,32 +701,65 @@ private fun BlogFilterDialog(
     RelayModalBottomSheet(
         onDismissRequest = onDismiss,
         backdropState = backdropState,
+        dragHandle = null,
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
     ) { dismiss ->
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "博客筛选",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                RelayDialogIconButton(
-                    onClick = { dismiss(onDismiss) },
-                    imageVector = Icons.Rounded.Close,
-                    contentDescription = "关闭博客筛选",
-                )
-            }
-            RelayDialogCard {
-                Column(Modifier.fillMaxWidth().padding(RelayCardContentInset)) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val columnCount = ((maxWidth - 40.dp) / 104.dp).toInt().coerceIn(1, 5)
+            val groups = remember(members) { memberGroups(members) }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                overscrollEffect = null,
+            ) {
+                item(key = "filter-drag-handle") {
+                    Column(Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .size(width = 64.dp, height = 48.dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Button,
+                                    onClick = { dismiss(onDismiss) },
+                                )
+                                .semantics { contentDescription = "收起博客筛选" },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            BottomSheetDefaults.DragHandle(modifier = Modifier.clearAndSetSemantics {})
+                        }
+                    }
+                }
+                item(key = "filter-header") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "博客筛选",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        RelayDialogIconButton(
+                            onClick = { dismiss(onDismiss) },
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "关闭博客筛选",
+                        )
+                    }
+                }
+                item(key = "time-filter") {
+                    TimeFilterSection(
+                        filter = draftTimeFilter,
+                        onFilterChange = { draftTimeFilter = it },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                item(key = "member-header") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "成员 · 已选 ${draft.size}",
@@ -741,7 +781,9 @@ private fun BlogFilterDialog(
                             enabled = draft.isNotEmpty(),
                         )
                     }
-                    if (members.isEmpty()) {
+                }
+                if (members.isEmpty()) {
+                    item(key = "members-loading") {
                         Box(
                             modifier = Modifier.fillMaxWidth().height(120.dp),
                             contentAlignment = Alignment.Center,
@@ -752,39 +794,68 @@ private fun BlogFilterDialog(
                                 fontSize = 13.sp,
                             )
                         }
-                    } else {
-                        MemberPickerGrid(
-                            members = members,
-                            selectedIds = draft,
-                            onSelectedChange = { draft = it },
-                            modifier = Modifier.heightIn(max = 340.dp),
-                        )
+                    }
+                } else {
+                    groups.forEach { (category, groupMembers) ->
+                        item(key = "member-category-$category") {
+                            Text(
+                                category,
+                                fontWeight = FontWeight.Bold,
+                                color = BrandPurple,
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 2.dp),
+                            )
+                        }
+                        items(
+                            items = groupMembers.chunked(columnCount),
+                            key = { row -> row.joinToString("|") { it.id } },
+                        ) { row ->
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                row.forEach { member ->
+                                    MemberPickerCard(
+                                        member = member,
+                                        selected = member.id in draft,
+                                        onClick = {
+                                            draft = if (member.id in draft) {
+                                                draft - member.id
+                                            } else {
+                                                draft + member.id
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).height(94.dp),
+                                    )
+                                }
+                                repeat(columnCount - row.size) {
+                                    Spacer(Modifier.weight(1f))
+                                }
+                            }
+                        }
                     }
                 }
-            }
-            RelayDialogCard {
-                TimeFilterSection(
-                    filter = draftTimeFilter,
-                    onFilterChange = { draftTimeFilter = it },
-                    modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
-                )
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                RelayDialogButton(
-                    onClick = { dismiss(onDismiss) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                item(key = "filter-actions") {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        RelayDialogButton(
+                            onClick = { dismiss(onDismiss) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        RelayDialogButton(
+                            onClick = { dismiss { onConfirm(draft, draftTimeFilter) } },
+                            enabled = !draftTimeFilter.hasInvertedRange(),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
-                RelayDialogButton(
-                    onClick = { dismiss { onConfirm(draft, draftTimeFilter) } },
-                    enabled = !draftTimeFilter.hasInvertedRange(),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                item(key = "filter-navigation-inset") {
+                    Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                 }
             }
         }

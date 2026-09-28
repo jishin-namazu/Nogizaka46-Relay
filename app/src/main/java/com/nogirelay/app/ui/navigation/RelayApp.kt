@@ -91,7 +91,6 @@ import com.nogirelay.app.ui.RelayLightBackdrop
 import com.nogirelay.app.ui.RelayMirrorGlassBackground
 import com.nogirelay.app.ui.RelayMirrorGlassSelection
 import com.nogirelay.app.ui.RelayNavigationBarShape
-import com.nogirelay.app.ui.RelayNavigationSelectionShape
 import com.nogirelay.app.ui.home.HomeScreen
 import com.nogirelay.app.ui.home.hasNotificationPermission
 import com.nogirelay.app.ui.messages.MessagesScreen
@@ -456,11 +455,10 @@ fun RelayApp(
                     .padding(horizontal = 16.dp)
                     .padding(top = 6.dp, bottom = 12.dp),
             ) {
-                val navigationInset = 7.dp
+                val navigationInset = 0.dp
                 val indicatorHeight = 74.dp
-                val indicatorShape = RelayNavigationSelectionShape
-                // Concentric end corners keep the home/blog indicator exactly one inset
-                // from the outer edge, just like its top and bottom edges.
+                val indicatorShape = RelayNavigationBarShape
+                // The outer card hugs the selectable item row and moving indicator.
                 val navigationCardShape = RelayNavigationBarShape
                 val selectedIndex = AppTab.entries.indexOf(tab)
                 val itemWidth = (maxWidth - navigationInset * 2) / AppTab.entries.size

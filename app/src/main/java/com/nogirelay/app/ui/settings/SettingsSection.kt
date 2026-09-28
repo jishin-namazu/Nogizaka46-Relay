@@ -40,8 +40,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -76,6 +74,7 @@ import androidx.compose.ui.graphics.Color
 import com.nogirelay.app.ui.BrandPurple
 import com.nogirelay.app.ui.BrandPurpleDark
 import com.nogirelay.app.ui.LocalRelayMirrorStyle
+import com.nogirelay.app.ui.RelayCompactTextField
 import com.nogirelay.app.ui.RelayControlShape
 import com.nogirelay.app.ui.RelayNavigationSelectionShape
 import com.nogirelay.app.ui.RelayCardContentInset
@@ -203,11 +202,6 @@ fun SettingsSection(
         }
     }
 
-    val textFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = BrandPurple,
-        focusedLabelColor = BrandPurple,
-        cursorColor = BrandPurple,
-    )
     val cardShape = RelayHomeCardShape
     val translationVisibilitySpring = spring<IntSize>(
         dampingRatio = Spring.DampingRatioNoBouncy,
@@ -234,24 +228,18 @@ fun SettingsSection(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text("FCM 推送服务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    OutlinedTextField(
+                    RelayCompactTextField(
                         value = relayUrl,
                         onValueChange = { relayUrl = it },
-                        label = { Text("同步服务地址") },
-                        placeholder = { Text("https://relay.example.com") },
-                        singleLine = true,
-                        shape = RelayControlShape,
-                        colors = textFieldColors,
+                        label = "同步服务地址",
+                        placeholder = "https://relay.example.com",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+                    RelayCompactTextField(
                         value = token,
                         onValueChange = { token = it },
-                        label = { Text("访问令牌") },
+                        label = "访问令牌",
                         visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        shape = RelayControlShape,
-                        colors = textFieldColors,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     RelayMirrorGlassButton(
@@ -301,13 +289,10 @@ fun SettingsSection(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     Text("个性化昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    OutlinedTextField(
+                    RelayCompactTextField(
                         value = userNickname,
                         onValueChange = { userNickname = it },
-                        label = { Text("你的昵称") },
-                        singleLine = true,
-                        shape = RelayControlShape,
-                        colors = textFieldColors,
+                        label = "你的昵称",
                         modifier = Modifier.fillMaxWidth(),
                     )
                     RelayMirrorGlassButton(
@@ -387,17 +372,14 @@ fun SettingsSection(
                             modifier = Modifier.padding(top = 14.dp),
                         ) {
                             Box {
-                                OutlinedTextField(
+                                RelayCompactTextField(
                                     value = aiProvider.displayName,
                                     onValueChange = {},
                                     readOnly = true,
-                                    singleLine = true,
-                                    label = { Text("AI 供应商") },
-                                    trailingIcon = {
+                                    label = "AI 供应商",
+                                    trailingContent = {
                                         Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择供应商")
                                     },
-                                    shape = RelayControlShape,
-                                    colors = textFieldColors,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .onSizeChanged { providerFieldWidthPx = it.width },
@@ -442,15 +424,12 @@ fun SettingsSection(
                                     }
                                 }
                             }
-                        OutlinedTextField(
+                        RelayCompactTextField(
                             value = aiApiKey,
                             onValueChange = { aiApiKey = it },
-                            label = { Text("${aiProvider.displayName} API Key") },
-                            placeholder = { Text("sk-... 或对应 API Key") },
+                            label = "${aiProvider.displayName} API Key",
+                            placeholder = "sk-... 或对应 API Key",
                             visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            shape = RelayControlShape,
-                            colors = textFieldColors,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Row(
@@ -485,13 +464,13 @@ fun SettingsSection(
                         }
                         AnimatedStatusText(text = modelStatus, color = BrandPurpleDark)
                         Box {
-                            OutlinedTextField(
+                            RelayCompactTextField(
                                 value = aiModel,
                                 onValueChange = {},
                                 readOnly = true,
-                                label = { Text("翻译模型") },
-                                placeholder = { Text("请先校验 API Key 并选择模型") },
-                                trailingIcon = {
+                                label = "翻译模型",
+                                placeholder = "请先校验 API Key 并选择模型",
+                                trailingContent = {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -511,9 +490,6 @@ fun SettingsSection(
                                         )
                                     }
                                 },
-                                singleLine = true,
-                                shape = RelayControlShape,
-                                colors = textFieldColors,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .onSizeChanged { modelFieldWidthPx = it.width },
