@@ -368,6 +368,7 @@ fun TimeFilterDialog(
     backdropState: RelaySheetBackdropState,
     onDismiss: () -> Unit,
     onConfirm: (TimeFilter) -> Unit,
+    extraContent: (@Composable (dismiss: (afterHidden: () -> Unit) -> Unit) -> Unit)? = null,
 ) {
     var draft by remember(filter) { mutableStateOf(filter) }
     RelayModalBottomSheet(
@@ -377,13 +378,13 @@ fun TimeFilterDialog(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(rememberScrollState(), overscrollEffect = null)
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "消息时间筛选",
+                    text = "消息筛选",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -407,6 +408,10 @@ fun TimeFilterDialog(
                 }
             } else {
                 TimeFilterSection(filter = draft, onFilterChange = { draft = it }, modifier = Modifier.fillMaxWidth())
+            }
+            if (extraContent != null) {
+                Spacer(Modifier.height(14.dp))
+                extraContent(dismiss)
             }
             Spacer(Modifier.height(18.dp))
             Row(

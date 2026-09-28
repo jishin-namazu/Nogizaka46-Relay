@@ -44,6 +44,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
                 ringtone_url TEXT,
                 is_played INTEGER NOT NULL DEFAULT 0,
                 is_unread INTEGER NOT NULL DEFAULT 0,
+                is_favorite INTEGER NOT NULL DEFAULT 0,
+                video_has_audio INTEGER,
                 translation TEXT,
                 translation_done INTEGER NOT NULL DEFAULT 0,
                 received_at INTEGER NOT NULL
@@ -54,6 +56,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         db.execSQL("CREATE INDEX idx_messages_unread_member ON messages(is_unread, member_id, member_name)")
         createBlogTables(db)
         createMediaRefSchema(db)
+        createMessageFavoriteIndex(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -104,6 +107,14 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             // v11 引入媒体引用表与成员 key 索引；历史记录由 MediaRefIndex 在后台回填，
             // 所以升级本身只是建表建索引，不会卡住启动。
             createMediaRefSchema(db)
+        }
+        if (oldVersion < 12) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
+            createMessageFavoriteIndex(db)
+        }
+        if (oldVersion < 13) {
+            // 静音检测只做一次：结果落库，null 表示尚未知。
+            db.execSQL("ALTER TABLE messages ADD COLUMN video_has_audio INTEGER")
         }
     }
 
@@ -187,6 +198,14 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         )
     }
 
+    private fun createMessageFavoriteIndex(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_messages_favorite_member ON messages(" +
+                "is_favorite, CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END, " +
+                "sent_at DESC, received_at DESC, id DESC)",
+        )
+    }
+
     fun insert(message: RelayMessage, isUnread: Boolean = false): Boolean {
         val values = ContentValues().apply {
             put("id", message.id)
@@ -204,6 +223,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             put("ringtone_url", message.ringtoneUrl)
             put("is_played", if (message.isPlayed) 1 else 0)
             put("is_unread", if (isUnread || message.isUnread) 1 else 0)
+            put("is_favorite", if (message.isFavorite) 1 else 0)
+            put("video_has_audio", message.videoHasAudio?.let { if (it) 1 else 0 })
             put("translation", message.translation)
             put("translation_done", if (message.translationDone) 1 else 0)
             put("received_at", System.currentTimeMillis())
@@ -296,6 +317,102 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         }
         return result
     }
+
+    fun favoriteMessagesForMember(
+        memberKey: String,
+        limit: Int = 500,
+        offset: Int = 0,
+        cancellationSignal: CancellationSignal? = null,
+    ): List<RelayMessage> = queryFilteredMessages(
+        memberFilter(memberKey, "", null, null, favoritesOnly = true),
+        limit,
+        offset,
+        cancellationSignal,
+    )
+
+    fun mediaMessagesForMember(
+        memberKey: String,
+        mediaType: MessageType,
+        limit: Int = 500,
+        offset: Int = 0,
+        cancellationSignal: CancellationSignal? = null,
+    ): List<RelayMessage> = queryFilteredMessages(
+        memberFilter(memberKey, "", null, null, mediaType = mediaType),
+        limit,
+        offset,
+        cancellationSignal,
+    )
+
+    fun countFavoriteMessagesForMember(
+        memberKey: String,
+        cancellationSignal: CancellationSignal? = null,
+    ): Int = countFilteredMessages(
+        memberFilter(memberKey, "", null, null, favoritesOnly = true),
+        cancellationSignal,
+    )
+
+    fun countMediaMessagesForMember(
+        memberKey: String,
+        mediaType: MessageType,
+        cancellationSignal: CancellationSignal? = null,
+    ): Int = countFilteredMessages(
+        memberFilter(memberKey, "", null, null, mediaType = mediaType),
+        cancellationSignal,
+    )
+
+    fun setMessageFavorite(id: String, favorite: Boolean): Boolean {
+        if (id.isBlank()) return false
+        val values = ContentValues().apply { put("is_favorite", if (favorite) 1 else 0) }
+        return writableDatabase.update("messages", values, "id = ?", arrayOf(id)) > 0
+    }
+
+    /**
+     * 记录视频是否带音轨。检测只需在首次下载后做一次，
+     * 之后预览直接读库，不再重复跑 MediaMetadataRetriever。
+     */
+    fun setVideoHasAudio(id: String, hasAudio: Boolean): Boolean {
+        if (id.isBlank()) return false
+        val values = ContentValues().apply { put("video_has_audio", if (hasAudio) 1 else 0) }
+        return writableDatabase.update("messages", values, "id = ?", arrayOf(id)) > 0
+    }
+
+    private fun queryFilteredMessages(
+        filter: QueryFilter,
+        limit: Int,
+        offset: Int,
+        cancellationSignal: CancellationSignal?,
+    ): List<RelayMessage> {
+        val result = mutableListOf<RelayMessage>()
+        readableDatabase.query(
+            false,
+            "messages",
+            null,
+            filter.selection,
+            filter.arguments,
+            null,
+            null,
+            MEMBER_MEDIA_ORDER,
+            "${limit.coerceIn(1, 1000)} OFFSET ${offset.coerceAtLeast(0)}",
+            cancellationSignal,
+        ).use { cursor -> while (cursor.moveToNext()) result += cursor.toMessage() }
+        return result
+    }
+
+    private fun countFilteredMessages(
+        filter: QueryFilter,
+        cancellationSignal: CancellationSignal?,
+    ): Int = readableDatabase.query(
+        false,
+        "messages",
+        arrayOf("COUNT(*)"),
+        filter.selection,
+        filter.arguments,
+        null,
+        null,
+        null,
+        null,
+        cancellationSignal,
+    ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
 
     fun messageIndexForMember(
         memberKey: String,
@@ -768,6 +885,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             put("ringtone_url", message.ringtoneUrl)
             put("is_played", if (message.isPlayed) 1 else 0)
             put("is_unread", 0)
+            put("is_favorite", if (message.isFavorite) 1 else 0)
+            put("video_has_audio", message.videoHasAudio?.let { if (it) 1 else 0 })
             put("translation", message.translation)
             put("translation_done", if (message.translationDone) 1 else 0)
             put("received_at", 0L)
@@ -1640,6 +1759,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         startMillis: Long?,
         endMillisExclusive: Long?,
         nickname: String = "",
+        favoritesOnly: Boolean = false,
+        mediaType: MessageType? = null,
     ): QueryFilter {
         val clauses = mutableListOf(
             "id NOT GLOB ?",
@@ -1647,6 +1768,11 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             "(CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END) = ?",
         )
         val arguments = mutableListOf(TEST_MESSAGE_GLOB, memberKey)
+        if (favoritesOnly) clauses += "is_favorite = 1"
+        if (mediaType != null) {
+            clauses += "type = ?"
+            arguments += mediaType.name
+        }
         val query = searchQuery.trim()
         if (query.isNotEmpty()) {
             // 库里存的是「%%%」昵称占位符，所以搜索用户自己的昵称也要匹配占位符形式。
@@ -1730,6 +1856,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         translation = nullableString("translation"),
         translationDone = getInt(getColumnIndexOrThrow("translation_done")) == 1,
         isUnread = getInt(getColumnIndexOrThrow("is_unread")) == 1,
+        isFavorite = getInt(getColumnIndexOrThrow("is_favorite")) == 1,
+        videoHasAudio = nullableInt("video_has_audio")?.let { it == 1 },
     )
 
     private fun Cursor.toBlogPost(): BlogPost = BlogPost(
@@ -1766,7 +1894,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     companion object {
         private const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 11
+        private const val DB_VERSION = 13
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
         /** [MediaRefs.PARSE_VERSION] 已落库的标记，存在 sync_state 里。 */
         private const val MEDIA_REFS_VERSION_KEY = "media_refs_parse_version_v1"
@@ -1778,6 +1906,15 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         /** SQLite 变量上限之下的安全分块大小，用于 id IN (...) 查询。 */
         private const val SQL_CHUNK = 500
         private const val MEMBER_MESSAGE_ORDER = "sent_at DESC, received_at DESC, id DESC"
+
+        /**
+         * 媒体 / 收藏夹二级页按消息发送时间排序。
+         * 库里存的是带不同时区偏移的 ISO 时间戳（"...Z" 与 "+09:00"），
+         * 直接按字符串比较会错序，所以先用 SQLite 解析成 epoch 秒再比较；
+         * 同一秒内再用 sent_at / received_at / id 保持稳定顺序。
+         */
+        private const val MEMBER_MEDIA_ORDER =
+            "CAST(strftime('%s', sent_at) AS INTEGER) DESC, sent_at DESC, received_at DESC, id DESC"
         private const val BLOG_FULL_SYNC_KEY = "blog_full_sync_complete_v2"
         private const val BLOG_SYNC_HEAD_KEY = "blog_sync_head_id_v2"
         private const val MESSAGE_FULL_SYNC_KEY = "message_full_sync_complete_v1"

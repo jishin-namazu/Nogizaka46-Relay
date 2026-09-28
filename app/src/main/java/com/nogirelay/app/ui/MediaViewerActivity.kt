@@ -30,8 +30,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -148,7 +146,7 @@ class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
         val imageTitle = intent.getStringExtra(EXTRA_IMAGE_TITLE)
         val imageOwner = intent.getStringExtra(EXTRA_IMAGE_OWNER).orEmpty().ifBlank { "BLOG" }
         val imageId = intent.getStringExtra(EXTRA_IMAGE_ID).orEmpty()
-        val messages = storedMessage?.let(::listOf) ?: directImageUrls.mapIndexed { index, imageUrl ->
+        val messages = storedMessage?.let(::memberMediaViewerPages) ?: directImageUrls.mapIndexed { index, imageUrl ->
             RelayMessage(
                 id = imageId.ifBlank { imageUrl.hashCode().toString() } + "-$index",
                 memberId = "",
@@ -173,7 +171,7 @@ class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
         val initialPage = if (storedMessage == null) {
             intent.getIntExtra(EXTRA_IMAGE_INDEX, 0).coerceIn(messages.indices)
         } else {
-            0
+            messages.indexOfFirst { it.id == storedMessage.id }.takeIf { it >= 0 } ?: 0
         }
         viewerType = messages[initialPage].type
 
@@ -186,6 +184,26 @@ class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
         }
     }
 }
+
+/**
+ * 媒体二级页打开的查看器：同成员、同类型，按发送时间从旧到新排列，
+ * 这样左右滑动就是上一个 / 下一个媒体，与媒体页的阅读顺序一致。
+ */
+private fun memberMediaViewerPages(message: RelayMessage): List<RelayMessage> {
+    if (message.type != MessageType.IMAGE && message.type != MessageType.VIDEO) return listOf(message)
+    val ordered = runCatching {
+        AppGraph.database.mediaMessagesForMember(
+            message.memberKey,
+            message.type,
+            limit = VIEWER_MEDIA_LIMIT,
+        )
+    }.getOrDefault(emptyList())
+    val ascending = ordered.asReversed()
+    return if (ascending.any { it.id == message.id }) ascending else listOf(message)
+}
+
+/** 查看器一次最多载入的媒体条数。 */
+private const val VIEWER_MEDIA_LIMIT = 500
 
 @Composable
 private fun MediaViewer(
@@ -265,12 +283,13 @@ private fun MediaViewer(
             onSaveDownload = requestSave,
         )
 
-        MessageType.VIDEO -> VideoPlayer(
-            message = message,
-            isDownloading = message.id == downloadingMessageId,
-            isDownloaded = message.id == downloadedMessageId,
+        MessageType.VIDEO -> VideoViewer(
+            messages = messages,
+            initialPage = initialPage,
+            isDownloading = { it.id == downloadingMessageId },
+            isDownloaded = { it.id == downloadedMessageId },
             onClose = onClose,
-            onSaveDownload = { requestSave(message) },
+            onSaveDownload = requestSave,
         )
 
         else -> Unit
@@ -536,6 +555,51 @@ private fun ZoomableImage(
     )
 }
 
+/**
+ * 视频也走左右滑动：每页一个播放器，翻页时暂停已离开的那一页。
+ */
+@Composable
+private fun VideoViewer(
+    messages: List<RelayMessage>,
+    initialPage: Int,
+    isDownloading: (RelayMessage) -> Boolean,
+    isDownloaded: (RelayMessage) -> Boolean,
+    onClose: () -> Unit,
+    onSaveDownload: (RelayMessage) -> Unit,
+) {
+    val pagerState = rememberPagerState(
+        initialPage = initialPage.coerceIn(messages.indices),
+        pageCount = { messages.size },
+    )
+    var zoomedPage by remember { mutableIntStateOf(-1) }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        HorizontalPager(
+            state = pagerState,
+            userScrollEnabled = zoomedPage != pagerState.currentPage,
+            modifier = Modifier.fillMaxSize(),
+        ) { page ->
+            val pageMessage = messages[page]
+            VideoPlayer(
+                message = pageMessage,
+                active = pagerState.currentPage == page,
+                pageIndicator = if (messages.size > 1) "${page + 1} / ${messages.size}" else null,
+                isDownloading = isDownloading(pageMessage),
+                isDownloaded = isDownloaded(pageMessage),
+                onClose = onClose,
+                onSaveDownload = { onSaveDownload(pageMessage) },
+                onZoomedChange = { zoomed ->
+                    if (zoomed) {
+                        zoomedPage = page
+                    } else if (zoomedPage == page) {
+                        zoomedPage = -1
+                    }
+                },
+            )
+        }
+    }
+}
+
 @Composable
 private fun VideoPlayer(
     message: RelayMessage,
@@ -543,6 +607,9 @@ private fun VideoPlayer(
     isDownloaded: Boolean,
     onClose: () -> Unit,
     onSaveDownload: () -> Unit,
+    active: Boolean = true,
+    pageIndicator: String? = null,
+    onZoomedChange: (Boolean) -> Unit = {},
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var videoView by remember { mutableStateOf<VideoView?>(null) }
@@ -563,20 +630,6 @@ private fun VideoPlayer(
     var videoScale by remember(message.id) { mutableFloatStateOf(1f) }
     var videoOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var videoViewport by remember(message.id) { mutableStateOf(IntSize.Zero) }
-    val videoTransformState = rememberTransformableState { _, zoomChange, panChange, _ ->
-        val newScale = (videoScale * zoomChange).coerceIn(1f, 5f)
-        val screenPan = contentPanToScreen(panChange.x, panChange.y, newScale)
-        val constrained = constrainMediaOffset(
-            x = videoOffset.x + screenPan.x,
-            y = videoOffset.y + screenPan.y,
-            scale = newScale,
-            viewportWidth = videoViewport.width.toFloat(),
-            viewportHeight = videoViewport.height.toFloat(),
-        )
-        videoOffset = Offset(constrained.x, constrained.y)
-        videoScale = newScale
-    }
-
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -593,6 +646,18 @@ private fun VideoPlayer(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
             videoView?.stopPlayback()
+        }
+    }
+
+    // 滑走的那一页立即暂停，避免翻页时两个视频同时播放。
+    LaunchedEffect(active) {
+        if (!active) {
+            videoView?.let { vv ->
+                if (vv.isPlaying) {
+                    vv.pause()
+                    videoPlaying = false
+                }
+            }
         }
     }
 
@@ -672,7 +737,35 @@ private fun VideoPlayer(
                     translationX = videoOffset.x
                     translationY = videoOffset.y
                 }
-                .transformable(videoTransformState),
+                .pointerInput(message.id) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressedPointers = event.changes.count { it.pressed }
+                            // 单指左右拖动留给翻页，只在双指或已放大时消耗手势。
+                            if (pressedPointers >= 2 || videoScale > 1.01f) {
+                                val newScale = (videoScale * event.calculateZoom()).coerceIn(1f, 5f)
+                                val pan = event.calculatePan()
+                                val screenPan = contentPanToScreen(pan.x, pan.y, newScale)
+                                val constrained = constrainMediaOffset(
+                                    x = videoOffset.x + screenPan.x,
+                                    y = videoOffset.y + screenPan.y,
+                                    scale = newScale,
+                                    viewportWidth = videoViewport.width.toFloat(),
+                                    viewportHeight = videoViewport.height.toFloat(),
+                                )
+                                videoOffset = Offset(constrained.x, constrained.y)
+                                videoScale = newScale
+                                onZoomedChange(newScale > 1.01f)
+                                event.changes.forEach { change ->
+                                    if (change.positionChanged()) change.consume()
+                                }
+                            }
+                            if (event.changes.none { it.pressed }) break
+                        }
+                    }
+                },
         ) {
             // VideoView 层
             if (path != null) {
@@ -754,6 +847,7 @@ private fun VideoPlayer(
                                 if (videoScale > 1f) {
                                     videoScale = 1f
                                     videoOffset = Offset.Zero
+                                    onZoomedChange(false)
                                 } else {
                                     togglePlayPause()
                                 }
@@ -792,7 +886,7 @@ private fun VideoPlayer(
                 // 顶栏
                 MediaViewerTopBar(
                     title = message.memberName,
-                    pageIndicator = null,
+                    pageIndicator = pageIndicator,
                     isDownloading = isDownloading,
                     isDownloaded = isDownloaded,
                     onClose = onClose,

@@ -34,6 +34,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
 import com.nogirelay.app.UnreadTag
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -97,12 +99,12 @@ fun MessageCard(
     onPlayVoice: () -> Unit,
     onDownload: () -> Unit,
     onRetranslate: () -> Unit,
+    onToggleFavorite: () -> Unit,
     enabled: Boolean = true,
 ) {
     val canTranslate = remember(message.text, translationEnabled) {
         translationEnabled && TranslationManager.shouldTranslate(message.text)
     }
-    val hasActions = message.type != MessageType.TEXT || canTranslate
     var showActions by remember(message.id) { mutableStateOf(false) }
     LaunchedEffect(enabled) { if (!enabled) showActions = false }
     val body = remember(message.text, userNickname) {
@@ -159,40 +161,54 @@ fun MessageCard(
                 if (isUnread) UnreadTag("未读")
             }
         }
-        if (hasActions) {
-            Box {
-                IconButton(onClick = { showActions = true }, enabled = enabled, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        Icons.Rounded.MoreHoriz,
-                        contentDescription = "更多消息操作",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp),
+        Box {
+            IconButton(onClick = { showActions = true }, enabled = enabled, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    Icons.Rounded.MoreHoriz,
+                    contentDescription = "更多消息操作",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            RelayGlassDropdownMenu(
+                expanded = showActions && enabled,
+                onDismissRequest = { showActions = false },
+            ) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (message.isFavorite) "取消收藏" else "添加到收藏夹",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            if (message.isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                            contentDescription = null,
+                            tint = BrandPurple,
+                        )
+                    },
+                    modifier = Modifier.clip(RelayControlShape),
+                    onClick = { showActions = false; onToggleFavorite() },
+                )
+                if (message.type != MessageType.TEXT) {
+                    DropdownMenuItem(
+                        text = { Text("保存到本地", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = null, tint = BrandPurple) },
+                        modifier = Modifier.clip(RelayControlShape),
+                        onClick = { showActions = false; onDownload() },
                     )
                 }
-                RelayGlassDropdownMenu(
-                    expanded = showActions && enabled,
-                    onDismissRequest = { showActions = false },
-                ) {
-                    if (message.type != MessageType.TEXT) {
-                        DropdownMenuItem(
-                            text = { Text("保存到本地", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = { Icon(Icons.Rounded.Download, contentDescription = null, tint = BrandPurple) },
-                            modifier = Modifier.clip(RelayControlShape),
-                            onClick = { showActions = false; onDownload() },
-                        )
-                    }
-                    if (canTranslate) {
-                        DropdownMenuItem(
-                            text = { Text("重新翻译", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = { AiTranslateIcon(tint = BrandPurple, size = 22.dp, contentDescription = null) },
-                            modifier = Modifier.clip(RelayControlShape),
-                            onClick = { showActions = false; onRetranslate() },
-                        )
-                    }
+                if (canTranslate) {
+                    DropdownMenuItem(
+                        text = { Text("重新翻译", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = { AiTranslateIcon(tint = BrandPurple, size = 22.dp, contentDescription = null) },
+                        modifier = Modifier.clip(RelayControlShape),
+                        onClick = { showActions = false; onRetranslate() },
+                    )
                 }
             }
-        } else {
-            Spacer(Modifier.width(24.dp))
         }
     }
 }
@@ -239,10 +255,9 @@ private fun MessageTextContent(body: String?, translation: String?, query: Strin
 @Composable
 private fun MessageMediaPreview(message: RelayMessage, enabled: Boolean, onOpenMedia: () -> Unit) {
     val context = LocalContext.current
-    val videoHasAudioTrack by produceState<Boolean?>(null, message.id, message.mediaUrl) {
-        if (message.type == MessageType.VIDEO) {
-            value = withContext(Dispatchers.IO) { MediaDownloader.cachedVideoHasAudioTrack(context, message) }
-        }
+    // 静音状态只检测一次并写回数据库，后续预览直接读库。
+    val videoHasAudioTrack by produceState<Boolean?>(message.videoHasAudio, message.id, message.mediaUrl) {
+        value = MediaDownloader.resolveVideoHasAudio(context, message)
     }
     Box(
         Modifier.fillMaxWidth()
@@ -261,6 +276,7 @@ private fun MessageMediaPreview(message: RelayMessage, enabled: Boolean, onOpenM
             placeholderColor = Color.Transparent,
         )
         if (message.type == MessageType.VIDEO) {
+            // 静音状态已持久化，首帧就能确定，直接绘制即可。
             if (videoHasAudioTrack == false) {
                 Box(
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp).size(32.dp)

@@ -34,6 +34,9 @@ data class RelayMessage(
     val translation: String? = null,
     val translationDone: Boolean = false,
     val isUnread: Boolean = false,
+    val isFavorite: Boolean = false,
+    /** 视频是否带音轨；下载后检测一次就写回库，null 表示尚未知。 */
+    val videoHasAudio: Boolean? = null,
 ) {
     val memberKey: String
         get() = memberId.ifBlank { memberName }
