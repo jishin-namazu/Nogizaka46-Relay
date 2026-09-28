@@ -1,12 +1,11 @@
 package com.nogirelay.app.ui
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.Drawable
-import android.content.Context
-import android.net.Uri
 import android.os.Build
 import android.util.LruCache
 import android.view.ViewGroup
@@ -14,36 +13,43 @@ import android.widget.ImageView
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.painterResource
-import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.Icon
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.net.toUri
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.HttpNotFoundException
 import com.nogirelay.app.media.MediaDownloader
-import kotlinx.coroutines.withContext
+import com.nogirelay.app.performance.ImageMemoryStore
+import com.nogirelay.app.performance.LocalRelayPageActive
+import com.nogirelay.app.performance.imageSampleSize
+import com.nogirelay.app.performance.isRelayUiStarted
 import java.io.File
 import java.io.FileInputStream
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 
 private sealed interface ImageLoadResult {
     data class Static(val bitmap: Bitmap) : ImageLoadResult
@@ -86,24 +92,20 @@ object RemoteImageMemoryCache {
     private val limitKb = (Runtime.getRuntime().maxMemory() / 8 / 1024)
         .coerceIn(24L * 1024L, 64L * 1024L)
         .toInt()
-    private val cache = object : LruCache<String, Bitmap>(limitKb) {
-        override fun sizeOf(key: String, value: Bitmap): Int =
-            (value.allocationByteCount / 1024).coerceAtLeast(1)
-    }
-    // 使用 URL 的快速路径回退：保留最近的位图，使过渡时不会出现空白帧
-    private val urlFallback = LruCache<String, Bitmap>(64)
+    private val cache = ImageMemoryStore<Bitmap>(limitKb * 1024L) { it.allocationByteCount.toLong() }
 
     @Synchronized
     fun get(key: String): Bitmap? = cache.get(key)
 
     @Synchronized
-    fun getForUrl(url: String): Bitmap? = urlFallback.get(url)
+    fun getForUrl(url: String): Bitmap? = cache.getForUrl(url)
 
     @Synchronized
     fun put(key: String, url: String, bitmap: Bitmap) {
-        cache.put(key, bitmap)
-        urlFallback.put(url, bitmap)
+        cache.put(key, url, bitmap)
     }
+
+    fun trim(clear: Boolean) = cache.trimTo(if (clear) 0 else limitKb * 512L)
 }
 
 /**
@@ -130,11 +132,13 @@ fun RemoteImage(
     maxDecodeDimension: Int? = null,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val displayMetrics = context.resources.displayMetrics
-    val screenMaxDimension = maxOf(displayMetrics.widthPixels, displayMetrics.heightPixels)
-    val decodeDimension = maxDecodeDimension ?: screenMaxDimension
-    val bucketedDimension = ((decodeDimension + SIZE_BUCKET_PX - 1) / SIZE_BUCKET_PX) * SIZE_BUCKET_PX
-    val cacheKey = "$bucketedDimension@$contentScale@$url"
+    val active = LocalRelayPageActive.current && isRelayUiStarted() &&
+        !com.nogirelay.app.performance.LocalRelayPageWorkPaused.current
+    var measuredSize by remember(url) { mutableStateOf(IntSize.Zero) }
+    fun bucket(value: Int) = if (value <= 0) 0 else ((value + SIZE_BUCKET_PX - 1) / SIZE_BUCKET_PX) * SIZE_BUCKET_PX
+    val targetWidth = bucket(maxDecodeDimension ?: measuredSize.width)
+    val targetHeight = if (preserveAspectRatio) 0 else bucket(maxDecodeDimension ?: measuredSize.height)
+    val cacheKey = "${targetWidth}x$targetHeight@$contentScale@$url"
 
     var retryCount by remember(url) { mutableIntStateOf(0) }
     var isNotFound by remember(url) { mutableStateOf(MediaDownloader.isNotFound(context, url)) }
@@ -148,12 +152,15 @@ fun RemoteImage(
     }
     var animated by remember(cacheKey) { mutableStateOf<ImageLoadResult.Animated?>(null) }
 
-    LaunchedEffect(cacheKey, loadCachedImmediately, retryCount) {
+    LaunchedEffect(cacheKey, active, retryCount) {
+        if (!active || targetWidth <= 0) return@LaunchedEffect
         if (url != null && (isNotFound || MediaDownloader.isNotFound(context, url))) {
             isNotFound = true
             isError = false
             return@LaunchedEffect
         }
+        // The retained drawable resumes in AndroidView; returning to a tab needs no decode.
+        if (animated != null) return@LaunchedEffect
         val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
         if (exactCached != null) {
             animated = null
@@ -166,7 +173,7 @@ fun RemoteImage(
         } else {
             url?.let { value ->
                 isError = false
-                when (val result = loadImage(context, value, messageType, message, bucketedDimension)) {
+                when (val result = loadImage(context, value, messageType, message, targetWidth, targetHeight)) {
                     is ImageLoadResult.Static -> {
                         val loaded = result.bitmap
                         animated = null
@@ -227,7 +234,7 @@ fun RemoteImage(
     }
 
     Box(
-        finalModifier,
+        finalModifier.onSizeChanged { measuredSize = it },
         contentAlignment = Alignment.Center,
     ) {
         val animatedImage = animated
@@ -237,6 +244,7 @@ fun RemoteImage(
                 drawable = animatedImage.drawable,
                 contentDescription = contentDescription,
                 contentScale = contentScale,
+                active = active,
                 modifier = Modifier.fillMaxSize(),
             )
         } else if (image != null) {
@@ -273,6 +281,7 @@ private fun AnimatedRemoteImage(
     drawable: Drawable,
     contentDescription: String?,
     contentScale: ContentScale,
+    active: Boolean,
     modifier: Modifier = Modifier,
 ) {
     AndroidView(
@@ -292,9 +301,18 @@ private fun AnimatedRemoteImage(
                 ImageView.ScaleType.FIT_CENTER
             }
             if (view.drawable !== drawable) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    (view.drawable as? AnimatedImageDrawable)?.stop()
+                }
                 view.setImageDrawable(drawable)
-                (drawable as? AnimatedImageDrawable)?.start()
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                (drawable as? AnimatedImageDrawable)?.let { if (active) it.start() else it.stop() }
+            }
+        },
+        onRelease = { view ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) (view.drawable as? AnimatedImageDrawable)?.stop()
+            view.setImageDrawable(null)
         },
         modifier = modifier,
     )
@@ -305,8 +323,9 @@ private suspend fun loadImage(
     url: String,
     messageType: MessageType = MessageType.IMAGE,
     message: RelayMessage? = null,
-    maxDecodeDimension: Int = FALLBACK_DECODE_DIMENSION,
-): ImageLoadResult = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
+    targetWidth: Int = FALLBACK_DECODE_DIMENSION,
+    targetHeight: Int = FALLBACK_DECODE_DIMENSION,
+): ImageLoadResult = withContext(com.nogirelay.app.data.AppGraph.dispatchers.network) {
     if (MediaDownloader.isNotFound(context, url)) {
         return@withContext ImageLoadResult.NotFound
     }
@@ -315,7 +334,9 @@ private suspend fun loadImage(
             val thumbFile = MediaDownloader.cachedVideoThumbnail(context, message)
                 ?: MediaDownloader.generateVideoThumbnail(context, message)
             if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
-                val bmp = decodeSampled(thumbFile, maxDecodeDimension)
+                val bmp = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
+                    decodeSampled(thumbFile, targetWidth, targetHeight)
+                }
                 return@withContext if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
             }
             val explicitThumb = message.thumbnailUrl?.takeIf { it.isNotBlank() }
@@ -325,27 +346,38 @@ private suspend fun loadImage(
                 }
                 val cached = MediaDownloader.cachedFileForUrl(context, explicitThumb, MessageType.IMAGE)
                 val file = cached ?: MediaDownloader.downloadUrl(context, explicitThumb, MessageType.IMAGE)
-                val bmp = decodeSampled(file, maxDecodeDimension)
+                val bmp = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
+                    decodeSampled(file, targetWidth, targetHeight)
+                }
                 return@withContext if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
             }
             return@withContext ImageLoadResult.Error
         }
 
-        val uri = Uri.parse(url)
+        val uri = url.toUri()
         if (uri.scheme in setOf("android.resource", "content", "file")) {
             if (uri.scheme == "file") {
                 val file = uri.path?.takeIf { it.isNotBlank() }?.let(::File)
-                if (file != null && file.exists()) return@withContext decodeFileResult(file, maxDecodeDimension)
+                if (file != null && file.exists()) return@withContext decodeFileResult(file, targetWidth, targetHeight)
             }
-            val bmp = context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+            val bmp = withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                val options = BitmapFactory.Options().apply {
+                    inSampleSize = imageSampleSize(bounds.outWidth, bounds.outHeight, targetWidth, targetHeight)
+                }
+                context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            }
             if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
         } else if (uri.scheme?.lowercase() in setOf("https", "http")) {
             val cached = MediaDownloader.cachedFileForUrl(context, url, messageType)
             val file = cached ?: MediaDownloader.downloadUrl(context, url, messageType)
-            decodeFileResult(file, maxDecodeDimension)
+            decodeFileResult(file, targetWidth, targetHeight)
         } else {
             ImageLoadResult.Error
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: HttpNotFoundException) {
         ImageLoadResult.NotFound
     } catch (e: Throwable) {
@@ -357,19 +389,20 @@ private suspend fun loadImage(
  * 磁盘上已经是本地的文件在这里分流：GIF 动图交给 ImageDecoder（API 28+，动图 / 动图 WebP 都能播），
  * 其余仍走采样解码，避免大图一次性吃满内存。API 26/27 没有 ImageDecoder，退回第一帧的静态图。
  */
-private fun decodeFileResult(file: File, maxDecodeDimension: Int): ImageLoadResult {
+private suspend fun decodeFileResult(file: File, targetWidth: Int, targetHeight: Int): ImageLoadResult =
+    withContext(com.nogirelay.app.data.AppGraph.dispatchers.imageDecode) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && looksLikeGif(file)) {
-        val drawable = decodeAnimatedDrawable(file)
+        val drawable = decodeAnimatedDrawable(file, targetWidth, targetHeight)
         if (drawable != null) {
-            return ImageLoadResult.Animated(
+            return@withContext ImageLoadResult.Animated(
                 drawable = drawable,
                 width = drawable.intrinsicWidth,
                 height = drawable.intrinsicHeight,
             )
         }
     }
-    val bmp = decodeSampled(file, maxDecodeDimension)
-    return if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
+    val bmp = decodeSampled(file, targetWidth, targetHeight)
+    if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
 }
 
 private fun looksLikeGif(file: File): Boolean {
@@ -383,25 +416,19 @@ private fun looksLikeGif(file: File): Boolean {
 }
 
 @RequiresApi(Build.VERSION_CODES.P)
-private fun decodeAnimatedDrawable(file: File): Drawable? = try {
-    ImageDecoder.decodeDrawable(ImageDecoder.createSource(file))
+private fun decodeAnimatedDrawable(file: File, targetWidth: Int, targetHeight: Int): Drawable? = try {
+    ImageDecoder.decodeDrawable(ImageDecoder.createSource(file)) { decoder, info, _ ->
+        decoder.setTargetSampleSize(imageSampleSize(info.size.width, info.size.height, targetWidth, targetHeight))
+    }
 } catch (error: Throwable) {
     null
 }
 
-private fun decodeSampled(file: java.io.File, maxDecodeDimension: Int): Bitmap? {
+private fun decodeSampled(file: java.io.File, targetWidth: Int, targetHeight: Int): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(file.absolutePath, bounds)
     val options = BitmapFactory.Options().apply {
-        inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, maxDecodeDimension)
+        inSampleSize = imageSampleSize(bounds.outWidth, bounds.outHeight, targetWidth, targetHeight)
     }
     return BitmapFactory.decodeFile(file.absolutePath, options)
-}
-
-private fun sampleSize(width: Int, height: Int, maxDimension: Int): Int {
-    var sample = 1
-    while (width / (sample * 2) >= maxDimension || height / (sample * 2) >= maxDimension) {
-        sample *= 2
-    }
-    return sample
 }

@@ -19,7 +19,7 @@ class RefreshRateController(context: Context) : DisplayManager.DisplayListener {
     fun apply(activity: Activity) {
         resumedActivity = WeakReference(activity)
         val requestedPolicy = (activity as? RefreshRatePolicyOwner)?.refreshRatePolicy()
-            ?: RefreshRatePolicy.Maximum
+            ?: RefreshRatePolicy.FollowSystem
         apply(activity, if (powerManager.isPowerSaveMode) RefreshRatePolicy.FollowSystem else requestedPolicy)
     }
 

@@ -3,21 +3,19 @@ package com.nogirelay.app
 import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import com.nogirelay.app.blog.BlogNotifier
-import com.nogirelay.app.blog.BlogPrewarmer
-import com.nogirelay.app.data.BlogReadTracker
-import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.call.IncomingCallActivity
 import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.call.OfficialProximityScreenControl
 import com.nogirelay.app.call.ProximityScreenControl
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.MediaRefIndex
 import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.MessageType
@@ -27,15 +25,15 @@ import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.notification.NotificationChannels
 import com.nogirelay.app.push.PushRegistrar
+import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.navigation.RelayApp
-import kotlinx.coroutines.Dispatchers
+import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.time.Instant
 
 class MainActivity : ComponentActivity() {
     private val syncRequests = MutableStateFlow(0L)
@@ -59,7 +57,9 @@ class MainActivity : ComponentActivity() {
             )
         }
         NotificationChannels.create(this)
-        AppGraph.database.deleteTestMessages().forEach { IncomingCallNotifier.cancel(this, it) }
+        lifecycleScope.launch(AppGraph.dispatchers.databaseWrite) {
+            AppGraph.database.deleteTestMessages().forEach { IncomingCallNotifier.cancel(this@MainActivity, it) }
+        }
         if (AppGraph.settings.read().relayUrl.isNotBlank()) {
             PushRegistrar.registerCurrentToken(this)
         }
@@ -68,14 +68,13 @@ class MainActivity : ComponentActivity() {
         BlogTranslationManager.enqueuePending(this)
         // 媒体引用表未建或解析版本变化时，在后台重建。
         MediaRefIndex.ensureBuilt(AppGraph.database)
-        lifecycleScope.launch(Dispatchers.IO) {
-            runCatching { BlogPrewarmer.prewarm() }
-        }
-        
+
         proximityControl = OfficialProximityScreenControl(this)
         audioManager = getSystemService(AudioManager::class.java)
-        window.statusBarColor = android.graphics.Color.WHITE
-        window.navigationBarColor = android.graphics.Color.WHITE
+        // Draw Compose backgrounds behind both system bars so the home backdrop can transition
+        // through the status bar while its scroll content moves.
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        setTransparentSystemBarColors()
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true
@@ -105,9 +104,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun setTransparentSystemBarColors() {
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+    }
+
     override fun onStart() {
         super.onStart()
-        AppGraph.notifyDataChanged()
+        AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.CONTENT)
         syncRequests.update { it + 1 }
     }
 
@@ -115,7 +120,6 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         MessageReadTracker.setAppVisible(true)
         BlogReadTracker.setAppVisible(true)
-        AppGraph.notifyDataChanged()
     }
 
     override fun onPause() {
@@ -174,10 +178,10 @@ class MainActivity : ComponentActivity() {
             memberId = "test",
             memberName = "池田 瑛紗",
             memberAvatarUrl = null,
-            phoneImageUrl = Uri.parse("android.resource://$packageName/${R.drawable.ikeda_teresa_phone_image}").toString(),
+            phoneImageUrl = "android.resource://$packageName/${R.drawable.ikeda_teresa_phone_image}".toUri().toString(),
             type = MessageType.AUDIO,
             text = "全屏来电测试",
-            mediaUrl = Uri.parse("android.resource://$packageName/${R.raw.test_voice}").toString(),
+            mediaUrl = "android.resource://$packageName/${R.raw.test_voice}".toUri().toString(),
             thumbnailUrl = null,
             durationSeconds = null,
             sentAt = Instant.now().toString(),

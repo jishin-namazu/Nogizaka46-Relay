@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.os.CancellationSignal
 import com.nogirelay.app.blog.BlogContentParser
 
 /**
@@ -275,10 +276,12 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         limit: Int = 20,
         offset: Int = 0,
         nickname: String = "",
+        cancellationSignal: CancellationSignal? = null,
     ): List<RelayMessage> {
         val result = mutableListOf<RelayMessage>()
         val filter = memberFilter(memberKey, searchQuery, startMillis, endMillisExclusive, nickname)
         readableDatabase.query(
+            false,
             "messages",
             null,
             filter.selection,
@@ -287,6 +290,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             null,
             MEMBER_MESSAGE_ORDER,
             "${limit.coerceIn(1, 100)} OFFSET ${offset.coerceAtLeast(0)}",
+            cancellationSignal,
         ).use { cursor ->
             while (cursor.moveToNext()) result += cursor.toMessage()
         }
@@ -300,24 +304,55 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         startMillis: Long? = null,
         endMillisExclusive: Long? = null,
         nickname: String = "",
+        cancellationSignal: CancellationSignal? = null,
     ): Int {
         val filter = memberFilter(memberKey, searchQuery, startMillis, endMillisExclusive, nickname)
-        readableDatabase.query(
-            "messages",
-            arrayOf("id"),
-            filter.selection,
-            filter.arguments,
-            null,
-            null,
-            MEMBER_MESSAGE_ORDER,
-        ).use { cursor ->
-            var index = 0
-            while (cursor.moveToNext()) {
-                if (cursor.getString(0) == messageId) return index
-                index += 1
-            }
+        val args = filter.arguments
+        // SQLite counts with the same indexed ordering; no cursor walks through old IDs.
+        val exists = readableDatabase.rawQuery(
+            "SELECT 1 FROM messages WHERE ${filter.selection} AND id = ? LIMIT 1",
+            args + messageId, cancellationSignal,
+        ).use { it.moveToFirst() }
+        if (!exists) return -1
+        return readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM messages WHERE ${filter.selection} AND " +
+                "(sent_at, received_at, id) > (SELECT sent_at, received_at, id FROM messages WHERE id = ?)",
+            args + messageId, cancellationSignal,
+        ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
+    }
+
+    fun memberMessagesByIds(
+        memberKey: String, ids: Set<String>, searchQuery: String = "",
+        startMillis: Long? = null, endMillisExclusive: Long? = null, nickname: String = "",
+        cancellationSignal: CancellationSignal? = null,
+    ): List<RelayMessage> {
+        if (ids.isEmpty()) return emptyList()
+        val filter = memberFilter(memberKey, searchQuery, startMillis, endMillisExclusive, nickname)
+        return ids.chunked(200).flatMap { batch ->
+            readableDatabase.rawQuery(
+                "SELECT * FROM messages WHERE ${filter.selection} AND id IN (${batch.joinToString(",") { "?" }}) ORDER BY $MEMBER_MESSAGE_ORDER",
+                filter.arguments + batch, cancellationSignal,
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) } }
         }
-        return -1
+    }
+
+    /** Fetch the nearest neighbors of a stable ID; newer rows are reversed back to DESC. */
+    fun memberMessagesRelativeTo(
+        memberKey: String, anchorId: String, newer: Boolean, limit: Int,
+        searchQuery: String = "", startMillis: Long? = null, endMillisExclusive: Long? = null,
+        nickname: String = "", cancellationSignal: CancellationSignal? = null,
+    ): List<RelayMessage> {
+        if (limit <= 0) return emptyList()
+        val filter = memberFilter(memberKey, searchQuery, startMillis, endMillisExclusive, nickname)
+        val operator = if (newer) ">" else "<"
+        val order = if (newer) "sent_at ASC, received_at ASC, id ASC" else MEMBER_MESSAGE_ORDER
+        val result = readableDatabase.rawQuery(
+            "SELECT * FROM messages WHERE ${filter.selection} AND " +
+                "(sent_at, received_at, id) $operator (SELECT sent_at, received_at, id FROM messages WHERE id = ?) " +
+                "ORDER BY $order LIMIT ${limit.coerceIn(1, 100)}",
+            filter.arguments + anchorId, cancellationSignal,
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toMessage()) } }
+        return if (newer) result.reversed() else result
     }
 
     fun countMessagesForMember(
@@ -326,9 +361,11 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         startMillis: Long? = null,
         endMillisExclusive: Long? = null,
         nickname: String = "",
+        cancellationSignal: CancellationSignal? = null,
     ): Int {
         val filter = memberFilter(memberKey, searchQuery, startMillis, endMillisExclusive, nickname)
         readableDatabase.query(
+            false,
             "messages",
             arrayOf("COUNT(*)"),
             filter.selection,
@@ -336,6 +373,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             null,
             null,
             null,
+            null,
+            cancellationSignal,
         ).use { cursor -> return if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
     }
 
@@ -433,6 +472,19 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             writableDatabase.delete("messages", "id GLOB ?", arrayOf(TEST_MESSAGE_GLOB))
         }
         return ids
+    }
+
+    fun pendingTranslationIds(blogs: Boolean, afterId: String? = null, limit: Int = 24): List<String> {
+        val table = if (blogs) "blog_posts" else "messages"
+        val textColumn = if (blogs) "body_html" else "text_content"
+        val selection = "translation_done = 0 AND $textColumn IS NOT NULL AND TRIM($textColumn) <> ''" +
+            (if (blogs) "" else " AND id NOT GLOB ?") + (if (afterId != null) " AND id > ?" else "")
+        val args = buildList {
+            if (!blogs) add(TEST_MESSAGE_GLOB)
+            if (afterId != null) add(afterId)
+        }.toTypedArray()
+        return readableDatabase.query(table, arrayOf("id"), selection, args, null, null, "id ASC", limit.coerceIn(1, 100).toString())
+            .use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
     }
 
     fun pendingTranslations(limit: Int = 100): List<RelayMessage> {
@@ -1126,10 +1178,12 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         endMillisExclusive: Long? = null,
         limit: Int = 20,
         offset: Int = 0,
+        cancellationSignal: CancellationSignal? = null,
     ): List<BlogSummary> {
         val result = mutableListOf<BlogSummary>()
         val filter = blogFilter(memberIds, searchQuery, startMillis, endMillisExclusive)
         readableDatabase.query(
+            false,
             "blog_posts",
             arrayOf("id", "member_id", "member_name", "member_avatar_url", "title", "image_url", "published_at", "is_unread", "translation"),
             filter.selection,
@@ -1138,6 +1192,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             null,
             if (oldestFirst) "published_at ASC, id ASC" else "published_at DESC, id DESC",
             "${limit.coerceIn(1, 100)} OFFSET ${offset.coerceAtLeast(0)}",
+            cancellationSignal,
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 result += BlogSummary(
@@ -1165,9 +1220,11 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         searchQuery: String = "",
         startMillis: Long? = null,
         endMillisExclusive: Long? = null,
+        cancellationSignal: CancellationSignal? = null,
     ): Int {
         val filter = blogFilter(memberIds, searchQuery, startMillis, endMillisExclusive)
         return readableDatabase.query(
+            false,
             "blog_posts",
             arrayOf("COUNT(*)"),
             filter.selection,
@@ -1175,6 +1232,8 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             null,
             null,
             null,
+            null,
+            cancellationSignal,
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
     }
 
@@ -1585,9 +1644,9 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         val clauses = mutableListOf(
             "id NOT GLOB ?",
             "(text_content IS NOT NULL OR media_url IS NOT NULL)",
-            "((TRIM(member_id) <> '' AND member_id = ?) OR (TRIM(member_id) = '' AND member_name = ?))",
+            "(CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END) = ?",
         )
-        val arguments = mutableListOf(TEST_MESSAGE_GLOB, memberKey, memberKey)
+        val arguments = mutableListOf(TEST_MESSAGE_GLOB, memberKey)
         val query = searchQuery.trim()
         if (query.isNotEmpty()) {
             // 库里存的是「%%%」昵称占位符，所以搜索用户自己的昵称也要匹配占位符形式。

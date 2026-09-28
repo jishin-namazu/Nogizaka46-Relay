@@ -1,6 +1,5 @@
 package com.nogirelay.app.ui.transfer
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,7 +26,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,7 +36,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nogirelay.app.GraduatedTag
@@ -46,8 +46,11 @@ import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogMemberCategories
 import com.nogirelay.app.ui.BrandPurple
 import com.nogirelay.app.ui.BrandPurpleDark
-import com.nogirelay.app.ui.BrandPurpleLight
 import com.nogirelay.app.ui.RemoteImage
+import com.nogirelay.app.ui.LocalRelayMirrorStyle
+import com.nogirelay.app.ui.RelayHomeCardShape
+import com.nogirelay.app.ui.RelaySelectionSurface
+import com.nogirelay.app.ui.RelayDialogButton
 
 /**
  * BLOG 筛选器和两个数据传输成员选择器共用的固定分类顺序。
@@ -79,6 +82,7 @@ fun MemberPickerGrid(
     modifier: Modifier = Modifier,
 ) {
     val groups = remember(members) { memberGroups(members) }
+    val mirrorStyle = LocalRelayMirrorStyle.current
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 104.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -96,27 +100,18 @@ fun MemberPickerGrid(
             }
             gridItems(groupMembers, key = BlogMember::id) { member ->
                 val isSelected = member.id in selectedIds
-                Surface(
+                RelaySelectionSurface(
                     onClick = {
                         onSelectedChange(
                             if (isSelected) selectedIds - member.id else selectedIds + member.id,
                         )
                     },
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isSelected) {
-                        BrandPurpleLight
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    },
-                    border = if (isSelected) {
-                        BorderStroke(1.5.dp, BrandPurple)
-                    } else {
-                        BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    },
+                    selected = isSelected,
+                    emphasizeEdges = mirrorStyle,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(94.dp),
-                ) {
+                ) { selectionProgress ->
                     Box(Modifier.fillMaxSize()) {
                         // 卒業标记只出现在成员卡片的右上角：其余位置（博客列表、首页轮播）不再显示。
                         if (member.graduated) {
@@ -137,20 +132,19 @@ fun MemberPickerGrid(
                                 modifier = Modifier
                                     .size(46.dp)
                                     .clip(CircleShape)
-                                    .then(
-                                        if (isSelected) {
-                                            Modifier.border(1.5.dp, BrandPurple, CircleShape)
-                                        } else {
-                                            Modifier
-                                        }
+                                    .border(
+                                        1.5.dp,
+                                        BrandPurple.copy(alpha = selectionProgress),
+                                        CircleShape,
                                     ),
                             )
                             Text(
                                 member.name,
                                 maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) BrandPurpleDark else MaterialTheme.colorScheme.onSurface,
+                                fontWeight = if (mirrorStyle) FontWeight.Medium else if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = lerp(MaterialTheme.colorScheme.onSurface, BrandPurpleDark, selectionProgress),
                                 modifier = Modifier.padding(top = 5.dp),
                             )
                         }
@@ -174,9 +168,10 @@ fun TransferMemberPickerDialog(
     onConfirm: (Set<String>) -> Unit,
 ) {
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
+    val allMemberIds = remember(members) { members.mapTo(linkedSetOf(), BlogMember::id) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
+        shape = if (LocalRelayMirrorStyle.current) RelayHomeCardShape else RoundedCornerShape(20.dp),
         title = { Text(title, fontWeight = FontWeight.Bold) },
         text = {
             if (members.isEmpty()) {
@@ -199,30 +194,65 @@ fun TransferMemberPickerDialog(
             }
         },
         confirmButton = {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                IconButton(
-                    onClick = { draft = members.mapTo(linkedSetOf(), BlogMember::id) },
-                    enabled = members.isNotEmpty(),
-                ) {
-                    Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
-                }
-                IconButton(
-                    onClick = { draft = emptySet() },
-                    enabled = draft.isNotEmpty(),
-                ) {
-                    Icon(
-                        Icons.Rounded.ClearAll,
-                        contentDescription = "全部清除",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (LocalRelayMirrorStyle.current) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        RelayDialogButton(
+                            onClick = { draft = allMemberIds },
+                            enabled = members.isNotEmpty(),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Rounded.DoneAll, contentDescription = "全选", modifier = Modifier.size(22.dp))
+                        }
+                        RelayDialogButton(
+                            onClick = { draft = emptySet() },
+                            enabled = draft.isNotEmpty(),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Rounded.ClearAll, contentDescription = "全不选", modifier = Modifier.size(22.dp))
+                        }
+                    }
+                    Text(
+                        "已选 ${draft.size} 位",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        RelayDialogButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
+                        RelayDialogButton(
+                            onClick = { onConfirm(draft) },
+                            enabled = draft.isNotEmpty(),
+                            modifier = Modifier.weight(1f),
+                        ) { Text("确定", fontWeight = FontWeight.Bold) }
+                    }
                 }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = onDismiss) { Text("取消") }
-                TextButton(
-                    onClick = { onConfirm(draft) },
-                    enabled = draft.isNotEmpty(),
-                    colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
-                ) { Text("确定", fontWeight = FontWeight.Bold) }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    IconButton(
+                        onClick = { draft = members.mapTo(linkedSetOf(), BlogMember::id) },
+                        enabled = members.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
+                    }
+                    IconButton(
+                        onClick = { draft = emptySet() },
+                        enabled = draft.isNotEmpty(),
+                    ) {
+                        Icon(
+                            Icons.Rounded.ClearAll,
+                            contentDescription = "全部清除",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                    TextButton(
+                        onClick = { onConfirm(draft) },
+                        enabled = draft.isNotEmpty(),
+                        colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+                    ) { Text("确定", fontWeight = FontWeight.Bold) }
+                }
             }
         },
         dismissButton = {},

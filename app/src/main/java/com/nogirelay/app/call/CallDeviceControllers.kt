@@ -38,7 +38,7 @@ internal class OfficialProximityScreenControl(context: Context) : ProximityScree
 
     override fun setEnabled(enabled: Boolean) {
         if (enabled && !wakeLock.isHeld) {
-            wakeLock.acquire()
+            wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS)
         } else if (!enabled && wakeLock.isHeld) {
             releaseWaitingForFarState()
         }
@@ -55,5 +55,6 @@ internal class OfficialProximityScreenControl(context: Context) : ProximityScree
     private companion object {
         const val WAKE_LOCK_TAG = "com.sonydna.messages.app:VoicePlayerWakeLock"
         const val RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY = 1
+        const val WAKE_LOCK_TIMEOUT_MS = 30L * 60L * 1000L
     }
 }

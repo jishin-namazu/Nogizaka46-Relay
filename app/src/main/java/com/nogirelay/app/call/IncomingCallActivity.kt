@@ -61,6 +61,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.nogirelay.app.R
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.IncomingCallStyle
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
@@ -129,7 +130,8 @@ class IncomingCallActivity : ComponentActivity() {
         audioManager = getSystemService(AudioManager::class.java)
         vibrationControl = OfficialIncomingCallVibrationControl(this)
         proximityControl = OfficialProximityScreenControl(this)
-        configureWindow()
+        val incomingCallStyle = AppGraph.settings.read().incomingCallStyle
+        configureWindow(incomingCallStyle)
 
         message = resolveMessage(intent) ?: run {
             finish()
@@ -146,21 +148,33 @@ class IncomingCallActivity : ComponentActivity() {
         }
 
         setContent {
-            NogiRelayTheme(darkTheme = false) {
+            NogiRelayTheme(darkTheme = incomingCallStyle == IncomingCallStyle.LIQUID_GLASS) {
                 val playbackState by VoicePlaybackService.playbackState.collectAsState()
                 LaunchedEffect(playbackState.isPlaying, speakerOn) {
                     updateProximityLock(playbackState)
                 }
                 BackHandler { decline() }
-                IncomingCallScreen(
-                    message = message,
-                    state = callState,
-                    speakerOn = speakerOn,
-                    playbackState = playbackState,
-                    onAnswer = ::answer,
-                    onDecline = ::decline,
-                    onToggleSpeaker = ::toggleSpeaker,
-                )
+                // 通知、自动接听和测试入口共用同一份已保存的风格偏好与通话控制。
+                when (incomingCallStyle) {
+                    IncomingCallStyle.CLASSIC -> IncomingCallScreen(
+                        message = message,
+                        state = callState,
+                        speakerOn = speakerOn,
+                        playbackState = playbackState,
+                        onAnswer = ::answer,
+                        onDecline = ::decline,
+                        onToggleSpeaker = ::toggleSpeaker,
+                    )
+                    IncomingCallStyle.LIQUID_GLASS -> LiquidGlassIncomingCallScreen(
+                        message = message,
+                        isRinging = callState == CallState.RINGING,
+                        speakerOn = speakerOn,
+                        playbackState = playbackState,
+                        onAnswer = ::answer,
+                        onDecline = ::decline,
+                        onToggleSpeaker = ::toggleSpeaker,
+                    )
+                }
             }
         }
     }
@@ -188,7 +202,7 @@ class IncomingCallActivity : ComponentActivity() {
         return AppGraph.database.find(messageId)
     }
 
-    private fun configureWindow() {
+    private fun configureWindow(style: IncomingCallStyle) {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -201,12 +215,24 @@ class IncomingCallActivity : ComponentActivity() {
             )
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.BLACK
+        setSystemBarColors(style)
         WindowCompat.getInsetsController(window, window.decorView).apply {
             show(WindowInsetsCompat.Type.systemBars())
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setSystemBarColors(style: IncomingCallStyle) {
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = if (style == IncomingCallStyle.LIQUID_GLASS) {
+            android.graphics.Color.TRANSPARENT
+        } else {
+            android.graphics.Color.BLACK
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && style == IncomingCallStyle.LIQUID_GLASS) {
+            window.isNavigationBarContrastEnforced = false
         }
     }
 

@@ -69,6 +69,7 @@ object PushRegistrar {
             delivery.deliver(result)
         }
 
+        @Suppress("DEPRECATION")
         val tokenTask = runCatching { FirebaseMessaging.getInstance().token }
         tokenTask.getOrElse { error ->
             finish(Result.failure(error))

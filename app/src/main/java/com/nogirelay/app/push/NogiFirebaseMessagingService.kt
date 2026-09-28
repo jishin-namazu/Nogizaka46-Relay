@@ -1,25 +1,25 @@
 package com.nogirelay.app.push
 
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.content.Intent
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import com.nogirelay.app.blog.BlogMediaDownloader
+import com.nogirelay.app.blog.BlogNotifier
 import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.call.IncomingCallPreparationService
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.BlogPost
+import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.notification.NotificationChannels
-import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.translation.BlogTranslationManager
-import com.nogirelay.app.blog.BlogNotifier
-import com.nogirelay.app.blog.BlogMediaDownloader
-import com.nogirelay.app.data.BlogPost
-import com.nogirelay.app.data.BlogReadTracker
+import com.nogirelay.app.translation.TranslationManager
 import org.json.JSONObject
 
 class NogiFirebaseMessagingService : FirebaseMessagingService() {
@@ -29,6 +29,7 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
         NotificationChannels.create(this)
     }
 
+    @Deprecated("Required FirebaseMessagingService callback")
     override fun onNewToken(token: String) {
         AppGraph.initialize(this)
         AppGraph.settings.savePushToken(token)
@@ -54,7 +55,7 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
             if (AppGraph.database.upsertBlog(previewBlog, isUnread = !BlogReadTracker.isViewing(previewBlog.id))) {
                 BlogNotifier.show(this, previewBlog)
             }
-            AppGraph.notifyDataChanged()
+            AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.BLOGS)
             fetchAndPrepareBlogInBackground(previewBlog)
             return
         }
@@ -65,7 +66,7 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
             isUnread = !MessageReadTracker.isViewing(message.memberKey),
         )
         if (!isNew) return
-        AppGraph.notifyDataChanged()
+        AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.MESSAGES)
 
         if (message.shouldRing) {
             startCallPreparation(message)

@@ -2,6 +2,7 @@ package com.nogirelay.app.data.transfer
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.net.toUri
 import com.nogirelay.app.blog.BlogContentParser
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
@@ -461,6 +462,7 @@ object DataImporter {
             temporary.copyTo(target, overwrite = true)
             temporary.delete()
         }
+        com.nogirelay.app.media.MediaCacheRevision.changed()
     }
 
     /**
@@ -497,7 +499,7 @@ object DataImporter {
     }
 
     private fun isOfficialCdnHost(url: String): Boolean {
-        val host = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull() ?: return false
+        val host = runCatching { url.toUri().host?.lowercase() }.getOrNull() ?: return false
         return host == "nogizaka46.com" || host.endsWith(".nogizaka46.com")
     }
 

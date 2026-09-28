@@ -3,6 +3,8 @@ package com.nogirelay.app.ui
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -15,6 +17,7 @@ import androidx.compose.ui.text.style.LineHeightStyle
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Brush
 
 val BrandPurple = Color(0xFF7A2A90)
 val BrandPurpleDark = Color(0xFF4E175F)
@@ -26,6 +29,21 @@ val SignalGreen = Color(0xFF14A46D)
 val SignalCoral = Color(0xFFDB4F61)
 val SignalCyan = Color(0xFF087E8B)
 
+/** A restrained, multihue backdrop lets translucent surfaces read as glass without changing layout. */
+val RelayLightBackdrop = Brush.linearGradient(
+    colors = listOf(
+        Color(0xFFF8F4FA),
+        Color(0xFFF2F8F8),
+        Color(0xFFF8F3F2),
+    ),
+)
+
+/** The outer navigation shell radius; home cards use the same silhouette. */
+val RelayNavigationBarShape = RoundedCornerShape(31.dp)
+val RelayNavigationSelectionShape = RoundedCornerShape(24.dp)
+val RelayHomeCardShape = RelayNavigationBarShape
+/** Keeps card content away from the large outer corner arc. */
+val RelayCardContentInset = 18.dp
 val NavigationTabIndicatorShape = RoundedCornerShape(12.dp)
 val RelayControlShape = RoundedCornerShape(14.dp)
 val RelayCardShape = RoundedCornerShape(18.dp)
@@ -91,6 +109,7 @@ private val DarkColors = darkColorScheme(
 )
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun NogiRelayTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
@@ -98,6 +117,8 @@ fun NogiRelayTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) 
     ) {
         CompositionLocalProvider(
             LocalTextStyle provides AppTypography.bodyMedium,
+            // Ripple is opt-in; the home glass controls use a spring press response.
+            LocalRippleConfiguration provides null,
             content = content,
         )
     }

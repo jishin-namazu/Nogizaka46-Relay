@@ -67,7 +67,6 @@ object DataTransferManager {
                 val report = DataExporter.export(appContext, request, outputUri) { phase, done, total ->
                     _state.value = _state.value.copy(phase = phase, done = done, total = total)
                 }
-                AppGraph.notifyDataChanged()
                 _state.value = TransferState(
                     kind = request.kind,
                     operation = TransferOperation.EXPORT,
@@ -92,7 +91,6 @@ object DataTransferManager {
                 val report = DataImporter.importArchive(appContext, sourceUri, options) { phase, done, total ->
                     _state.value = _state.value.copy(phase = phase, done = done, total = total)
                 }
-                AppGraph.notifyDataChanged()
                 _state.value = TransferState(
                     kind = report.kind,
                     operation = TransferOperation.IMPORT,
@@ -102,6 +100,9 @@ object DataTransferManager {
                 _state.value = TransferState()
             } catch (error: Throwable) {
                 _state.value = TransferState(error = error.message ?: "导入失败")
+            } finally {
+                // Import commits batches; cancellation can still have changed local data.
+                AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.CONTENT)
             }
         }
     }

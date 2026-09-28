@@ -8,8 +8,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -27,38 +25,30 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.ClearAll
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -135,6 +125,7 @@ fun TimeFilterSection(
     modifier: Modifier = Modifier,
 ) {
     val zone = remember { ZoneId.systemDefault() }
+    val rowHeight = if (LocalRelayMirrorStyle.current) 48.dp else FILTER_ROW_HEIGHT
     // 仅在对话框打开时初始化：清空两个日期必须保持自定义模式选中，
     // 而不是把这一行弹回「全部时间」。
     var preset by remember {
@@ -177,18 +168,18 @@ fun TimeFilterSection(
         stiffness = Spring.StiffnessMediumLow,
     )
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("时间", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // 每个项目都包在一个固定高度、居中对齐的槽位里，这样无论各组件内部添加多少
             // 触摸目标内边距，预设 chip 和图标按钮都能对齐。
             TimePreset.values()
                 .filter { it != TimePreset.CUSTOM }
                 .forEach { option ->
-                    Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.height(rowHeight), contentAlignment = Alignment.Center) {
                         TimePresetChip(
                             selected = preset == option,
                             label = presetLabel(option),
@@ -200,8 +191,8 @@ fun TimeFilterSection(
                     }
                 }
             val chipShape = RoundedCornerShape(10.dp)
-            Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
-                Surface(
+            Box(modifier = Modifier.height(rowHeight), contentAlignment = Alignment.Center) {
+                RelaySelectionSurface(
                     onClick = {
                         if (customSelected) {
                             // 再次点击：收回日期行，恢复进入自定义之前的选择状态。
@@ -215,25 +206,11 @@ fun TimeFilterSection(
                             preset = TimePreset.CUSTOM
                         }
                     },
-                    shape = chipShape,
-                    color = if (customSelected) {
-                        BrandPurpleLight
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    },
-                    contentColor = if (customSelected) {
-                        BrandPurpleDark
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    border = if (customSelected) {
-                        BorderStroke(1.5.dp, BrandPurple)
-                    } else {
-                        BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    },
+                    selected = customSelected,
+                    useNavigationStyle = true,
+                    legacyShape = chipShape,
                     modifier = Modifier
-                        .height(32.dp)
-                        .clip(chipShape),
+                        .height(if (LocalRelayMirrorStyle.current) 48.dp else 32.dp),
                 ) {
                     Box(
                         modifier = Modifier.fillMaxHeight().padding(horizontal = 10.dp),
@@ -261,20 +238,31 @@ fun TimeFilterSection(
                 animationSpec = customRowSpring,
             ) + fadeOut(animationSpec = tween(200)),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                modifier = Modifier.padding(bottom = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    // 与预设 chip 同为 32dp 高度，使两行的节奏一致。
-                    Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
+                    // Give both dates equal room on narrow screens and at larger font scales.
+                    Box(
+                        modifier = Modifier.height(rowHeight)
+                            .then(if (LocalRelayMirrorStyle.current) Modifier.weight(1f) else Modifier),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         RangeDateChip(
                             text = shownStartDay?.let(::formatDay) ?: "开始日期",
                             onClick = { picking = PickTarget.START },
                         )
                     }
                     Text("至", fontSize = 12.sp)
-                    Box(modifier = Modifier.height(FILTER_ROW_HEIGHT), contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier.height(rowHeight)
+                            .then(if (LocalRelayMirrorStyle.current) Modifier.weight(1f) else Modifier),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         RangeDateChip(
                             text = shownEndDay?.let(::formatDay) ?: "结束日期",
                             onClick = { picking = PickTarget.END },
@@ -325,63 +313,43 @@ private fun TimePresetChip(
     label: String,
     onClick: () -> Unit,
 ) {
-    val chipShape = RoundedCornerShape(10.dp)
-    Surface(
+    RelaySelectionSurface(
         onClick = onClick,
-        shape = chipShape,
-        color = if (selected) {
-            BrandPurpleLight
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        },
-        contentColor = if (selected) {
-            BrandPurpleDark
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        border = if (selected) {
-            BorderStroke(1.5.dp, BrandPurple)
-        } else {
-            BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        },
-        modifier = Modifier
-            .height(32.dp)
-            .clip(chipShape),
+        selected = selected,
+        useNavigationStyle = true,
+        legacyShape = RoundedCornerShape(10.dp),
+        modifier = Modifier.height(if (LocalRelayMirrorStyle.current) 48.dp else 32.dp),
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxHeight().padding(horizontal = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = label,
                 fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 }
 
-/** 自定义范围的日期字段，使用与预设 chip 相同的 10dp / 32dp 形状。 */
 @Composable
 private fun RangeDateChip(text: String, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(10.dp)
-    Surface(
+    RelaySelectionSurface(
         onClick = onClick,
-        shape = shape,
-        color = BrandPurpleLight,
-        contentColor = BrandPurpleDark,
-        border = BorderStroke(1.5.dp, BrandPurple),
-        modifier = Modifier
-            .height(32.dp)
-            .clip(shape),
+        selected = true,
+        useNavigationStyle = true,
+        legacyShape = RoundedCornerShape(10.dp),
+        modifier = Modifier.height(if (LocalRelayMirrorStyle.current) 48.dp else 32.dp)
+            .then(if (LocalRelayMirrorStyle.current) Modifier.fillMaxWidth() else Modifier),
     ) {
         Box(
             modifier = Modifier.fillMaxHeight().padding(horizontal = 12.dp),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(text, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -394,64 +362,68 @@ private fun RangeDateChip(text: String, onClick: () -> Unit) {
 @Composable
 fun TimeFilterDialog(
     filter: TimeFilter,
+    backdropState: RelaySheetBackdropState,
     onDismiss: () -> Unit,
     onConfirm: (TimeFilter) -> Unit,
 ) {
     var draft by remember(filter) { mutableStateOf(filter) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
-
-    // 先播放抽屉收起动画，再从组合里移除，避免直接消失。
-    fun closeSheet(after: () -> Unit) {
-        scope.launch {
-            sheetState.hide()
-            after()
-        }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = { closeSheet(onDismiss) },
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-    ) {
+    RelayModalBottomSheet(
+        onDismissRequest = onDismiss,
+        backdropState = backdropState,
+    ) { dismiss ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
-            Text(
-                text = "消息时间筛选",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "消息时间筛选",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                RelayDialogIconButton(
+                    onClick = { dismiss(onDismiss) },
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "关闭时间筛选",
+                )
+            }
             Spacer(Modifier.height(14.dp))
-            TimeFilterSection(
-                filter = draft,
-                onFilterChange = { draft = it },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (LocalRelayMirrorStyle.current) {
+                RelayDialogCard {
+                    TimeFilterSection(
+                        filter = draft,
+                        onFilterChange = { draft = it },
+                        modifier = Modifier.fillMaxWidth().padding(RelayCardContentInset),
+                    )
+                }
+            } else {
+                TimeFilterSection(filter = draft, onFilterChange = { draft = it }, modifier = Modifier.fillMaxWidth())
+            }
             Spacer(Modifier.height(18.dp))
             Row(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                OutlinedButton(
-                    onClick = { closeSheet(onDismiss) },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f).height(44.dp),
+                RelayDialogButton(
+            style = RelayDialogButtonStyle.Outlined,
+                    onClick = { dismiss(onDismiss) },
+                    modifier = Modifier.weight(1f).heightIn(min = if (LocalRelayMirrorStyle.current) 48.dp else 44.dp),
                 ) {
-                    Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Button(
-                    onClick = { closeSheet { onConfirm(draft) } },
+                RelayDialogButton(
+                    style = RelayDialogButtonStyle.Filled,
+                    onClick = { dismiss { onConfirm(draft) } },
                     enabled = !draft.hasInvertedRange(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandPurple, contentColor = Color.White),
-                    modifier = Modifier.weight(1f).height(44.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = if (LocalRelayMirrorStyle.current) 48.dp else 44.dp),
                 ) {
-                    Text("确定", fontWeight = FontWeight.Bold, maxLines = 1)
+                    Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -500,14 +472,11 @@ private fun DayPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
+        shape = if (LocalRelayMirrorStyle.current) RelayHomeCardShape else RoundedCornerShape(20.dp),
         title = {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Text(title, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onClear) {
-                    Icon(Icons.Rounded.ClearAll, contentDescription = "清空", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                RelayDialogIconButton(onClick = onClear, imageVector = Icons.Rounded.ClearAll, contentDescription = "清空")
             }
         },
         text = {
@@ -539,16 +508,16 @@ private fun DayPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            RelayDialogButton(
                 onClick = { pickedDate?.let(onConfirm) },
                 enabled = pickedDate != null,
-                colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
+                contentColor = BrandPurple,
             ) { Text("确定", fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
-            TextButton(
+            RelayDialogButton(
                 onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurfaceVariant),
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             ) { Text("取消") }
         },
     )
@@ -564,16 +533,15 @@ private fun DayPartSelector(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
-        OutlinedButton(
+        RelayDialogButton(
+            style = RelayDialogButtonStyle.Outlined,
             onClick = { expanded = true },
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, BrandPurple.copy(alpha = 0.35f)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = BrandPurpleDark),
+            contentColor = BrandPurpleDark,
             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             // 尚未选择任何值时只显示单位。
-            Text(value?.let { "$it$unit" } ?: unit, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(value?.let { "$it$unit" } ?: unit, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
             Icon(
                 Icons.Rounded.ArrowDropDown,
                 contentDescription = null,
@@ -584,6 +552,7 @@ private fun DayPartSelector(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
+            shape = if (LocalRelayMirrorStyle.current) RelayControlShape else MaterialTheme.shapes.extraSmall,
             modifier = Modifier.heightIn(max = 260.dp),
         ) {
             options.forEach { option ->

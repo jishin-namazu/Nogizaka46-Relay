@@ -84,6 +84,10 @@ object DataExporter {
         // 扫描运行在数据库游标内部，那里无法做挂起上下文检查，所以
         // 改为捕获 job 并轮询。
         val job = coroutineContext[Job]
+        val throttle = com.nogirelay.app.performance.ProgressThrottle(android.os.SystemClock::elapsedRealtime)
+        fun publishProgress(done: Int, total: Int) {
+            if (throttle.shouldPublish(done, total)) onProgress?.invoke(done, total)
+        }
         var records = 0
         val referenced = HashSet<String>()
         val cached = HashSet<String>()
@@ -98,17 +102,17 @@ object DataExporter {
             ExportKind.MESSAGES -> database.countMessagesForMembers(memberKeys)
             ExportKind.BLOGS -> database.countBlogsForMembers(memberKeys)
         }
-        onProgress?.invoke(0, total)
+        publishProgress(0, total)
 
         // 不含媒体时条数已经由 count 查询给出，没必要再走一遍游标去检查每个文件的缓存状态。
         if (!includeMedia) {
-            onProgress?.invoke(total, total)
+            publishProgress(total, total)
             return ExportEstimate(records = total, mediaReferenced = 0, mediaCached = 0, mediaBytes = 0)
         }
 
-        // 逐条回报：一次 StateFlow 写入的成本低于遍历游标、查缓存文件。
+        // Check each row, but publish at most every 100ms plus phase/final updates.
         fun reportProgress() {
-            onProgress?.invoke(records, total)
+            publishProgress(records, total)
         }
 
         fun checkActive() {
@@ -142,13 +146,13 @@ object DataExporter {
         }
         if (refRows != null) {
             records = total
-            onProgress?.invoke(0, refRows.size)
+            publishProgress(0, refRows.size)
             refRows.forEachIndexed { index, row ->
                 checkActive()
                 inspect(listOf(MediaCandidate(row.role, row.url, row.type)))
-                if (index % PROGRESS_STEP == 0) onProgress?.invoke(index, refRows.size)
+                if (index % PROGRESS_STEP == 0) publishProgress(index, refRows.size)
             }
-            onProgress?.invoke(refRows.size, refRows.size)
+            publishProgress(refRows.size, refRows.size)
         } else {
             when (kind) {
                 ExportKind.MESSAGES -> database.forEachMessageForMembers(memberKeys) { message ->
@@ -164,7 +168,7 @@ object DataExporter {
                     inspect(ExportFormat.mediaCandidates(post))
                 }
             }
-            onProgress?.invoke(records, total)
+            publishProgress(records, total)
         }
 
         return ExportEstimate(

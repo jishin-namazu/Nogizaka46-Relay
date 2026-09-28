@@ -1,4 +1,5 @@
 .gradle/
+.kotlin/
 **/local.properties
 **/build/
 app/google-services.json
@@ -32,7 +33,11 @@ logs/
 **/nogi-accounts-signal.json*
 *.zip
 *.zip.*
-_work/
 data/
+!app/src/**/data/
+!app/src/**/data/**
 manifest.json
 
+# Local scratch work and test directories, at any depth
+_work/
+test/

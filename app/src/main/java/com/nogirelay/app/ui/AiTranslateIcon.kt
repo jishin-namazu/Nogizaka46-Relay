@@ -63,7 +63,7 @@ fun AiTranslateIcon(
         val trBracket = Path().apply {
             moveTo(12.8f * scale, 4.85f * scale)
             lineTo(17.0f * scale, 4.85f * scale)
-            quadraticBezierTo(19.2f * scale, 4.85f * scale, 19.2f * scale, 7.0f * scale)
+            quadraticTo(19.2f * scale, 4.85f * scale, 19.2f * scale, 7.0f * scale)
             lineTo(19.2f * scale, 9.6f * scale)
         }
         drawPath(
@@ -75,7 +75,7 @@ fun AiTranslateIcon(
         val blBracket = Path().apply {
             moveTo(4.5f * scale, 13.8f * scale)
             lineTo(4.5f * scale, 17.0f * scale)
-            quadraticBezierTo(4.5f * scale, 19.15f * scale, 6.8f * scale, 19.15f * scale)
+            quadraticTo(4.5f * scale, 19.15f * scale, 6.8f * scale, 19.15f * scale)
             lineTo(10.0f * scale, 19.15f * scale)
         }
         drawPath(
