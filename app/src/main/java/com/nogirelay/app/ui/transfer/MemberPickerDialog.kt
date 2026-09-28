@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.nogirelay.app.GraduatedTag
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogMemberCategories
+import com.nogirelay.app.performance.LocalRelayPageWorkPaused
 import com.nogirelay.app.ui.BrandPurple
 import com.nogirelay.app.ui.BrandPurpleDark
 import com.nogirelay.app.ui.RemoteImage
@@ -76,6 +78,20 @@ fun memberGroups(members: List<BlogMember>): List<Pair<String, List<BlogMember>>
  */
 @Composable
 fun MemberPickerGrid(
+    members: List<BlogMember>,
+    selectedIds: Set<String>,
+    onSelectedChange: (Set<String>) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // The picker is an active control of the open drawer/dialog. Only its own images
+    // resume work; the covered page remains paused by the outer composition local.
+    CompositionLocalProvider(LocalRelayPageWorkPaused provides false) {
+        MemberPickerGridContent(members, selectedIds, onSelectedChange, modifier)
+    }
+}
+
+@Composable
+private fun MemberPickerGridContent(
     members: List<BlogMember>,
     selectedIds: Set<String>,
     onSelectedChange: (Set<String>) -> Unit,
@@ -129,6 +145,8 @@ fun MemberPickerGrid(
                                 url = member.avatarUrl,
                                 contentDescription = member.name,
                                 loadCachedImmediately = false,
+                                // 本地头像先显示；官网同 URL 换图时，后台条件校验会刷新缓存。
+                                revalidateRemote = true,
                                 modifier = Modifier
                                     .size(46.dp)
                                     .clip(CircleShape)

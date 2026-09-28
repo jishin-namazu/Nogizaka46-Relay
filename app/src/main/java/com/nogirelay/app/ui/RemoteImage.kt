@@ -81,6 +81,10 @@ object ImageAspectRatioCache {
 
     fun get(url: String?): Float? = if (url.isNullOrBlank()) null else cache.get(url)
 
+    fun remove(url: String?) {
+        if (!url.isNullOrBlank()) cache.remove(url)
+    }
+
     fun put(url: String?, ratio: Float) {
         if (!url.isNullOrBlank() && ratio > 0f) {
             cache.put(url, ratio)
@@ -99,6 +103,9 @@ object RemoteImageMemoryCache {
 
     @Synchronized
     fun getForUrl(url: String): Bitmap? = cache.getForUrl(url)
+
+    @Synchronized
+    fun removeForUrl(url: String) = cache.removeForUrl(url)
 
     @Synchronized
     fun put(key: String, url: String, bitmap: Bitmap) {
@@ -124,6 +131,7 @@ fun RemoteImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     loadCachedImmediately: Boolean = false,
+    revalidateRemote: Boolean = false,
     preserveAspectRatio: Boolean = false,
     messageType: MessageType = MessageType.IMAGE,
     message: RelayMessage? = null,
@@ -141,6 +149,7 @@ fun RemoteImage(
     val cacheKey = "${targetWidth}x$targetHeight@$contentScale@$url"
 
     var retryCount by remember(url) { mutableIntStateOf(0) }
+    var refreshVersion by remember(url) { mutableIntStateOf(0) }
     var isNotFound by remember(url) { mutableStateOf(MediaDownloader.isNotFound(context, url)) }
     var isError by remember(cacheKey) { mutableStateOf(false) }
 
@@ -152,15 +161,20 @@ fun RemoteImage(
     }
     var animated by remember(cacheKey) { mutableStateOf<ImageLoadResult.Animated?>(null) }
 
-    LaunchedEffect(cacheKey, active, retryCount) {
+    LaunchedEffect(cacheKey, active, retryCount, refreshVersion) {
         if (!active || targetWidth <= 0) return@LaunchedEffect
         if (url != null && (isNotFound || MediaDownloader.isNotFound(context, url))) {
+            bitmap = null
+            animated = null
             isNotFound = true
             isError = false
             return@LaunchedEffect
         }
         // The retained drawable resumes in AndroidView; returning to a tab needs no decode.
         if (animated != null) return@LaunchedEffect
+        val cachedBeforeLoad = url?.let {
+            MediaDownloader.cachedFileForUrl(context, it, messageType) != null
+        } == true
         val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
         if (exactCached != null) {
             animated = null
@@ -209,6 +223,21 @@ fun RemoteImage(
                         isError = true
                     }
                 }
+
+            }
+        }
+
+        val revalidationUrl = url
+        if (revalidateRemote && cachedBeforeLoad &&
+            revalidationUrl.startsWith("https://", ignoreCase = true)
+        ) {
+            val changed = withContext(com.nogirelay.app.data.AppGraph.dispatchers.network) {
+                MediaDownloader.revalidateCachedUrlIfChanged(context, revalidationUrl, messageType)
+            }
+            if (changed) {
+                RemoteImageMemoryCache.removeForUrl(revalidationUrl)
+                ImageAspectRatioCache.remove(revalidationUrl)
+                refreshVersion++
             }
         }
     }
