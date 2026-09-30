@@ -27,7 +27,6 @@ data class BlogSummary(
     val translatedTitle: String? = null,
 )
 
-/** 用于在不加载整行数据的情况下构建 BLOG 搜索摘要的原始文本来源。 */
 data class BlogSearchSource(
     val id: String,
     val bodyHtml: String,
@@ -40,7 +39,7 @@ data class BlogMember(
     val category: String,
     val avatarUrl: String?,
     val displayOrder: Int,
-    /** 官方名册仍会列出已毕业成员；这就是它的“毕业”标记。 */
+
     val graduated: Boolean = false,
 )
 

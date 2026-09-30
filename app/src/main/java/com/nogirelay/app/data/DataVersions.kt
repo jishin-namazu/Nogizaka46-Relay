@@ -2,7 +2,6 @@ package com.nogirelay.app.data
 
 enum class DataChange { ALL, CONTENT, MESSAGES, BLOGS, MESSAGE_ROWS, BLOG_ROWS, MESSAGE_READ, BLOG_READ, SETTINGS }
 
-/** Independent invalidation domains. Row history tolerates conflated StateFlow emissions. */
 data class DataVersions(
     val revision: Long = 0,
     val messages: Long = 0,
@@ -42,7 +41,6 @@ data class DataVersions(
         )
     }
 
-    /** null means the caller must refresh its window; empty means no relevant row changed. */
     fun messageIdsSince(version: Long): Set<String>? =
         if (version < messageStructure || version < messagePatchFloor) null
         else messagePatches.filterValues { it > version }.keys

@@ -139,8 +139,6 @@ class BlogClient {
         }
     }
 
-    fun parsePage(jsonp: String): BlogPage = parsePageObject(parseJsonpObject(jsonp))
-
     private fun parseJsonpObject(jsonp: String): JSONObject {
         val value = jsonp.trim().removePrefix("\uFEFF")
         require(value.startsWith("res(") && (value.endsWith(")") || value.endsWith(");"))) {

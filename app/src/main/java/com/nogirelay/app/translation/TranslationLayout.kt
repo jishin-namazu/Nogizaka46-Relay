@@ -2,11 +2,6 @@ package com.nogirelay.app.translation
 
 import org.json.JSONObject
 
-/**
- * 将可翻译文本与其原始空白和行分隔符分离。
- * 所有文本片段在一次请求中发送，以便模型保留完整上下文；
- * 格式在本地恢复，而不是依赖模型复现它。
- */
 internal class TranslationLayout private constructor(
     source: String,
     private val parts: List<Part>,

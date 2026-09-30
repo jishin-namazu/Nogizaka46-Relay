@@ -19,7 +19,6 @@ sealed interface TransferOutcome {
     data class Backfill(val report: MediaBackfillReport) : TransferOutcome
 }
 
-/** [TransferState] 描述的是哪个任务。抽屉根据它而非 [TransferState.phase] 决定行为。 */
 enum class TransferOperation { EXPORT, IMPORT, BACKFILL }
 
 data class TransferState(
@@ -33,13 +32,6 @@ data class TransferState(
     val error: String? = null,
 )
 
-/**
- * 应用级的导出/导入任务所有者。
- *
- * 长时间的传输会比启动它的抽屉活得更久，因此进度放在这里而不是
- * composable 中。一个进程内作用域最多运行一个任务：杀掉进程会取消传输，
- * 并且两个操作都是幂等的，所以重新启动它是安全的。
- */
 object DataTransferManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(TransferState())
@@ -73,8 +65,7 @@ object DataTransferManager {
                     outcome = TransferOutcome.Export(report),
                 )
             } catch (cancelled: CancellationException) {
-                // 取消不会留下任何东西：没有结果也没有消息，因此抽屉只是
-                // 回到空闲形态，而不是显示一条无事可做的通知。
+
                 _state.value = TransferState(kind = request.kind)
             } catch (error: Throwable) {
                 _state.value = TransferState(kind = request.kind, error = error.message ?: "导出失败")
@@ -101,16 +92,12 @@ object DataTransferManager {
             } catch (error: Throwable) {
                 _state.value = TransferState(error = error.message ?: "导入失败")
             } finally {
-                // Import commits batches; cancellation can still have changed local data.
+
                 AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.CONTENT)
             }
         }
     }
 
-    /**
-     * 下载导出预览已识别为缺失的媒体。它复用那份列表，因此
-     * 运行会立即开始下载，而不必第二次遍历每条记录。
-     */
     fun backfillMedia(context: Context, kind: ExportKind, candidates: List<MediaCandidate>) {
         if (isRunning() || candidates.isEmpty()) return
         val appContext = context.applicationContext
@@ -121,8 +108,7 @@ object DataTransferManager {
             phase = "补齐媒体",
             total = candidates.size,
         )
-        // 先把前台服务拉起来：用户此刻在前台，允许启动；之后切后台/息屏也能下完。
-        // 服务只负责前台身份 + 通知，真正的下载仍在下面的 scope 里，所以「取消」不用改。
+
         val foregroundStarted = runCatching { MediaBackfillService.start(appContext) }.isSuccess
         if (!foregroundStarted) {
             _state.value = TransferState(kind = kind, error = "无法启动后台下载服务")

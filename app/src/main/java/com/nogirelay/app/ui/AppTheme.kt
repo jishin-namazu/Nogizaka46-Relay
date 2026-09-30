@@ -15,38 +15,21 @@ import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Brush
-
-val BrandPurple = Color(0xFF7A2A90)
-val BrandPurpleDark = Color(0xFF4E175F)
-val BrandPurpleLight = Color(0xFFF3EDF7)
-val BrandPurpleContainer = Color(0xFFEADBEE)
-val BrandPurpleBorder = Color(0x267A2A90)
+/**
+ * Brand colors. The visual system (shape / depth / glass material / motion)
+ * lives in `ui.glass`; this file keeps only identity colors and typography.
+ */
+// Nogizaka46's signature purple.
+val AppAccent = Color(0xFF812990)
+val AppAccentDark = Color(0xFF5B1767)
+val AppAccentContainer = Color(0xFFF2E3F5)
 
 val SignalGreen = Color(0xFF14A46D)
 val SignalCoral = Color(0xFFDB4F61)
 val SignalCyan = Color(0xFF087E8B)
 
-/** A restrained, multihue backdrop lets translucent surfaces read as glass without changing layout. */
-val RelayLightBackdrop = Brush.linearGradient(
-    colors = listOf(
-        Color(0xFFF8F4FA),
-        Color(0xFFF2F8F8),
-        Color(0xFFF8F3F2),
-    ),
-)
-
-/** The outer navigation shell radius; home cards use the same silhouette. */
-val RelayNavigationBarShape = RoundedCornerShape(31.dp)
-val RelayNavigationSelectionShape = RoundedCornerShape(24.dp)
-val RelayHomeCardShape = RelayNavigationBarShape
-/** Keeps card content away from the large outer corner arc. */
-val RelayCardContentInset = 18.dp
-val NavigationTabIndicatorShape = RoundedCornerShape(12.dp)
-val RelayControlShape = RoundedCornerShape(14.dp)
-val RelayCardShape = RoundedCornerShape(18.dp)
+/** Milky backdrop base; mirrors GlassColors.BackdropTop. */
+val AppBackdropBase = Color(0xFFFAFBFC)
 
 private val defaultLineHeightStyle = LineHeightStyle(
     alignment = LineHeightStyle.Alignment.Center,
@@ -83,28 +66,42 @@ val AppTypography = Typography(
 )
 
 private val LightColors = lightColorScheme(
-    primary = BrandPurple,
+    primary = AppAccent,
     onPrimary = Color.White,
-    primaryContainer = BrandPurpleContainer,
-    onPrimaryContainer = Color(0xFF2F0B38),
+    primaryContainer = AppAccentContainer,
+    onPrimaryContainer = Color(0xFF390D42),
     secondary = SignalCyan,
     onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE0F2F4),
+    onSecondaryContainer = Color(0xFF164D56),
     tertiary = SignalGreen,
-    background = Color.White,
+    background = AppBackdropBase,
     surface = Color.White,
-    surfaceVariant = BrandPurpleLight,
-    outline = Color(0xFF817882),
-    outlineVariant = Color(0xFFE2DCE6),
+    onBackground = Color(0xFF242229),
+    onSurface = Color(0xFF242229),
+    onSurfaceVariant = Color(0xFF5B5762),
+    surfaceVariant = Color(0xFFF3F4F6),
+    surfaceTint = AppAccent,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFF8FAFC),
+    surfaceContainer = Color(0xFFF2F3F5),
+    surfaceContainerHigh = Color(0xFFECEEF1),
+    surfaceContainerHighest = Color(0xFFE5E8EC),
+    outline = Color(0xFF807C86),
+    outlineVariant = Color(0xFFE0DFE4),
     error = SignalCoral,
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFE3AFE9),
+    primary = Color(0xFFE4B1EC),
+    onPrimary = Color(0xFF450C51),
+    primaryContainer = AppAccentDark,
+    onPrimaryContainer = Color(0xFFF8D8FC),
     secondary = Color(0xFF71D5DE),
     tertiary = Color(0xFF5EE0A5),
-    background = Color(0xFF171318),
-    surface = Color(0xFF211C22),
-    surfaceVariant = Color(0xFF2C2530),
+    background = Color(0xFF18151D),
+    surface = Color(0xFF211D27),
+    surfaceVariant = Color(0xFF342C3D),
     error = Color(0xFFFFB2BC),
 )
 
@@ -117,7 +114,6 @@ fun NogiRelayTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) 
     ) {
         CompositionLocalProvider(
             LocalTextStyle provides AppTypography.bodyMedium,
-            // Ripple is opt-in; the home glass controls use a spring press response.
             LocalRippleConfiguration provides null,
             content = content,
         )

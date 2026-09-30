@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import com.nogirelay.app.data.AppGraph
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -67,7 +68,7 @@ class VoicePlaybackService : Service() {
         }
 
         val messageId = intent?.getStringExtra(EXTRA_MESSAGE_ID) ?: return START_NOT_STICKY
-        // A new play/pause request supersedes any download for another message.
+
         loadJob?.cancel()
         loadJob = null
         if (currentMessageId == messageId && player != null) {
@@ -129,7 +130,6 @@ class VoicePlaybackService : Service() {
         playing = false
         publishPlaybackState()
 
-        // 始终使用通信模式，以便一致地控制扬声器/听筒
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
 
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
@@ -174,7 +174,7 @@ class VoicePlaybackService : Service() {
                 sendBroadcast(Intent(ACTION_PLAYBACK_FINISHED).setPackage(packageName))
                 if (loadJob?.isActive == true) releasePlayer() else stopPlayback()
             }
-            // Paused seeking still publishes the final position without a polling loop.
+
             setOnSeekCompleteListener { publishPlaybackState() }
             setOnErrorListener { _, _, _ ->
                 stopPlayback()
@@ -255,24 +255,24 @@ class VoicePlaybackService : Service() {
     }
 
     private suspend fun setAudioOutput(speakerOn: Boolean, fadeOnLegacyAndroid: Boolean) {
-        android.util.Log.d("VoicePlayback", "setAudioOutput start: speakerOn=$speakerOn, fade=$fadeOnLegacyAndroid, SDK=${android.os.Build.VERSION.SDK_INT}")
+        Log.d("VoicePlayback", "setAudioOutput start: speakerOn=$speakerOn, fade=$fadeOnLegacyAndroid, SDK=${android.os.Build.VERSION.SDK_INT}")
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            android.util.Log.d("VoicePlayback", "Using Android 12+ setCommunicationDevice")
+            Log.d("VoicePlayback", "Using Android 12+ setCommunicationDevice")
             if (speakerOn) {
                 val speaker = audioManager.availableCommunicationDevices
                     .find { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
                 if (speaker != null && !audioManager.setCommunicationDevice(speaker)) {
-                    android.util.Log.d("VoicePlayback", "Failed to select built-in speaker")
+                    Log.d("VoicePlayback", "Failed to select built-in speaker")
                 }
             } else {
                 audioManager.clearCommunicationDevice()
             }
-            android.util.Log.d("VoicePlayback", "setAudioOutput done (Android 12+)")
+            Log.d("VoicePlayback", "setAudioOutput done (Android 12+)")
             return
         }
 
-        android.util.Log.d("VoicePlayback", "Using legacy isSpeakerphoneOn")
+        Log.d("VoicePlayback", "Using legacy isSpeakerphoneOn")
         val activePlayer = player
         if (fadeOnLegacyAndroid) activePlayer?.runCatching { setVolume(0f, 0f) }
         @Suppress("DEPRECATION")
@@ -285,7 +285,7 @@ class VoicePlaybackService : Service() {
                 activePlayer.runCatching { setVolume(volume, volume) }
             }
         }
-        android.util.Log.d("VoicePlayback", "setAudioOutput done (legacy)")
+        Log.d("VoicePlayback", "setAudioOutput done (legacy)")
     }
 
     companion object {

@@ -8,7 +8,6 @@ internal data class ExportEstimateKey(
     val mediaRevision: Long,
 )
 
-/** Small, expiring cache. Large missing-media lists must not become permanent owners. */
 internal class ExportEstimateCache(
     private val nowMillis: () -> Long,
     private val maxBytes: Long = 2 * 1024 * 1024,

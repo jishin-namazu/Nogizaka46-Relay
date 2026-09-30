@@ -88,7 +88,7 @@ object BlogTranslationManager {
         AppGraph.initialize(context)
         if (!inFlight.add(blogId)) return@withContext Result.success(Unit)
         try {
-            // The permit covers database reads and parsing as well as the network request.
+
             requestSlots.withPermit { translateInternal(context.applicationContext, blogId, force) }
         } finally {
             inFlight.remove(blogId)

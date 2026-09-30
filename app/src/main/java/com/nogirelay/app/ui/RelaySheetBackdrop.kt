@@ -19,7 +19,6 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 
-/** The active sheet supplies its position; only drawing observes it, never the page composition. */
 @Stable
 class RelaySheetBackdropState internal constructor() {
     internal var progress by mutableStateOf<(() -> Float)?>(null)
@@ -31,10 +30,9 @@ class RelaySheetBackdropState internal constructor() {
 @Composable
 fun rememberRelaySheetBackdropState(): RelaySheetBackdropState = remember { RelaySheetBackdropState() }
 
-/** Crossfade the same recorded page into a fixed blur, in step with the sheet's actual travel. */
 @Composable
 fun Modifier.relaySheetBackdrop(state: RelaySheetBackdropState): Modifier {
-    // Match Compose blur's fallback on Android versions without RenderEffect.
+
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || !state.isAttached) return this
 
     val contentLayer = rememberGraphicsLayer()
@@ -47,8 +45,7 @@ fun Modifier.relaySheetBackdrop(state: RelaySheetBackdropState): Modifier {
         blurredLayer.renderEffect = blur
         var blurRecorded = false
         onDrawWithContent {
-            // The inner graphicsLayer caches the recorder's display list. Offset changes
-            // invalidate only this outer draw; real child redraws still refresh the source.
+
             drawContent()
             val progress = state.progress?.invoke()?.coerceIn(0f, 1f) ?: 0f
             if (progress > 0f) {
@@ -62,7 +59,7 @@ fun Modifier.relaySheetBackdrop(state: RelaySheetBackdropState): Modifier {
         }
     }.graphicsLayer().drawWithContent {
         contentLayer.record {
-            // An opaque base prevents the sharp page leaking through translucent samples.
+
             drawRect(background)
             this@drawWithContent.drawContent()
         }

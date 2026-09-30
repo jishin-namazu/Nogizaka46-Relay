@@ -16,13 +16,6 @@ import androidx.compose.ui.platform.TextToolbar
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 
-/**
- * 当用户点击被修饰容器的任意位置时，自动清除文本选择并关闭浮动工具栏，
- * 同时保留：
- * 1. 用于文本选择的长按手势（时长 >= longPressTimeout）。
- * 2. 拖拽 / 滚动手势（距离 > touchSlop）。
- * 3. 对子元素的普通点击（事件不会被消费）。
- */
 fun Modifier.clearSelectionOnTap(
     focusManager: FocusManager,
     textToolbar: TextToolbar? = null,
@@ -55,12 +48,6 @@ fun Modifier.clearSelectionOnTap(
     }
 }
 
-/**
- * 离开界面时自动清除选择并隐藏复制工具栏：
- * - 当 [isActive] 变为 false 时（例如切换标签页）。
- * - 当该 composable 离开组合时（例如返回导航）。
- * - 当 Activity 进入 [Lifecycle.Event.ON_PAUSE] 或 [Lifecycle.Event.ON_STOP] 时（例如离开应用或打开另一个 Activity）。
- */
 @Composable
 fun AutoClearSelectionOnExit(
     isActive: Boolean = true,

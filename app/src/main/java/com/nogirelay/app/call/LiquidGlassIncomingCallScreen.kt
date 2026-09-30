@@ -1,21 +1,13 @@
 package com.nogirelay.app.call
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -28,18 +20,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,16 +38,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -65,7 +53,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -78,18 +65,23 @@ import com.nogirelay.app.R
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.performance.isRelayUiStarted
-import com.nogirelay.app.ui.NogiRelayTheme
-import com.nogirelay.app.ui.RelayMediaGlassBackground
-import com.nogirelay.app.ui.RelayNavigationSelectionShape
 import com.nogirelay.app.ui.RemoteImage
+import com.nogirelay.app.ui.glass.GlassCircleButton
+import com.nogirelay.app.ui.glass.GlassMotion
+import com.nogirelay.app.ui.glass.GlassTone
 import java.util.Locale
 
-private val CallInk = Color.Black
-private val CallGreen = Color(0xFF48DB96)
-private val CallRed = Color(0xFFFF7582)
-private val CallFont = FontFamily(Font(R.font.noto_sans_jp_regular))
+private val CallInk = Color(0xFF101116)
+private val CallGreen = Color(0xFF3FB57F)
+private val CallRed = Color(0xFFE2606B)
+private val CallFont = FontFamily(androidx.compose.ui.text.font.Font(R.font.noto_sans_jp_regular))
 
-/** Presentation only: ringing, audio routing and call cleanup stay in IncomingCallActivity. */
+/**
+ * Incoming call, liquid-glass style: the member's portrait fills the screen
+ * under a gradient scrim; the answer / decline / speaker controls are big
+ * floating droplets of tinted glass with soft-body press and a breathing
+ * ring while ringing.
+ */
 @Composable
 internal fun LiquidGlassIncomingCallScreen(
     message: RelayMessage,
@@ -113,7 +105,6 @@ internal fun LiquidGlassIncomingCallScreen(
             currentPlayback.isPlaying -> "通话中"
             else -> "播放已暂停"
         },
-        // Do not display a previous message's time while the service is opening this call.
         elapsedSeconds = (currentPlayback?.positionMs ?: 0).coerceAtLeast(0) / 1_000,
         onAnswer = onAnswer,
         onDecline = onDecline,
@@ -149,7 +140,6 @@ private fun LiquidGlassCallContent(
 ) {
     val breathing = rememberCallBreathing(isRinging, visualActive)
     Box(Modifier.fillMaxSize().background(CallInk)) {
-        // Match the media viewer: keep the portrait clear beneath transparent glass overlays.
         Box(Modifier.matchParentSize()) {
             Box(
                 Modifier.matchParentSize().background(
@@ -175,13 +165,11 @@ private fun LiquidGlassCallContent(
                 ),
             )
         }
-
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
             val compact = maxHeight < 520.dp
-            // Anchor caller controls below the portrait; scrolling keeps every action reachable
-            // in landscape and at large fonts without adding a header over the photograph.
             Column(
-                modifier = Modifier.align(Alignment.TopCenter)
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
                     .widthIn(max = 480.dp)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
@@ -207,51 +195,39 @@ private fun LiquidGlassCallContent(
                     CallStatus(status, isRinging, elapsedSeconds, breathing = { breathing.value })
                     Spacer(Modifier.height(if (compact) 22.dp else 38.dp))
                     Row(
-                        modifier = Modifier.widthIn(max = 340.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(24.dp),
-                        verticalAlignment = Alignment.Top,
+                        modifier = Modifier.widthIn(max = 292.dp).fillMaxWidth().padding(horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        GlassCallAction(
-                            label = if (isRinging) "拒接" else "挂断",
-                            icon = Icons.Rounded.CallEnd,
-                            tint = CallRed,
-                            onClick = onDecline,
-                            controlSize = if (compact) 76.dp else 88.dp,
-                            modifier = Modifier.weight(1f),
-                        )
-                        AnimatedContent(
-                            targetState = isRinging,
-                            modifier = Modifier.weight(1f),
-                            contentAlignment = Alignment.TopCenter,
-                            transitionSpec = {
-                                (fadeIn(tween(200)) + scaleIn(tween(240), initialScale = 0.90f))
-                                    .togetherWith(fadeOut(tween(110)))
-                            },
-                            label = "call-answer-to-speaker",
-                        ) { ringing ->
-                            val active = ringing == isRinging
+                        androidx.compose.runtime.key("decline") {
                             GlassCallAction(
-                                label = when {
-                                    ringing -> "接听"
-                                    speakerOn -> "扬声器 · 开"
-                                    else -> "扬声器 · 关"
-                                },
-                                icon = if (ringing) Icons.Rounded.Call else Icons.AutoMirrored.Rounded.VolumeUp,
-                                tint = when {
-                                    ringing -> CallGreen
-                                    speakerOn -> Color(0xFFB7A1FF)
-                                    else -> Color.White
-                                },
-                                onClick = if (ringing) onAnswer else onToggleSpeaker,
-                                checked = if (ringing) null else speakerOn,
-                                enabled = active,
-                                controlSize = if (compact) 76.dp else 88.dp,
-                                breathing = { if (ringing && active) breathing.value else 0f },
-                                // The outgoing answer button cannot receive taps or focus.
-                                modifier = Modifier.fillMaxWidth().then(
-                                    if (active) Modifier else Modifier.clearAndSetSemantics { },
-                                ),
+                                label = "挂断",
+                                icon = Icons.Rounded.CallEnd,
+                                tint = CallRed,
+                                onClick = onDecline,
+                                controlSize = if (compact) 68.dp else 78.dp,
                             )
+                        }
+                        androidx.compose.runtime.key(if (isRinging) "answer" else "speaker") {
+                            if (isRinging) {
+                                GlassCallAction(
+                                    label = "接听",
+                                    icon = Icons.Rounded.Call,
+                                    tint = CallGreen,
+                                    onClick = onAnswer,
+                                    controlSize = if (compact) 68.dp else 78.dp,
+                                    breathing = { breathing.value },
+                                )
+                            } else {
+                                GlassCallAction(
+                                    label = if (speakerOn) "扬声器开" else "扬声器",
+                                    icon = Icons.Rounded.VolumeUp,
+                                    tint = if (speakerOn) Color(0xFFB7A1FF) else Color.White,
+                                    onClick = onToggleSpeaker,
+                                    controlSize = if (compact) 68.dp else 78.dp,
+                                    checked = speakerOn,
+                                )
+                            }
                         }
                     }
                 }
@@ -278,12 +254,15 @@ private fun CallStatus(status: String, isRinging: Boolean, elapsedSeconds: Int, 
                 },
             ) {
                 Box(
-                    Modifier.size(6.dp).graphicsLayer {
-                        val progress = breathing().coerceIn(0f, 1f)
-                        scaleX = 1f + progress * 0.22f
-                        scaleY = scaleX
-                        alpha = 0.78f + progress * 0.22f
-                    }.background(Color(0xFFBCEAD5), CircleShape),
+                    Modifier
+                        .size(6.dp)
+                        .graphicsLayer {
+                            val progress = breathing().coerceIn(0f, 1f)
+                            scaleX = 1f + progress * 0.22f
+                            scaleY = scaleX
+                            alpha = 0.78f + progress * 0.22f
+                        }
+                        .background(Color(0xFFBCEAD5), androidx.compose.foundation.shape.CircleShape),
                 )
                 Text(
                     visibleStatus,
@@ -295,7 +274,6 @@ private fun CallStatus(status: String, isRinging: Boolean, elapsedSeconds: Int, 
                 )
             }
         }
-        // Always reserve this line, so answering never displaces the caller or the controls.
         Text(
             text = if (isRinging) "" else String.format(Locale.US, "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60),
             color = Color.White.copy(alpha = 0.82f),
@@ -308,7 +286,11 @@ private fun CallStatus(status: String, isRinging: Boolean, elapsedSeconds: Int, 
     }
 }
 
-/** The entire label is a touch target above the media viewer's shared empty glass background. */
+/**
+ * Big tinted-glass droplet: a [GlassCircleButton] in dark tone with a
+ * semantic color tint (green answer / red decline), breathing gently while
+ * ringing, squishing on press via the shared soft-body physics.
+ */
 @Composable
 private fun GlassCallAction(
     label: String,
@@ -321,109 +303,82 @@ private fun GlassCallAction(
     enabled: Boolean = true,
     breathing: () -> Float = { 0f },
 ) {
-    val interactions = remember { MutableInteractionSource() }
-    val pressed by interactions.collectIsPressedAsState()
-    val focused by interactions.collectIsFocusedAsState()
-    val scale = animateFloatAsState(
-        if (pressed && enabled) 0.94f else 1f,
-        spring(dampingRatio = 0.75f),
-        label = "call-glass-press",
-    )
-    val foreground by animateColorAsState(tint, tween(180), label = "call-glass-icon-tint")
-    val interactionModifier = if (checked == null) {
-        Modifier.clickable(
-            enabled = enabled,
-            role = Role.Button,
-            onClickLabel = label,
-            interactionSource = interactions,
-            indication = null,
-            onClick = onClick,
-        )
-    } else {
-        Modifier.semantics { stateDescription = if (checked) "已开启" else "已关闭" }
-            .toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Switch,
-                interactionSource = interactions,
-                indication = null,
-                onValueChange = { onClick() },
-            )
-    }
+    val breath = breathing().coerceIn(0f, 1f)
     Column(
-        modifier = modifier.then(interactionModifier).padding(vertical = 6.dp),
+        modifier = modifier.padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier.size(controlSize).padding(4.dp)
-                .graphicsLayer {
-                    val progress = breathing().coerceIn(0f, 1f)
-                    scaleX = scale.value * (1f + progress * 0.028f)
-                    scaleY = scaleX
-                    translationY = -1.5.dp.toPx() * progress
-                }
-                .drawWithCache {
-                    val radius = size.minDimension * 0.85f
-                    val center = Offset(size.width / 2f, size.height / 2f)
-                    val glow = Brush.radialGradient(
-                        0f to CallGreen.copy(alpha = 0.22f),
-                        0.55f to CallGreen.copy(alpha = 0.09f),
-                        1f to Color.Transparent,
-                        center = center,
-                        radius = radius,
-                    )
-                    onDrawBehind {
-                        val progress = breathing().coerceIn(0f, 1f)
-                        if (progress > 0f) drawCircle(glow, radius, center, alpha = progress)
-                    }
+        Box(contentAlignment = Alignment.Center) {
+            if (breath > 0.01f) {
+                // Soft halo breathing behind the droplet while ringing.
+                Box(
+                    Modifier
+                        .size(controlSize)
+                        .graphicsLayer {
+                            scaleX = 1f + breath * 0.16f
+                            scaleY = scaleX
+                            alpha = breath * 0.30f
+                        }
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(tint.copy(alpha = 0.35f)),
+                )
+            }
+            GlassCircleButton(
+                onClick = onClick,
+                enabled = enabled,
+                tone = GlassTone.OnDark,
+                tint = tint.copy(alpha = 0.30f),
+                fillAlpha = 0.30f,
+                size = controlSize,
+                pressScale = 1f + breath * 0.028f,
+                contentDescription = label,
+                toggleValue = checked,
+                modifier = Modifier.graphicsLayer {
+                    translationY = -1.5.dp.toPx() * breath
                 },
-            contentAlignment = Alignment.Center,
-        ) {
-            RelayMediaGlassBackground(
-                modifier = Modifier.matchParentSize(),
-                shape = RelayNavigationSelectionShape,
-            )
-            Box(
-                Modifier.matchParentSize().drawWithCache {
-                    val outline = RelayNavigationSelectionShape.createOutline(size, layoutDirection, this)
-                    onDrawBehind {
-                        // A faint light lift on the existing surface, without another glass rim.
-                        drawOutline(outline, Color.White, alpha = breathing().coerceIn(0f, 1f) * 0.045f)
-                    }
-                },
-            )
-            if (focused) Box(Modifier.matchParentSize().border(2.dp, Color.White, RelayNavigationSelectionShape))
-            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(32.dp))
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(controlSize * 0.36f),
+                )
+            }
         }
-        Text(
-            label,
-            color = Color.White,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 
-@Preview(name = "来电 · 写真", widthDp = 393, heightDp = 852)
-@Preview(name = "来电 · 窄屏大字", widthDp = 320, heightDp = 568, fontScale = 1.5f)
-@Preview(name = "来电 · 横屏", widthDp = 760, heightDp = 360)
+@Preview(showBackground = true, backgroundColor = 0xFF101116)
 @Composable
 private fun RingingGlassCallPreview() {
-    NogiRelayTheme(darkTheme = true) {
-        LiquidGlassCallContent("池田 瑛紗", true, false, "语音来电", 0, {}, {}, {}) {
-            Image(painterResource(R.drawable.ikeda_teresa_phone_image), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        }
-    }
+    LiquidGlassCallContent(
+        callerName = "池田 瑛紗",
+        isRinging = true,
+        speakerOn = false,
+        status = "语音来电",
+        elapsedSeconds = 0,
+        onAnswer = {},
+        onDecline = {},
+        onToggleSpeaker = {},
+        portrait = {},
+    )
 }
 
-@Preview(name = "通话 · 扬声器 · 无写真", widthDp = 393, heightDp = 852)
+@Preview(showBackground = true, backgroundColor = 0xFF101116)
 @Composable
 private fun PlayingGlassCallPreview() {
-    NogiRelayTheme(darkTheme = true) {
-        LiquidGlassCallContent("池田 瑛紗", false, true, "通话中", 42, {}, {}, {}, portrait = {})
-    }
+    LiquidGlassCallContent(
+        callerName = "池田 瑛紗",
+        isRinging = false,
+        speakerOn = true,
+        status = "通话中",
+        elapsedSeconds = 75,
+        onAnswer = {},
+        onDecline = {},
+        onToggleSpeaker = {},
+        portrait = {},
+    )
 }
+
+

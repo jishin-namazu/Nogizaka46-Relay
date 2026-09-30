@@ -3,6 +3,8 @@ package com.nogirelay.app.ui.messages
 import android.os.CancellationSignal
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,21 +14,21 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -35,9 +37,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.FilterList
@@ -45,9 +45,11 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.CompositionLocalProvider
+import com.nogirelay.app.ui.glass.LocalMediaSourceScope
+import com.nogirelay.app.ui.glass.mediaSourceKey
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -56,7 +58,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -68,16 +69,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.SubcomposeLayout
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.AppGraph
@@ -86,38 +85,39 @@ import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.data.readDatabase
-import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.performance.rememberSearchQuery
-import com.nogirelay.app.ui.BrandPurple
-import com.nogirelay.app.ui.RelayCardContentInset
-import com.nogirelay.app.ui.RelayControlShape
-import com.nogirelay.app.ui.LocalRelayMirrorStyle
-import com.nogirelay.app.ui.RelayHomeCardShape
-import com.nogirelay.app.ui.RelayLightBackdrop
-import com.nogirelay.app.ui.RelayMirrorGlassBackground
-import com.nogirelay.app.ui.RelayMirrorGlassCard
-import com.nogirelay.app.ui.RelayMirrorGlassIconButton
-import com.nogirelay.app.ui.RelayNavigationBarShape
-import com.nogirelay.app.ui.RelaySearchField
-import com.nogirelay.app.ui.RelaySelectionSurface
-import com.nogirelay.app.ui.RelaySegmentedTabs
-import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterDialog
+import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.clearSelectionOnTap
-import java.time.YearMonth
-import java.time.ZoneId
+import com.nogirelay.app.ui.glass.GlassBackButton
+import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassDepths
+import com.nogirelay.app.ui.glass.GlassIconButton
+import com.nogirelay.app.ui.glass.GlassPanel
+import com.nogirelay.app.ui.glass.GlassSearchField
+import com.nogirelay.app.ui.glass.GlassSegmentedTabs
+import com.nogirelay.app.ui.glass.GlassShapes
+import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.glassMediaSource
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.YearMonth
+import java.time.ZoneId
 
+/**
+ * Member timeline, rebuilt as liquid glass: floating back / search / filter
+ * controls hover over the scrolling conversation; message bubbles are glass
+ * panels; media cells publish their geometry so the viewer can lift the
+ * exact thumbnail out of the page.
+ */
 @Composable
 internal fun MemberTimelineScreen(
     entry: MemberMessageEntry,
@@ -131,7 +131,7 @@ internal fun MemberTimelineScreen(
     onInitialMessageHandled: (String) -> Unit,
     onViewingLatest: (Boolean) -> Unit,
     onUnreadChanged: (Set<String>) -> Unit,
-    onOpenMedia: (RelayMessage) -> Unit,
+    onOpenMedia: (RelayMessage, String) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onDownload: (RelayMessage) -> Unit,
     onRetranslate: (RelayMessage) -> Unit,
@@ -169,159 +169,164 @@ internal fun MemberTimelineScreen(
     BackHandler(enabled = active, onBack = ::back)
     LaunchedEffect(active) {
         if (!active) {
-            showFilter = false
-            auxiliaryScreen = null
+            focusManager.clearFocus()
+            textToolbar.hide()
         }
     }
 
     AnimatedContent(
         targetState = auxiliaryScreen,
         transitionSpec = {
-            // 进入二级页面时新页从右侧推入，返回时消息流从左侧回到位置。
+            val slideSpring = spring<IntOffset>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+            )
             val enteringAuxiliary = targetState != null
-            val enter = fadeIn(animationSpec = tween(220)) +
-                slideInHorizontally(animationSpec = tween(260)) { width ->
-                    if (enteringAuxiliary) width / 12 else -width / 12
+            val enter = fadeIn(animationSpec = tween(200)) +
+                slideInHorizontally(animationSpec = slideSpring) { width ->
+                    if (enteringAuxiliary) width / 5 else -width / 6
                 }
-            val exit = fadeOut(animationSpec = tween(180)) +
-                slideOutHorizontally(animationSpec = tween(220)) { width ->
-                    if (enteringAuxiliary) -width / 16 else width / 16
+            val exit = fadeOut(animationSpec = tween(160)) +
+                slideOutHorizontally(animationSpec = slideSpring) { width ->
+                    if (enteringAuxiliary) -width / 6 else width / 5
                 }
             enter togetherWith exit
         },
         label = "member_auxiliary_transition",
         modifier = Modifier.fillMaxSize(),
     ) { screen ->
-        if (screen != null) {
-            MemberTimelineAuxiliaryScreen(
-                memberKey = entry.memberKey,
-                screen = screen,
-                active = workActive,
-                versions = versions,
-                playbackState = playbackState,
-                translationEnabled = translationEnabled,
-                userNickname = userNickname,
-                onBack = { auxiliaryScreen = null },
-                onOpenMedia = onOpenMedia,
-                onPlayVoice = onPlayVoice,
-                onDownload = onDownload,
-                onRetranslate = onRetranslate,
-                onToggleFavorite = ::toggleFavorite,
-            )
-        } else {
-            FloatingTimelineLayout(
-                header = {
-                    MemberTimelineHeader(
-                        query = query,
-                        active = active,
-                        filterActive = timeFilter.isActive,
-                        onBack = ::back,
-                        onQueryChange = { if (active) query = it },
-                        onFilterClick = {
-                            focusManager.clearFocus()
-                            textToolbar.hide()
-                            showFilter = true
-                        },
-                    )
-                },
-            ) { headerHeight ->
-                key(entry, effectiveQuery, timeFilter, userNickname) {
-                    MemberTimelineContent(
-                        memberKey = entry.memberKey,
-                        query = effectiveQuery,
-                        filter = timeFilter,
-                        initialTargetId = entry.targetMessageId.takeIf {
-                            !initialTargetConsumed && effectiveQuery.isBlank() && !timeFilter.isActive
-                        },
-                        active = workActive,
-                        versions = versions,
-                        playbackState = playbackState,
-                        translationEnabled = translationEnabled,
-                        userNickname = userNickname,
-                        sessionUnreadIds = sessionUnreadIds,
-                        onInitialLoaded = {
-                            if (!initialTargetConsumed) {
-                                initialTargetConsumed = true
-                                entry.notificationMessageId?.let(onInitialMessageHandled)
-                            }
-                        },
-                        onViewingLatest = { onViewingLatest(it && query.isBlank() && !timeFilter.isActive) },
-                        onRead = { sessionUnreadIds = sessionUnreadIds + it; onUnreadChanged(it) },
-                        onOpenMedia = onOpenMedia,
-                        onPlayVoice = onPlayVoice,
-                        onDownload = onDownload,
-                        onRetranslate = onRetranslate,
-                        onToggleFavorite = ::toggleFavorite,
-                        topContentPadding = headerHeight,
-                        modifier = Modifier.fillMaxSize().clearSelectionOnTap(focusManager, textToolbar),
-                    )
-                }
-            }
-            if (showFilter) {
-                TimeFilterDialog(
-                    filter = timeFilter,
-                    backdropState = backdropState,
-                    onDismiss = { showFilter = false },
-                    onConfirm = { timeFilter = it; showFilter = false },
-                    extraContent = { dismiss ->
-                        FilterDrawerEntry(
-                            label = "媒体",
-                            icon = Icons.Rounded.PlayArrow,
-                            onClick = {
-                                dismiss {
-                                    showFilter = false
-                                    auxiliaryScreen = MemberTimelineAuxiliary.MEDIA
-                                }
-                            },
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        FilterDrawerEntry(
-                            label = "收藏夹",
-                            icon = Icons.Rounded.Star,
-                            onClick = {
-                                dismiss {
-                                    showFilter = false
-                                    auxiliaryScreen = MemberTimelineAuxiliary.FAVORITES
-                                }
+        // Outgoing and incoming pages coexist during AnimatedContent transitions.
+        val sourceScope = remember { java.util.UUID.randomUUID().toString() }
+        val openScopedMedia: (RelayMessage) -> Unit = { message ->
+            onOpenMedia(message, mediaSourceKey(sourceScope, message.id))
+        }
+        CompositionLocalProvider(LocalMediaSourceScope provides sourceScope) {
+            if (screen != null) {
+                MemberTimelineAuxiliaryScreen(
+                    memberKey = entry.memberKey,
+                    screen = screen,
+                    active = workActive,
+                    versions = versions,
+                    playbackState = playbackState,
+                    translationEnabled = translationEnabled,
+                    userNickname = userNickname,
+                    onBack = { auxiliaryScreen = null },
+                    onOpenMedia = openScopedMedia,
+                    onPlayVoice = onPlayVoice,
+                    onDownload = onDownload,
+                    onRetranslate = onRetranslate,
+                    onToggleFavorite = ::toggleFavorite,
+                )
+            } else {
+                FloatingTimelineLayout(
+                    header = {
+                        MemberTimelineHeader(
+                            query = query,
+                            active = active,
+                            filterActive = timeFilter.isActive,
+                            onBack = ::back,
+                            onQueryChange = { if (active) query = it },
+                            onFilterClick = {
+                                focusManager.clearFocus()
+                                textToolbar.hide()
+                                showFilter = true
                             },
                         )
                     },
-                )
+                ) { headerHeight ->
+                    key(entry, effectiveQuery, timeFilter, userNickname) {
+                        MemberTimelineContent(
+                            memberKey = entry.memberKey,
+                            query = effectiveQuery,
+                            filter = timeFilter,
+                            initialTargetId = entry.targetMessageId.takeIf {
+                                !initialTargetConsumed && effectiveQuery.isBlank() && !timeFilter.isActive
+                            },
+                            active = workActive,
+                            versions = versions,
+                            playbackState = playbackState,
+                            translationEnabled = translationEnabled,
+                            userNickname = userNickname,
+                            sessionUnreadIds = sessionUnreadIds,
+                            onInitialLoaded = {
+                                if (!initialTargetConsumed) {
+                                    initialTargetConsumed = true
+                                    entry.notificationMessageId?.let(onInitialMessageHandled)
+                                }
+                            },
+                            onViewingLatest = { onViewingLatest(it && query.isBlank() && !timeFilter.isActive) },
+                            onRead = { sessionUnreadIds = sessionUnreadIds + it; onUnreadChanged(it) },
+                            onOpenMedia = openScopedMedia,
+                            onPlayVoice = onPlayVoice,
+                            onDownload = onDownload,
+                            onRetranslate = onRetranslate,
+                            onToggleFavorite = ::toggleFavorite,
+                            topContentPadding = headerHeight,
+                            modifier = Modifier.fillMaxSize().clearSelectionOnTap(focusManager, textToolbar),
+                        )
+                    }
+                }
+                if (showFilter) {
+                    TimeFilterDialog(
+                        filter = timeFilter,
+                        backdropState = backdropState,
+                        onDismiss = { showFilter = false },
+                        onConfirm = { timeFilter = it; showFilter = false },
+                        extraContent = { dismiss ->
+                            FilterDrawerEntry(
+                                label = "媒体",
+                                icon = Icons.Rounded.PlayArrow,
+                                onClick = {
+                                    dismiss {
+                                        showFilter = false
+                                        auxiliaryScreen = MemberTimelineAuxiliary.MEDIA
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            FilterDrawerEntry(
+                                label = "收藏夹",
+                                icon = Icons.Rounded.Star,
+                                onClick = {
+                                    dismiss {
+                                        showFilter = false
+                                        auxiliaryScreen = MemberTimelineAuxiliary.FAVORITES
+                                    }
+                                },
+                            )
+                        },
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * 筛选抽屉里的二级入口：与时间 / 成员筛选按钮一致的 40dp 可见玻璃面与 48dp 触摸区域。
- */
+/** Row inside the filter sheet that jumps to an auxiliary page. */
 @Composable
 private fun FilterDrawerEntry(
     label: String,
     icon: ImageVector,
     onClick: () -> Unit,
 ) {
-    val mirrorStyle = LocalRelayMirrorStyle.current
-    RelaySelectionSurface(
+    GlassPanel(
         onClick = onClick,
-        selected = false,
-        useNavigationStyle = true,
-        visualHeight = if (mirrorStyle) 40.dp else null,
-        // 二级页面入口不是选中项，不向读屏软件宣告“未选中”。
-        announceSelected = false,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (mirrorStyle) 48.dp else 44.dp),
+        onClickLabel = label,
+        shape = GlassShapes.Card,
+        depth = GlassDepths.None,
+        fillAlpha = 0.34f,
+        blur = 14.dp,
+        modifier = Modifier.fillMaxWidth().height(52.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
         ) {
-            Icon(icon, contentDescription = null, tint = BrandPurple, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = null, tint = GlassColors.Accent, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
             Text(
                 text = label,
-                color = MaterialTheme.colorScheme.primary,
+                color = GlassColors.Accent,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
                 maxLines = 1,
@@ -331,14 +336,13 @@ private fun FilterDrawerEntry(
             Icon(
                 imageVector = Icons.Rounded.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = GlassColors.InkTertiary,
                 modifier = Modifier.size(20.dp),
             )
         }
     }
 }
 
-/** 二级页面每次读取的行数，滚动到底部时继续补齐。 */
 private const val AUXILIARY_PAGE_SIZE = 200
 
 private enum class MemberTimelineAuxiliary { MEDIA, FAVORITES }
@@ -352,7 +356,6 @@ private enum class MemberMediaCategory(
     VOICE("语音", MessageType.AUDIO),
 }
 
-/** 图片 / 视频网格的列数，排版与 `GridCells.Fixed` 必须一致。 */
 private const val MEDIA_GRID_COLUMNS = 4
 
 private sealed interface MemberMediaRow {
@@ -364,11 +367,9 @@ private sealed interface MemberMediaRow {
 
     data class Month(override val key: String, val label: String) : MemberMediaRow
 
-    /** 网格里的行尾空位：保持每行对齐，内容从左往右排。 */
     data class Gap(override val key: String) : MemberMediaRow
 }
 
-/** 一个月的媒体分组，`items` 为新 → 旧。 */
 private data class MemberMediaMonth(
     val key: String,
     val label: String,
@@ -379,7 +380,6 @@ private fun memberMediaMonths(
     messages: List<RelayMessage>,
     zone: ZoneId = ZoneId.systemDefault(),
 ): List<MemberMediaMonth> {
-    // 列表已按发送时间降序，同一个月的条目一定连续。
     val months = messages.map { messageLocalDateTime(it.sentAt, zone)?.let(YearMonth::from) }
     val occurrences = mutableMapOf<String, Int>()
     val result = mutableListOf<MemberMediaMonth>()
@@ -402,7 +402,6 @@ private fun memberMediaMonths(
     return result
 }
 
-/** 语音列表：月份隔离符跟在每个降序分组之后，在反向布局里显示在该组上方。 */
 private fun memberMediaRows(
     messages: List<RelayMessage>,
     zone: ZoneId = ZoneId.systemDefault(),
@@ -413,20 +412,14 @@ private fun memberMediaRows(
     }
 }
 
-/**
- * 四列网格的排版：每个月从上往下、每行从左到右都由旧到新，
- * 且每个月从上端第一行开始左对齐排满（剩下不足一行的缺口在行尾）。
- */
 private fun memberMediaGridRows(
     messages: List<RelayMessage>,
     zone: ZoneId = ZoneId.systemDefault(),
 ): List<MemberMediaRow> = buildList {
     memberMediaMonths(messages, zone).forEach { month ->
-        // 从最老的一张开始分行，保证月份上端第一行排满。
         val rows = month.items.asReversed().chunked(MEDIA_GRID_COLUMNS)
         rows.asReversed().forEach { row ->
             row.forEach { add(MemberMediaRow.Media(it)) }
-            // 行尾补齐空位，让每一行都占满四格，避免不足一行时后续行错位。
             repeat(MEDIA_GRID_COLUMNS - row.size) { position ->
                 add(MemberMediaRow.Gap("gap:${month.key}:${row.first().id}:$position"))
             }
@@ -497,7 +490,6 @@ private fun MemberTimelineAuxiliaryScreen(
             val next = withContext(AppGraph.dispatchers.databaseRead) {
                 loadAuxiliaryPage(memberKey, screen, mediaCategory, offset)
             }
-            // 分页之间可能有新消息插入，按 id 去重后再顺序追加。
             val known = messages.mapTo(mutableSetOf()) { it.id }
             messages = messages + next.filter { known.add(it.id) }
             exhausted = next.size < AUXILIARY_PAGE_SIZE
@@ -507,8 +499,6 @@ private fun MemberTimelineAuxiliaryScreen(
 
     LaunchedEffect(memberKey, screen, mediaCategory, versions.messages, active) {
         if (!active) return@LaunchedEffect
-        // 熄屏或回到前台时数据没有变化，直接保留现有分页和滚动位置；
-        // 只有已经没有任何内容时才显示整页加载态。
         if (loadedVersion == versions.messages && messages.isNotEmpty()) return@LaunchedEffect
         loading = messages.isEmpty()
         loadingMore = false
@@ -524,55 +514,48 @@ private fun MemberTimelineAuxiliaryScreen(
         loading = false
     }
 
-    Column(Modifier.fillMaxSize().background(RelayLightBackdrop).statusBarsPadding()) {
-        RelayMirrorGlassCard(
-            shape = RelayHomeCardShape,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = 12.dp, end = 20.dp, top = 10.dp, bottom = 6.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                // 顶栏压缩：图标按钮保留 48dp 触摸区，卡片高度只留最小内边距。
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 13.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
-            ) {
-                RelayMirrorGlassIconButton(
-                    onClick = onBack,
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "返回消息流",
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (screen == MemberTimelineAuxiliary.MEDIA) "媒体" else "收藏夹",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = "$totalCount",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
-                )
-            }
+            GlassBackButton(onClick = onBack, contentDescription = "返回消息流")
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = if (screen == MemberTimelineAuxiliary.MEDIA) "媒体" else "收藏夹",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = GlassColors.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "$totalCount",
+                color = GlassColors.InkTertiary,
+                fontSize = 12.5.sp,
+            )
         }
         if (screen == MemberTimelineAuxiliary.MEDIA) {
-            RelaySegmentedTabs(
+            GlassSegmentedTabs(
                 labels = MemberMediaCategory.entries.map(MemberMediaCategory::label),
                 selectedIndex = mediaCategory.ordinal,
                 onSelected = { mediaCategory = MemberMediaCategory.entries[it] },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             )
+            Spacer(Modifier.height(4.dp))
         }
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
             }
             messages.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     if (screen == MemberTimelineAuxiliary.FAVORITES) "暂无收藏的消息" else "暂无${mediaCategory.label}消息",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = GlassColors.InkSecondary,
                 )
             }
             screen == MemberTimelineAuxiliary.FAVORITES -> AuxiliaryMessageList(
@@ -606,9 +589,9 @@ private fun MemberTimelineAuxiliaryScreen(
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(MEDIA_GRID_COLUMNS),
                 reverseLayout = true,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 128.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 128.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 gridItems(
@@ -625,7 +608,6 @@ private fun MemberTimelineAuxiliaryScreen(
                             onClick = { onOpenMedia(row.message) },
                         )
                         is MemberMediaRow.Month -> MemberMediaMonthHeader(row.label)
-                        // 行尾空位：与预览图同尺寸，保持每行左对齐。
                         is MemberMediaRow.Gap -> Spacer(Modifier.fillMaxWidth().aspectRatio(1f))
                     }
                 }
@@ -677,12 +659,11 @@ private fun AuxiliaryMessageList(
                         onToggleFavorite = onToggleFavorite,
                     )
                     is MemberMediaRow.Month -> MemberMediaMonthHeader(row.label)
-                    // 单列列表不会出现网格的行尾空位。
-                    is MemberMediaRow.Gap -> Unit
+                    is MemberMediaRow.Gap -> Spacer(Modifier)
                 }
             }
         } else {
-            items(messages, key = RelayMessage::id) { message ->
+            items(messages, key = { it.id }, contentType = { "message" }) { message ->
                 AuxiliaryMessageCard(
                     message = message,
                     playbackState = playbackState,
@@ -697,7 +678,7 @@ private fun AuxiliaryMessageList(
             }
         }
         if (hasMore) {
-            item(key = "auxiliary_message_loading") {
+            item(key = "auxiliary_load_more") {
                 AuxiliaryLoadFooter(pageKey = messages.size, onLoadMore = onLoadMore)
             }
         }
@@ -732,49 +713,50 @@ private fun AuxiliaryMessageCard(
     )
 }
 
-/** 媒体二级页的月份隔离标识：反向布局里显示在该月内容上方。 */
 @Composable
 private fun MemberMediaMonthHeader(label: String) {
     Box(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         Text(
             text = label,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = GlassColors.InkTertiary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
-/** 列表底部提前预取下一页；走到底部时逐页补齐历史。 */
 @Composable
 private fun AuxiliaryLoadFooter(pageKey: Int, onLoadMore: () -> Unit) {
     Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
     }
     LaunchedEffect(pageKey) { onLoadMore() }
 }
 
 @Composable
 private fun MediaMessageCell(message: RelayMessage, onClick: () -> Unit) {
-    val context = LocalContext.current
     val thumbnailUrl = message.thumbnailUrl?.takeIf(String::isNotBlank)
     val previewUrl = thumbnailUrl ?: message.mediaUrl?.takeIf(String::isNotBlank)
     val previewType = if (thumbnailUrl != null) MessageType.IMAGE else message.type
-    // 与消息流一致：静音状态优先读数据库，只在从未记录时检测一次并写回。
-    val videoHasAudioTrack by produceState<Boolean?>(message.videoHasAudio, message.id, message.mediaUrl) {
-        value = MediaDownloader.resolveVideoHasAudio(context, message)
-    }
+
+    val videoHasAudioTrack by rememberVideoHasAudioTrack(message)
+    val cellShape = GlassShapes.CardSmall
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .clip(RelayControlShape)
-            .clickable(onClick = onClick)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+            .clip(cellShape)
+            .glassMediaSource(
+                key = mediaSourceKey(LocalMediaSourceScope.current, message.id),
+                url = previewUrl,
+                cornerRadiusPx = with(LocalDensity.current) { 20.dp.toPx() },
+            )
+            .background(Color(0x2B8E93A6))
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (previewUrl != null) {
@@ -790,20 +772,28 @@ private fun MediaMessageCell(message: RelayMessage, onClick: () -> Unit) {
             )
         }
         if (message.type == MessageType.VIDEO) {
-            Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.18f)))
-            Icon(
-                imageVector = Icons.Rounded.PlayArrow,
-                contentDescription = "播放视频",
-                tint = Color.White,
-                modifier = Modifier.size(28.dp),
-            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(34.dp)
+                    .clip(GlassShapes.Circle)
+                    .background(Color.Black.copy(alpha = 0.38f), GlassShapes.Circle),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = "播放视频",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
             if (videoHasAudioTrack == false) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(4.dp)
+                        .padding(5.dp)
                         .size(20.dp)
-                        .background(Color.Black.copy(alpha = 0.62f), CircleShape),
+                        .background(Color.Black.copy(alpha = 0.55f), GlassShapes.Circle),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -818,17 +808,25 @@ private fun MediaMessageCell(message: RelayMessage, onClick: () -> Unit) {
     }
 }
 
-/** Measure the overlay first so the very first timeline layout already has its true inset. */
+/**
+ * Layout that lets the floating header overlap the timeline while the
+ * timeline content extends underneath it. Glass controls in the header
+ * sample the root haze source, so messages blur as they scroll beneath.
+ */
 @Composable
 private fun FloatingTimelineLayout(
     header: @Composable () -> Unit,
     content: @Composable (headerHeight: Dp) -> Unit,
 ) {
     SubcomposeLayout(Modifier.fillMaxSize()) { constraints ->
-        val headerPlaceable = subcompose("header", header).single()
+        val headerPlaceable = subcompose("header") { header() }.single()
             .measure(constraints.copy(minHeight = 0))
-        val contentPlaceable = subcompose("timeline") { content(headerPlaceable.height.toDp()) }
-            .single().measure(constraints)
+        val contentTopInset = (headerPlaceable.height.toDp() - 10.dp).coerceAtLeast(0.dp)
+        val contentPlaceable = subcompose("timeline") {
+            Box(Modifier.fillMaxSize()) {
+                content(contentTopInset)
+            }
+        }.single().measure(constraints)
         layout(constraints.maxWidth, constraints.maxHeight) {
             contentPlaceable.placeRelative(0, 0)
             headerPlaceable.placeRelative(0, 0)
@@ -845,52 +843,32 @@ private fun MemberTimelineHeader(
     onQueryChange: (String) -> Unit,
     onFilterClick: () -> Unit,
 ) {
-    // Insets are outside the floating card; it is a sibling of the scrolling timeline.
-    Box(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Box(
-            Modifier.fillMaxWidth().pointerInput(Unit) {
-                // Empty card space also intercepts hits, without replacing child controls or
-                // allowing taps/long presses to reach messages underneath the overlay.
-                awaitPointerEventScope {
-                    while (true) {
-                        awaitPointerEvent(PointerEventPass.Final).changes.forEach { it.consume() }
-                    }
-                }
-            },
-        ) {
-            // The same shell as navigation, sampled from the page's independent empty backdrop.
-            RelayMirrorGlassBackground(
-                shape = RelayNavigationBarShape,
-                modifier = Modifier.matchParentSize(),
-            )
-            Row(
-                // Keep the card border flush with the controls' layout edges.
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RelayMirrorGlassIconButton(
-                    onClick = onBack,
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = if (query.isNotEmpty()) "清空搜索" else "返回成员列表",
-                    enabled = active,
-                )
-                RelaySearchField(
-                    query = query,
-                    onQueryChange = onQueryChange,
-                    placeholder = "搜索消息内容或日期",
-                    modifier = Modifier.weight(1f),
-                    enabled = active,
-                )
-                RelayMirrorGlassIconButton(
-                    onClick = onFilterClick,
-                    imageVector = Icons.Rounded.FilterList,
-                    contentDescription = if (filterActive) "筛选时间，已启用" else "筛选时间",
-                    active = filterActive,
-                    enabled = active,
-                )
-            }
-        }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GlassBackButton(
+            onClick = onBack,
+            contentDescription = if (query.isNotEmpty()) "清空搜索" else "返回成员列表",
+        )
+        GlassSearchField(
+            query = query,
+            onQueryChange = onQueryChange,
+            enabled = active,
+            placeholder = "搜索消息",
+            modifier = Modifier.weight(1f),
+        )
+        GlassIconButton(
+            onClick = onFilterClick,
+            imageVector = Icons.Rounded.FilterList,
+            contentDescription = "筛选与更多",
+            enabled = active,
+            tone = if (filterActive) GlassTone.Accent else GlassTone.Neutral,
+        )
     }
 }
 
@@ -1084,7 +1062,6 @@ private fun MemberTimelineContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            // Always reserve this item index; locating a message never depends on loading state.
             item(key = "timeline-newer") {
                 TimelineBoundary(
                     visible = initialized && window.hasNewer,
@@ -1100,7 +1077,20 @@ private fun MemberTimelineContent(
                         Modifier.fillMaxWidth().padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(row.label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        GlassPanel(
+                            shape = GlassShapes.Capsule,
+                            depth = GlassDepths.None,
+                            fillAlpha = 0.36f,
+                            blur = 12.dp,
+                            edgeStrength = 0.5f,
+                        ) {
+                            Text(
+                                row.label,
+                                fontSize = 11.sp,
+                                color = GlassColors.InkSecondary,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            )
+                        }
                     }
                     is MessageTimelineRow.Message -> MessageCard(
                         message = row.message,
@@ -1136,11 +1126,11 @@ private fun MemberTimelineContent(
         if (!initialized || window.messages.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(top = topContentPadding, bottom = bottomContentPadding), contentAlignment = Alignment.Center) {
                 when {
-                    loadError -> TextButton(onClick = { retryKey++ }) { Text("加载失败，点击重试") }
-                    !initialized -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    loadError -> TextButton(onClick = { retryKey++ }) { Text("加载失败，点击重试", color = GlassColors.Accent) }
+                    !initialized -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
                     else -> Text(
                         if (query.isBlank() && !filter.isActive) "暂无消息" else "没有找到相关消息",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = GlassColors.InkSecondary,
                     )
                 }
             }
@@ -1153,9 +1143,9 @@ private fun TimelineBoundary(visible: Boolean, loading: Boolean, error: Boolean,
     if (visible) {
         Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
             when {
-                error -> TextButton(onClick = onRetry) { Text("加载失败，点击重试") }
-                loading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else -> Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                error -> TextButton(onClick = onRetry) { Text("加载失败，点击重试", color = GlassColors.Accent) }
+                loading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
+                else -> Text(label, fontSize = 11.sp, color = GlassColors.InkTertiary)
             }
         }
     } else {
@@ -1176,3 +1166,4 @@ private fun timelineItemIntersectsReadingArea(
     val itemEnd = itemOffset + itemSize
     return itemEnd > readingStart && itemOffset < readingEnd
 }
+

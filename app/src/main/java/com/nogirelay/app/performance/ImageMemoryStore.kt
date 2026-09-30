@@ -1,6 +1,5 @@
 package com.nogirelay.app.performance
 
-/** URL fallbacks are indexes into the same byte-budgeted store, never a second owner. */
 internal class ImageMemoryStore<T>(private val maxBytes: Long, private val sizeOf: (T) -> Long) {
     private data class Entry<T>(val url: String, val value: T, val bytes: Long)
     private val entries = LinkedHashMap<String, Entry<T>>(16, 0.75f, true)
@@ -47,7 +46,6 @@ internal class ImageMemoryStore<T>(private val maxBytes: Long, private val sizeO
     }
 }
 
-/** Retain enough pixels for the displayed bounds; never upscale a smaller source. */
 internal fun imageSampleSize(width: Int, height: Int, targetWidth: Int, targetHeight: Int): Int {
     if (width <= 0 || height <= 0) return 1
     var sample = 1
@@ -57,4 +55,28 @@ internal fun imageSampleSize(width: Int, height: Int, targetWidth: Int, targetHe
         (targetWidth > 0 || targetHeight > 0)
     ) sample *= 2
     return sample
+}
+
+internal fun imageScaledDensities(
+    width: Int,
+    height: Int,
+    sampleSize: Int,
+    targetWidth: Int,
+    targetHeight: Int,
+): Pair<Int, Int>? {
+    if (width <= 0 || height <= 0 || sampleSize <= 0) return null
+    if (targetWidth <= 0 && targetHeight <= 0) return null
+    val sampledWidth = width / sampleSize
+    val sampledHeight = height / sampleSize
+    if (sampledWidth <= 0 || sampledHeight <= 0) return null
+    val scale = when {
+        targetWidth <= 0 -> targetHeight.toFloat() / sampledHeight
+        targetHeight <= 0 -> targetWidth.toFloat() / sampledWidth
+        else -> maxOf(targetWidth.toFloat() / sampledWidth, targetHeight.toFloat() / sampledHeight)
+    }
+    if (scale >= 1f) return null
+    val scaledWidth = (sampledWidth * scale).toInt().coerceAtLeast(1)
+    if (scaledWidth >= sampledWidth) return null
+
+    return sampledWidth to scaledWidth
 }

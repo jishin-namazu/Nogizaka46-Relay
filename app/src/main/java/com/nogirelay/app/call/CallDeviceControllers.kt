@@ -7,6 +7,9 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.media.AudioManager
 import android.os.PowerManager
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 
@@ -34,13 +37,6 @@ internal interface ProximityScreenControl {
     fun close()
 }
 
-/**
- * 接近熄屏：只在距离传感器确实“贴近”时才持有 `PROXIMITY_SCREEN_OFF_WAKE_LOCK`。
- *
- * 一开始播放就抢锁会让显示子系统立刻请求 `useProximitySensor=true`，在传感器读数到达前
- * 屏幕会被瞬间熄灭再恢复（黑屏闪烁）。改为监听传感器：贴近时才持锁熄屏，
- * 远离时释放亮屏，放到耳边听语音的行为不变。
- */
 internal class OfficialProximityScreenControl(context: Context) :
     ProximityScreenControl,
     SensorEventListener {
@@ -53,39 +49,51 @@ internal class OfficialProximityScreenControl(context: Context) :
     private val proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
     private var enabled = false
     private var listening = false
+    private val handler = Handler(Looper.getMainLooper())
+    private val stability = ProximityStabilityGate()
+    private val confirmNear = Runnable {
+        if (enabled && stability.remainingMillis(SystemClock.elapsedRealtime()) == 0L && !wakeLock.isHeld) {
+            wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS)
+        }
+    }
 
     override fun setEnabled(enabled: Boolean) {
         if (this.enabled == enabled) return
         this.enabled = enabled
+        handler.removeCallbacks(confirmNear)
         if (!enabled) {
+            stability.disable()
             stopListening()
-            releaseWaitingForFarState()
+            releaseScreenLock()
             return
         }
         if (proximitySensor == null) {
-            // 没有距离传感器时持锁没有意义，反而会触发上面的显示状态请求。
+
             return
         }
+        stability.enable(SystemClock.elapsedRealtime())
         startListening()
     }
 
     override fun onSensorChanged(event: SensorEvent) {
         if (!enabled) return
         val maxRange = event.sensor.maximumRange
-        val near = event.values.firstOrNull()?.let { it < maxRange } ?: false
-        if (near) {
-            if (!wakeLock.isHeld) wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS)
-        } else {
-            releaseWaitingForFarState()
-        }
+        val near = event.values.firstOrNull()?.let { it.isFinite() && it >= 0f && it < minOf(5f, maxRange) } ?: false
+        stability.sample(near, event.timestamp / 1_000_000L)
+        handler.removeCallbacks(confirmNear)
+        val remaining = stability.remainingMillis(SystemClock.elapsedRealtime())
+        if (remaining != null) handler.postDelayed(confirmNear, remaining)
+        else releaseScreenLock()
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
     override fun close() {
         enabled = false
+        stability.disable()
+        handler.removeCallbacks(confirmNear)
         stopListening()
-        releaseWaitingForFarState()
+        releaseScreenLock()
     }
 
     private fun startListening() {
@@ -100,13 +108,12 @@ internal class OfficialProximityScreenControl(context: Context) :
         listening = false
     }
 
-    private fun releaseWaitingForFarState() {
-        if (wakeLock.isHeld) wakeLock.release(RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY)
+    private fun releaseScreenLock() {
+        if (wakeLock.isHeld) wakeLock.release()
     }
 
     private companion object {
         const val WAKE_LOCK_TAG = "com.sonydna.messages.app:VoicePlayerWakeLock"
-        const val RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY = 1
         const val WAKE_LOCK_TIMEOUT_MS = 30L * 60L * 1000L
     }
 }

@@ -1,9 +1,11 @@
 package com.nogirelay.app.ui.transfer
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,18 +18,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.DoneAll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -38,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,23 +42,20 @@ import com.nogirelay.app.GraduatedTag
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogMemberCategories
 import com.nogirelay.app.performance.LocalRelayPageWorkPaused
-import com.nogirelay.app.ui.BrandPurple
-import com.nogirelay.app.ui.BrandPurpleDark
 import com.nogirelay.app.ui.RemoteImage
-import com.nogirelay.app.ui.LocalRelayMirrorStyle
-import com.nogirelay.app.ui.RelayHomeCardShape
-import com.nogirelay.app.ui.RelaySelectionSurface
-import com.nogirelay.app.ui.RelayDialogButton
+import com.nogirelay.app.ui.glass.GlassCapsuleButton
+import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassDepths
+import com.nogirelay.app.ui.glass.GlassDialog
+import com.nogirelay.app.ui.glass.GlassDialogTitle
+import com.nogirelay.app.ui.glass.GlassIconButton
+import com.nogirelay.app.ui.glass.GlassMotion
+import com.nogirelay.app.ui.glass.GlassPanel
+import com.nogirelay.app.ui.glass.GlassShapes
+import com.nogirelay.app.ui.glass.GlassTone
 
-/**
- * BLOG 筛选器和两个数据传输成员选择器共用的固定分类顺序。
- * 周期顺序本身位于 [BlogMemberCategories.STANDARD_CATEGORIES]，因此它不会
- * 偏离读取和导入成员时所做的归一化；我们不认识的标签
- * 仍然排在 其他 之后。
- */
 val MemberCategoryOrder = BlogMemberCategories.STANDARD_CATEGORIES + "其他"
 
-/** 按 [MemberCategoryOrder] 中的分类对成员分组；未知分类排在最后。 */
 fun memberGroups(members: List<BlogMember>): List<Pair<String, List<BlogMember>>> =
     members.groupBy(BlogMember::category)
         .toList()
@@ -71,11 +64,6 @@ fun memberGroups(members: List<BlogMember>): List<Pair<String, List<BlogMember>>
             if (index >= 0) index else MemberCategoryOrder.size
         }
 
-/**
- * 带分类标题的成员头像网格，从 BLOG 筛选对话框中逐字提取，使
- * 筛选器和两个导出选择器共用同一套视觉语言。选择状态由调用方持有，
- * 正因如此，导出选择器能在不含时间范围区块的情况下复用它。
- */
 @Composable
 fun MemberPickerGrid(
     members: List<BlogMember>,
@@ -83,8 +71,6 @@ fun MemberPickerGrid(
     onSelectedChange: (Set<String>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // The picker is an active control of the open drawer/dialog. Only its own images
-    // resume work; the covered page remains paused by the outer composition local.
     CompositionLocalProvider(LocalRelayPageWorkPaused provides false) {
         MemberPickerGridContent(members, selectedIds, onSelectedChange, modifier)
     }
@@ -98,7 +84,6 @@ private fun MemberPickerGridContent(
     modifier: Modifier = Modifier,
 ) {
     val groups = remember(members) { memberGroups(members) }
-    val mirrorStyle = LocalRelayMirrorStyle.current
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 104.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -110,7 +95,7 @@ private fun MemberPickerGridContent(
                 Text(
                     category,
                     fontWeight = FontWeight.Bold,
-                    color = BrandPurple,
+                    color = GlassColors.Accent,
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
                 )
             }
@@ -123,64 +108,7 @@ private fun MemberPickerGridContent(
                             if (member.id in selectedIds) selectedIds - member.id else selectedIds + member.id,
                         )
                     },
-                    modifier = Modifier.fillMaxWidth().height(94.dp),
-                )
-            }
-        }
-    }
-}
-
-/** Shared member card used by the lazy blog filter and the modal picker grid. */
-@Composable
-fun MemberPickerCard(
-    member: BlogMember,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val mirrorStyle = LocalRelayMirrorStyle.current
-    RelaySelectionSurface(
-        onClick = onClick,
-        selected = selected,
-        emphasizeEdges = mirrorStyle,
-        modifier = modifier,
-    ) { selectionProgress ->
-        Box(Modifier.fillMaxSize()) {
-            // 卒業标记只出现在成员卡片的右上角：其余位置（博客列表、首页轮播）不再显示。
-            if (member.graduated) {
-                GraduatedTag(
-                    compact = true,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp),
-                )
-            }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 8.dp),
-            ) {
-                RemoteImage(
-                    url = member.avatarUrl,
-                    contentDescription = member.name,
-                    loadCachedImmediately = false,
-                    // 本地头像先显示；官网同 URL 换图时，后台条件校验会刷新缓存。
-                    revalidateRemote = true,
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(CircleShape)
-                        .border(
-                            1.5.dp,
-                            BrandPurple.copy(alpha = selectionProgress),
-                            CircleShape,
-                        ),
-                )
-                Text(
-                    member.name,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontSize = 12.sp,
-                    fontWeight = if (mirrorStyle) FontWeight.Medium else if (selected) FontWeight.Bold else FontWeight.Normal,
-                    color = lerp(MaterialTheme.colorScheme.onSurface, BrandPurpleDark, selectionProgress),
-                    modifier = Modifier.padding(top = 5.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 112.dp),
                 )
             }
         }
@@ -188,9 +116,101 @@ fun MemberPickerCard(
 }
 
 /**
- * 导出与导入区块共用的成员选择器。与 BLOG 筛选对话框相同，只是去掉了
- * 时间范围区块，因此"选择成员"在整个 App 中始终是同一种交互。
+ * Member tile: neutral glass at rest; when selected the avatar ring and the
+ * panel tint flow toward the accent liquid glass on a spring.
  */
+@Composable
+fun MemberPickerCard(
+    member: BlogMember,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    graduatedTagAtCorner: Boolean = false,
+) {
+    val selectionProgress by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = GlassMotion.GentleSpec,
+        label = "member_selection",
+    )
+    GlassPanel(
+        onClick = onClick,
+        onClickLabel = member.name,
+        shape = if (graduatedTagAtCorner) GlassShapes.CardSmall else GlassShapes.Card,
+        tone = if (selectionProgress > 0.5f) GlassTone.Accent else GlassTone.Neutral,
+        fillAlpha = 0.30f + (GlassColors.AccentFillAlpha - 0.30f) * selectionProgress,
+        depth = if (selected) GlassDepths.Low else GlassDepths.None,
+        blur = 14.dp,
+        edgeStrength = 0.6f + 0.4f * selectionProgress,
+        modifier = modifier,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(
+                horizontal = 10.dp,
+                vertical = 12.dp,
+            ),
+        ) {
+            Box {
+                RemoteImage(
+                    url = member.avatarUrl,
+                    contentDescription = member.name,
+                    loadCachedImmediately = false,
+                    revalidateRemote = true,
+                    modifier = Modifier
+                        .size(if (graduatedTagAtCorner) 40.dp else 46.dp)
+                        .clip(GlassShapes.Circle),
+                )
+                if (selectionProgress > 0.01f) {
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .clip(GlassShapes.Circle)
+                            .border(
+                                2.dp,
+                                GlassColors.OnAccent.copy(alpha = 0.9f * selectionProgress),
+                                GlassShapes.Circle,
+                            ),
+                    )
+                }
+            }
+            Text(
+                member.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall.copy(
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                ),
+                fontWeight = if (selectionProgress > 0.5f) FontWeight.SemiBold else FontWeight.Medium,
+                color = lerp(GlassColors.Ink, GlassColors.OnAccent, selectionProgress),
+                modifier = Modifier.padding(top = if (graduatedTagAtCorner) 4.dp else 5.dp),
+            )
+            if (!graduatedTagAtCorner) {
+                Spacer(Modifier.height(4.dp))
+                Box(Modifier.heightIn(min = 14.dp), contentAlignment = Alignment.Center) {
+                    if (member.graduated) GraduatedTag(compact = true)
+                }
+            }
+        }
+        if (graduatedTagAtCorner && member.graduated) {
+            // The compact badge follows the 20.dp panel corner with a 12.dp inset.
+            val tagShape = RoundedCornerShape(8.dp)
+            GraduatedTag(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 12.dp, end = 12.dp)
+                    .heightIn(min = 16.dp)
+                    .border(1.dp, GlassColors.Accent.copy(alpha = 0.18f), tagShape),
+                compact = true,
+                shape = tagShape,
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 3.dp),
+            )
+        }
+    }
+}
+
 @Composable
 fun TransferMemberPickerDialog(
     title: String,
@@ -201,92 +221,72 @@ fun TransferMemberPickerDialog(
 ) {
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     val allMemberIds = remember(members) { members.mapTo(linkedSetOf(), BlogMember::id) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = if (LocalRelayMirrorStyle.current) RelayHomeCardShape else RoundedCornerShape(20.dp),
-        title = { Text(title, fontWeight = FontWeight.Bold) },
-        text = {
-            if (members.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(120.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "正在加载成员...",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp,
-                    )
-                }
-            } else {
-                MemberPickerGrid(
-                    members = members,
-                    selectedIds = draft,
-                    onSelectedChange = { draft = it },
+    GlassDialog(onDismissRequest = onDismiss) {
+        GlassDialogTitle(title)
+        Spacer(Modifier.height(12.dp))
+        if (members.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxWidth().height(120.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "正在加载成员...",
+                    color = GlassColors.InkSecondary,
+                    fontSize = 13.sp,
                 )
             }
-        },
-        confirmButton = {
-            if (LocalRelayMirrorStyle.current) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        RelayDialogButton(
-                            onClick = { draft = allMemberIds },
-                            enabled = members.isNotEmpty(),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Rounded.DoneAll, contentDescription = "全选", modifier = Modifier.size(22.dp))
-                        }
-                        RelayDialogButton(
-                            onClick = { draft = emptySet() },
-                            enabled = draft.isNotEmpty(),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Rounded.ClearAll, contentDescription = "全不选", modifier = Modifier.size(22.dp))
-                        }
-                    }
-                    Text(
-                        "已选 ${draft.size} 位",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        RelayDialogButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
-                        RelayDialogButton(
-                            onClick = { onConfirm(draft) },
-                            enabled = draft.isNotEmpty(),
-                            modifier = Modifier.weight(1f),
-                        ) { Text("确定", fontWeight = FontWeight.Bold) }
-                    }
-                }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    IconButton(
-                        onClick = { draft = members.mapTo(linkedSetOf(), BlogMember::id) },
-                        enabled = members.isNotEmpty(),
-                    ) {
-                        Icon(Icons.Rounded.DoneAll, contentDescription = "全部选择", tint = BrandPurple)
-                    }
-                    IconButton(
-                        onClick = { draft = emptySet() },
-                        enabled = draft.isNotEmpty(),
-                    ) {
-                        Icon(
-                            Icons.Rounded.ClearAll,
-                            contentDescription = "全部清除",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss) { Text("取消") }
-                    TextButton(
-                        onClick = { onConfirm(draft) },
-                        enabled = draft.isNotEmpty(),
-                        colors = ButtonDefaults.textButtonColors(contentColor = BrandPurple),
-                    ) { Text("确定", fontWeight = FontWeight.Bold) }
-                }
+        } else {
+            MemberPickerGrid(
+                members = members,
+                selectedIds = draft,
+                onSelectedChange = { draft = it },
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            GlassIconButton(
+                onClick = { draft = allMemberIds },
+                enabled = members.isNotEmpty(),
+                imageVector = Icons.Rounded.DoneAll,
+                contentDescription = "全选",
+                size = 42.dp,
+                iconSize = 20.dp,
+            )
+            GlassIconButton(
+                onClick = { draft = emptySet() },
+                enabled = draft.isNotEmpty(),
+                imageVector = Icons.Rounded.ClearAll,
+                contentDescription = "全不选",
+                size = 42.dp,
+                iconSize = 20.dp,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "已选 ${draft.size} 位",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 12.5.sp,
+                color = GlassColors.InkSecondary,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            GlassCapsuleButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
             }
-        },
-        dismissButton = {},
-    )
+            GlassCapsuleButton(
+                onClick = { onConfirm(draft) },
+                enabled = draft.isNotEmpty(),
+                tone = GlassTone.Accent,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
 }
+

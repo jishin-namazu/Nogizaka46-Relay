@@ -1,6 +1,5 @@
 package com.nogirelay.app.data
 
-/** 进程内的可见性状态，用于在消息所属会话仍显示在屏幕上时避免将其标记为未读。 */
 object MessageReadTracker {
     @Volatile
     private var appVisible = false
@@ -17,10 +16,6 @@ object MessageReadTracker {
 
     fun openMember(memberKey: String, viewingLatest: Boolean = true) {
         openMemberKey = memberKey
-        isViewingLatest = viewingLatest
-    }
-
-    fun updateViewingLatest(viewingLatest: Boolean) {
         isViewingLatest = viewingLatest
     }
 

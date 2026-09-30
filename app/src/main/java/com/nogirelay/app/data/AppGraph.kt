@@ -20,7 +20,6 @@ object AppGraph {
         private set
     lateinit var dispatchers: PerformanceDispatchers
         private set
-    val syncCoordinator = SyncCoordinator()
     val memberSummaries = MemberSummaryRepository()
     private val _dataVersions = MutableStateFlow(DataVersions())
     val dataVersions: StateFlow<DataVersions> = _dataVersions

@@ -10,7 +10,6 @@ import java.security.MessageDigest
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 
-/** 导出覆盖的内容族。每个界面各自拥有一种类型，所以任何导出都不会混用它们。 */
 enum class ExportKind(val wire: String, val label: String, val entryName: String, val fileStem: String) {
     MESSAGES("messages", "消息", "data/messages.jsonl", "messages"),
     BLOGS("blogs", "博客", "data/blogs.jsonl", "blogs");
@@ -20,7 +19,6 @@ enum class ExportKind(val wire: String, val label: String, val entryName: String
     }
 }
 
-/** 导出携带的一行成员名册，使期别分组和头像能在恢复后保留。 */
 data class ManifestMember(
     val id: String,
     val name: String,
@@ -28,17 +26,12 @@ data class ManifestMember(
     val avatarUrl: String?,
     val displayOrder: Int,
     val directory: Boolean,
-    /** 当官方名册将该成员标记为毕业后为 true，使 卒業 标签能在恢复后保留。 */
+
     val graduated: Boolean = false,
 )
 
-/** 记录引用的一份媒体文件。[path] 是存放其字节的 ZIP 条目。 */
 data class MediaRef(val role: String, val url: String, val path: String)
 
-/**
- * 媒体候选：唯一实现已移到 [com.nogirelay.app.data.MediaRefs]，这里保留类型别名，
- * 导出、补齐等既有调用点因此无需改动。
- */
 typealias MediaCandidate = com.nogirelay.app.data.MediaCandidate
 
 data class ExportManifest(
@@ -52,16 +45,6 @@ data class ExportManifest(
     val members: List<ManifestMember>,
 )
 
-/**
- * [DataExporter] 与 [DataImporter] 共享的磁盘格式契约。
- *
- * 布局（manifest 在最前，因此预览无需遍历载荷）：
- *
- *     manifest.json          # 很小，在写入载荷之前就完全已知
- *     data/messages.jsonl    # 或 data/blogs.jsonl，每行一个 JSON 对象
- *     media/<sha256>.<ext>   # 内容寻址，因此共享媒体只存一次
- *     data/skipped.jsonl     # 可选：被引用但未在本地缓存的媒体
- */
 object ExportFormat {
     const val FORMAT = "nogirelay-export"
     const val FORMAT_VERSION = 1
@@ -69,7 +52,6 @@ object ExportFormat {
     const val SKIPPED_ENTRY = "data/skipped.jsonl"
     const val MEDIA_PREFIX = "media/"
 
-    /** 防止导入遭受恶意归档攻击：条目总数与每个条目的解码后大小。 */
     const val MAX_ENTRIES = 200_000
     const val MAX_ENTRY_BYTES = 100L * 1024L * 1024L
 
@@ -80,10 +62,6 @@ object ExportFormat {
 
     fun fileNameTimestamp(): String = OffsetDateTime.now().format(timestampFormat)
 
-    /**
-     * 为 UI 渲染 manifest 时间戳。偏移量按原样保留，因此导出显示的是
-     * 导出设备的本地时间；无法解析的值原样传递。
-     */
     fun displayTimestamp(iso: String): String = runCatching {
         OffsetDateTime.parse(iso).format(displayTimestampFormat)
     }.getOrDefault(iso)
@@ -117,7 +95,6 @@ object ExportFormat {
         )
     }
 
-    /** @throws IllegalArgumentException 当载荷不是我们能读取的 Nogi Relay 导出时。 */
     fun manifestFromJson(json: JSONObject): ExportManifest {
         require(json.optString("format") == FORMAT) { "不是 Nogi Relay 导出的归档文件" }
         val version = json.optInt("formatVersion", 0)
@@ -199,7 +176,7 @@ object ExportFormat {
         isPlayed = json.optBoolean("is_played", false),
         translation = json.stringOrNull("translation"),
         translationDone = json.optBoolean("translation_done", false),
-        // 已读状态是设备本地的：导入绝不能重新唤起未读角标。
+
         isUnread = false,
         isFavorite = json.optBoolean("is_favorite", false),
         videoHasAudio = if (json.has("video_has_audio") && !json.isNull("video_has_audio")) {
@@ -245,16 +222,10 @@ object ExportFormat {
         isUnread = false,
     )
 
-    /** 归档记录归属的成员 key；与媒体引用表同口径，见 [MediaRefs.messageMemberKey]。 */
     fun messageMemberKey(message: RelayMessage): String = MediaRefs.messageMemberKey(message)
 
-    /** BLOG 的成员 key；与媒体引用表同口径，见 [MediaRefs.blogMemberKey]。 */
     fun blogMemberKey(post: BlogPost): String = MediaRefs.blogMemberKey(post)
 
-    /**
-     * 归档里**显式写出**的链接列。规则：缺键或 JSON null ＝ 归档没带这个信息，本地值不动；
-     * 显式空串 ＝ 归档就是要清空它，导入重复记录时照写（空值覆盖）。
-     */
     fun messageLinksFrom(json: JSONObject): Map<String, String> = explicitColumns(
         json,
         listOf("member_avatar_url", "phone_image_url", "media_url", "thumbnail_url", "ringtone_url"),
@@ -262,9 +233,9 @@ object ExportFormat {
 
     fun blogLinksFrom(json: JSONObject): Map<String, String> {
         val columns = explicitColumns(json, listOf("image_url", "post_url", "member_avatar_url"))
-        // body_html 里内嵌图片地址，算链接列；但正文内容不能被空值抹掉，所以只有非空才覆盖。
+
         json.optString("body_html").takeIf(String::isNotBlank)?.let { columns["body_html"] = it }
-        // 成员身份不是链接：空值会让文章失去归属，同样只在非空时覆盖。
+
         listOf("member_id", "member_name").forEach { key ->
             json.optString(key).trim().takeIf(String::isNotBlank)?.let { columns[key] = it }
         }
@@ -274,8 +245,7 @@ object ExportFormat {
     private fun explicitColumns(json: JSONObject, keys: List<String>): MutableMap<String, String> {
         val columns = linkedMapOf<String, String>()
         keys.forEach { key ->
-            // isNull() 对"缺键"也返回 true，所以这里只收显式存在且不是 JSON null 的值；
-            // 字面量 "null" 是脏数据（旧格式用字符串表示空），同样不写。
+
             if (json.isNull(key)) return@forEach
             val value = json.optString(key).trim()
             if (value != "null") columns[key] = value
@@ -308,10 +278,8 @@ object ExportFormat {
         }
     }
 
-    /** 消息的媒体候选；规则与媒体引用表共用，实现在 [MediaRefs.candidates]。 */
     fun mediaCandidates(message: RelayMessage): List<MediaCandidate> = MediaRefs.candidates(message)
 
-    /** BLOG 的媒体候选；规则与媒体引用表共用，实现在 [MediaRefs.candidates]。 */
     fun mediaCandidates(post: BlogPost): List<MediaCandidate> = MediaRefs.candidates(post)
 
     fun mediaEntryName(sha256: String, extension: String): String {

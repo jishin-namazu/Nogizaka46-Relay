@@ -25,12 +25,12 @@ import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
-import com.nogirelay.app.ui.RelayPlaybackSlider
+import com.nogirelay.app.ui.glass.GlassSlider
+import com.nogirelay.app.ui.glass.GlassColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.abs
 
-/** Keep frame updates inside the timeline, rather than recomposing the card or member list. */
 @Composable
 internal fun VoicePlaybackTimeline(
     message: RelayMessage,
@@ -70,7 +70,7 @@ internal fun VoicePlaybackTimeline(
     }
     LaunchedEffect(pendingSeek) {
         if (pendingSeek != null) {
-            // Keep the thumb at the requested position until the service reports the seek.
+
             delay(800)
             pendingSeek = null
         }
@@ -90,7 +90,7 @@ internal fun VoicePlaybackTimeline(
                 formatAudioTime(displayedPosition.toInt()),
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = GlassColors.InkTertiary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -101,12 +101,12 @@ internal fun VoicePlaybackTimeline(
                 textAlign = TextAlign.End,
                 style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
                 fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = GlassColors.InkTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        RelayPlaybackSlider(
+        GlassSlider(
             value = displayedPosition,
             valueRange = 0f..duration.coerceAtLeast(1).toFloat(),
             onValueChange = { value ->
@@ -128,3 +128,5 @@ internal fun VoicePlaybackTimeline(
         )
     }
 }
+
+

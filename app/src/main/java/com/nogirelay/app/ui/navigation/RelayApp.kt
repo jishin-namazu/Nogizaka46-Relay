@@ -6,66 +6,34 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Article
-import androidx.compose.material.icons.rounded.Home
-import androidx.compose.material.icons.rounded.Inbox
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
@@ -85,19 +53,15 @@ import com.nogirelay.app.performance.LocalRelayPageActive
 import com.nogirelay.app.performance.isRelayUiStarted
 import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
-import com.nogirelay.app.ui.ProvideRelayHazeState
-import com.nogirelay.app.ui.RelayControlShape
-import com.nogirelay.app.ui.RelayLightBackdrop
-import com.nogirelay.app.ui.RelayMirrorGlassBackground
-import com.nogirelay.app.ui.RelayMirrorGlassSelection
-import com.nogirelay.app.ui.RelayNavigationBarShape
+import com.nogirelay.app.ui.glass.LocalGlassHazeDrawTick
+import com.nogirelay.app.ui.glass.GlassBackdrop
+import com.nogirelay.app.ui.glass.GlassMotion
+import com.nogirelay.app.ui.glass.GlassNavBar
+import com.nogirelay.app.ui.glass.GlassNavItem
 import com.nogirelay.app.ui.home.HomeScreen
 import com.nogirelay.app.ui.home.hasNotificationPermission
 import com.nogirelay.app.ui.messages.MessagesScreen
-import com.nogirelay.app.ui.messages.unreadBadgeLabel
-import com.nogirelay.app.ui.relayAtmosphere
-import com.nogirelay.app.ui.relayHazeSource
-import com.nogirelay.app.ui.rememberRelayHazeState
+import com.nogirelay.app.ui.glass.glassHazeSourceTick
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -105,124 +69,26 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
+private const val TAG = "RelayApp"
+
 enum class AppTab(val label: String) { HOME("主页"), MESSAGES("消息"), BLOG("博客") }
 
-@Composable
-fun RowScope.RelayNavigationBarItem(
-    selected: Boolean,
-    onClick: () -> Unit,
-    label: String,
-    imageVector: ImageVector,
-    badgeCount: Int,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val iconScale by animateFloatAsState(
-        targetValue = if (selected) 1.08f else 1.0f,
-        animationSpec = tween(durationMillis = 200),
-        label = "nav_icon_scale",
-    )
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            .selectable(
-                selected = selected,
-                interactionSource = interactionSource,
-                indication = null,
-                role = Role.Tab,
-                onClick = onClick,
-            )
-            .padding(vertical = 4.dp),
-    ) {
-        Box(
-            // The moving glass indicator and icon scale provide the tab feedback.
-            modifier = Modifier.size(width = 56.dp, height = 34.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            BadgedBox(
-                badge = {
-                    if (badgeCount > 0) {
-                        Badge(containerColor = MaterialTheme.colorScheme.error) {
-                            Text(unreadBadgeLabel(badgeCount))
-                        }
-                    }
-                },
-            ) {
-                Icon(
-                    imageVector = imageVector,
-                    contentDescription = label,
-                    tint = if (selected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    modifier = Modifier.graphicsLayer {
-                        scaleX = iconScale
-                        scaleY = iconScale
-                    },
-                )
-            }
-        }
-        Spacer(Modifier.height(3.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
-    }
-}
-
 /**
- * 相当于带应用圆角方形形状的 [androidx.compose.material3.IconButton]：Material 3 把 [androidx.compose.material3.IconButton]
- * 本身固定为圆形，并且不暴露形状参数，所以这里改为自行绘制容器。
- * 48dp 的方框与 [androidx.compose.material3.IconButton] 的触摸目标完全一致。
+ * App shell: one continuous milky-glass world.
+ *
+ * A single [GlassBackdrop] at the root is the shared haze source for every
+ * glass surface on every page, so content visibly scrolls behind the
+ * floating navigation capsule. Pages are kept alive and transition
+ * spatially (gentle rise + settle, never a bare crossfade), and the capsule
+ * indicator moves with liquid stretch.
  */
-@Composable
-fun RelayIconButton(
-    onClick: () -> Unit,
-    imageVector: ImageVector,
-    contentDescription: String?,
-    enabled: Boolean = true,
-) {
-    Box(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(RelayControlShape)
-            .clickable(
-                enabled = enabled,
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = imageVector,
-            contentDescription = contentDescription,
-            tint = if (enabled) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-            },
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RelayApp(
     notificationMessageIds: StateFlow<String?>,
     notificationBlogIds: StateFlow<String?>,
     onNotificationMessageHandled: (String) -> Unit,
     onNotificationBlogHandled: (String) -> Unit,
-    onOpenMedia: (RelayMessage) -> Unit,
+    onOpenMedia: (RelayMessage, String) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onTestCall: () -> Unit,
     syncRequests: StateFlow<Long>,
@@ -303,7 +169,7 @@ fun RelayApp(
                     }
                 },
                 onFailure = { error ->
-                    Log.w("NogiRelay", "History sync failed", error)
+                    Log.w(TAG, "History sync failed", error)
                     error.message ?: "历史消息同步失败"
                 },
             )
@@ -318,8 +184,6 @@ fun RelayApp(
         }
     }
 
-    // 语音播放期间听筒靠近熄屏由此处同步：即使界面已经停止，
-    // 播放停止时也要释放锁，避免播放结束后仍然“靠近就熄屏”。
     LaunchedEffect(Unit) {
         VoicePlaybackService.playbackState
             .map { it.copy(positionMs = 0, durationMs = 0, sampledAtMillis = 0) }
@@ -331,64 +195,73 @@ fun RelayApp(
         tab = AppTab.HOME
     }
 
-    val hazeState = rememberRelayHazeState()
-    ProvideRelayHazeState(hazeState) {
-        Box(
+    val hazeDrawTick = remember { mutableLongStateOf(0L) }
+    val hazeScrollDriver = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                hazeDrawTick.longValue++
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
+    }
+
+    androidx.compose.runtime.CompositionLocalProvider(LocalGlassHazeDrawTick provides hazeDrawTick) {
+        GlassBackdrop(
             modifier = Modifier
                 .fillMaxSize()
-                .background(RelayLightBackdrop)
-                .relayAtmosphere(),
+                .nestedScroll(hazeScrollDriver),
         ) {
-            Scaffold(
-                containerColor = Color.Transparent,
-                // 顶部状态栏 inset 由各页面自己的 TopAppBar（或详情页的 statusBarsPadding）消费；
-                // 这里若沿用默认的 systemBars 内边距，会和它叠加成两倍状态栏高度的留白。
-                contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            ) { padding ->
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .relayHazeSource(hazeState),
-                ) {
-                    AppTab.entries.forEach { item ->
-                        val isSelected = (tab == item)
-                        val pageActive = isSelected && uiStarted
-                        val alpha by animateFloatAsState(
-                            targetValue = if (isSelected) 1f else 0f,
-                            animationSpec = tween(durationMillis = 320),
-                            label = "tab_fade_${item.name}",
+            Box(Modifier.fillMaxSize()) {
+                AppTab.entries.forEach { item ->
+                    val isSelected = (tab == item)
+                    val pageActive = isSelected && uiStarted
+                    // Spatial continuity: the incoming page rises and settles
+                    // on a spring; the outgoing page sinks and dims. Both stay
+                    // composed so scroll positions and playback survive.
+                    val presence = remember { Animatable(if (isSelected) 1f else 0f) }
+                    LaunchedEffect(isSelected) {
+                        presence.animateTo(
+                            if (isSelected) 1f else 0f,
+                            if (isSelected) GlassMotion.MorphSpec else GlassMotion.GentleSpec,
                         )
+                    }
 
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .zIndex(if (isSelected) 1f else 0f)
-                                .graphicsLayer {
-                                    this.alpha = alpha
-                                }
-                                .background(Color.Transparent)
-                                .then(
-                                    if (!isSelected) {
-                                        Modifier
-                                            .clearAndSetSemantics { }
-                                            .pointerInput(Unit) {
-                                                awaitPointerEventScope {
-                                                    while (true) {
-                                                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                                                        event.changes.forEach { it.consume() }
-                                                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(if (isSelected) 1f else 0f)
+                            .drawWithContent {
+                                if (presence.value > 0f) drawContent()
+                            }
+                            .graphicsLayer {
+                                val p = presence.value
+                                alpha = p
+                                translationY = (1f - p) * 26.dp.toPx()
+                                val s = 0.975f + 0.025f * p
+                                scaleX = s
+                                scaleY = s
+                            }
+                            .then(
+                                if (!isSelected) {
+                                    Modifier
+                                        .clearAndSetSemantics { }
+                                        .pointerInput(Unit) {
+                                            awaitPointerEventScope {
+                                                while (true) {
+                                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                                    event.changes.forEach { it.consume() }
                                                 }
                                             }
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
-                        ) {
-                            CompositionLocalProvider(LocalRelayPageActive provides pageActive) {
+                                        }
+                                } else {
+                                    Modifier
+                                },
+                            )
+                            .glassHazeSourceTick(hazeDrawTick),
+                    ) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalRelayPageActive provides pageActive) {
                             when (item) {
                                 AppTab.HOME -> HomeScreen(
-                                    isActive = pageActive,
                                     notificationGranted = notificationGranted,
                                     fullScreenGranted = fullScreenGranted,
                                     overlayGranted = overlayGranted,
@@ -409,14 +282,6 @@ fun RelayApp(
                                     syncLabel = syncLabel,
                                     onSyncHistory = onManualSync,
                                     onSettingsChanged = { AppGraph.notifyDataChanged(DataChange.SETTINGS) },
-                                    onSelectMember = { memberId ->
-                                        navigatedMemberId = memberId.ifBlank { null }
-                                        tab = AppTab.MESSAGES
-                                    },
-                                    onSelectBlog = { blogId ->
-                                        navigatedBlogId = blogId.ifBlank { null }
-                                        tab = AppTab.BLOG
-                                    },
                                 )
 
                                 AppTab.MESSAGES -> MessagesScreen(
@@ -442,87 +307,46 @@ fun RelayApp(
                                     onUnreadChanged = { AppGraph.notifyDataChanged(DataChange.BLOG_READ) },
                                 )
                             }
-                            }
                         }
                     }
                 }
-            }
 
-            // The navigation overlays (and never enters) the scrolling Haze source.
-            BoxWithConstraints(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp)
-                    .padding(top = 6.dp, bottom = 12.dp),
-            ) {
-                val navigationInset = 0.dp
-                val indicatorHeight = 74.dp
-                val indicatorShape = RelayNavigationBarShape
-                // The outer card hugs the selectable item row and moving indicator.
-                val navigationCardShape = RelayNavigationBarShape
-                val selectedIndex = AppTab.entries.indexOf(tab)
-                val itemWidth = (maxWidth - navigationInset * 2) / AppTab.entries.size
-                val indicatorOffset by animateDpAsState(
-                    targetValue = itemWidth * selectedIndex,
-                    animationSpec = spring(
-                        dampingRatio = 0.6f,
-                        stiffness = Spring.StiffnessLow,
+                GlassNavBar(
+                    items = listOf(
+                        GlassNavItem(
+                            label = AppTab.HOME.label,
+                            icon = RelayNavigationIcons.homeOutline,
+                            selectedIcon = RelayNavigationIcons.homeFilled,
+                        ),
+                        GlassNavItem(
+                            label = AppTab.MESSAGES.label,
+                            icon = RelayNavigationIcons.inboxOutline,
+                            selectedIcon = RelayNavigationIcons.inboxFilled,
+                            badgeCount = unreadMessageCount,
+                        ),
+                        GlassNavItem(
+                            label = AppTab.BLOG.label,
+                            icon = RelayNavigationIcons.blogOutline,
+                            selectedIcon = RelayNavigationIcons.blogFilled,
+                            badgeCount = unreadBlogCount,
+                        ),
                     ),
-                    label = "navigation_glass_indicator_offset",
-                )
-                Box(
+                    selectedIndex = AppTab.entries.indexOf(tab),
+                    onSelected = { tab = AppTab.entries[it] },
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(indicatorHeight + navigationInset * 2),
-                ) {
-                    // Only this empty background layer samples the page. Keeping controls
-                    // and the indicator out of Haze avoids rectangular/self-sampled layers.
-                    RelayMirrorGlassBackground(
-                        shape = navigationCardShape,
-                        modifier = Modifier.matchParentSize(),
-                    )
-                    RelayMirrorGlassSelection(
-                        shape = indicatorShape,
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            // Let the spring travel past either end and return. Only the
-                            // backdrop is clipped, never this moving foreground layer.
-                            .offset { IntOffset((navigationInset + indicatorOffset).roundToPx(), 0) }
-                            .size(width = itemWidth, height = indicatorHeight),
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(navigationInset)
-                            .selectableGroup(),
-                    ) {
-                        AppTab.entries.forEach { item ->
-                            RelayNavigationBarItem(
-                                selected = tab == item,
-                                onClick = {
-                                    if (tab != item) {
-                                        tab = item
-                                    }
-                                },
-                                label = item.label,
-                                imageVector = when (item) {
-                                    AppTab.HOME -> Icons.Rounded.Home
-                                    AppTab.MESSAGES -> Icons.Rounded.Inbox
-                                    AppTab.BLOG -> Icons.AutoMirrored.Rounded.Article
-                                },
-                                badgeCount = when (item) {
-                                    AppTab.MESSAGES -> unreadMessageCount
-                                    AppTab.BLOG -> unreadBlogCount
-                                    else -> 0
-                                },
-                            )
-                        }
-                    }
-                }
+                        .align(Alignment.BottomCenter)
+                        .zIndex(2f)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 6.dp, bottom = 14.dp)
+                        .fillMaxWidth(0.78f)
+                        .widthIn(max = 330.dp),
+                )
             }
         }
     }
 }
+
+
+
+

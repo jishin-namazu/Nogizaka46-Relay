@@ -24,11 +24,6 @@ object BlogMediaDownloader {
         prefetchImages(context, imageUrls(post))
     }
 
-/**
-     * 在后台把给定图片下载到私有缓存中，已存在的文件会跳过。用于 BLOG 页面的
-     * 封面，这样滚动时直接从磁盘解码，而不必等待新的下载，从而让搜索结果和
-     * 最新文章一样流畅。
-     */
     fun prefetchImages(context: Context, urls: List<String>) {
         val appContext = context.applicationContext
         urls.forEach { url ->

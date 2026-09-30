@@ -6,7 +6,6 @@ import kotlinx.coroutines.withContext
 
 data class MemberSummary(val latest: RelayMessage, val unreadCount: Int)
 
-/** Home and inbox reuse the same query result for a given message revision. */
 class MemberSummaryRepository {
     private val mutex = Mutex()
     private var version = -1L
@@ -20,8 +19,7 @@ class MemberSummaryRepository {
                 if (changedIds == null) {
                     AppGraph.database.latestMessagePerMember().map { MemberSummary(it, unread[it.memberKey] ?: 0) }
                 } else {
-                    // Read/translation updates cannot change which message is newest. Only
-                    // reload a preview if its own ID changed, and refresh badge counts.
+
                     cached.map { summary ->
                         val latest = if (summary.latest.id in changedIds) {
                             AppGraph.database.find(summary.latest.id) ?: summary.latest

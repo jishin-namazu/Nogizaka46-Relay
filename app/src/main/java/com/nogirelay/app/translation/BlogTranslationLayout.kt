@@ -4,7 +4,6 @@ import com.nogirelay.app.blog.BlogContentParser
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** 一次性发送完整的 BLOG，然后恢复每个段落的原始换行。 */
 class BlogTranslationLayout private constructor(
     source: String,
     val paragraphs: List<String>,

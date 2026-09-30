@@ -3,6 +3,7 @@ package com.nogirelay.app
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.InlineTextContent
@@ -35,11 +36,13 @@ import androidx.compose.ui.unit.sp
 
 private const val UNREAD_INLINE_ID = "unread-tag"
 
-/** Small "卒業" chip marking a member the official roster already lists as graduated. */
 @Composable
-fun GraduatedTag(modifier: Modifier = Modifier, compact: Boolean = false) {
-    val cornerRadius = if (compact) 3.dp else 4.dp
-    val horizontalPadding = if (compact) 3.dp else 4.dp
+fun GraduatedTag(
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    shape: RoundedCornerShape = RoundedCornerShape(if (compact) 3.dp else 4.dp),
+    contentPadding: PaddingValues = PaddingValues(horizontal = if (compact) 3.dp else 4.dp),
+) {
     val tagHeight = if (compact) 12.dp else 16.dp
     val textSize = if (compact) 8.sp else 10.sp
     Box(
@@ -47,9 +50,9 @@ fun GraduatedTag(modifier: Modifier = Modifier, compact: Boolean = false) {
             .defaultMinSize(minHeight = tagHeight)
             .background(
                 color = MaterialTheme.colorScheme.secondaryContainer,
-                shape = RoundedCornerShape(cornerRadius),
+                shape = shape,
             )
-            .padding(horizontal = horizontalPadding),
+            .padding(contentPadding),
         contentAlignment = Alignment.Center,
     ) {
         Text(

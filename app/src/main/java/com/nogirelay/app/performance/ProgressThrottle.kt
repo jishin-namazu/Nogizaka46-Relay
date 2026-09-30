@@ -1,6 +1,5 @@
 package com.nogirelay.app.performance
 
-/** Keep first, changed-total and final progress, without driving UI once per database row. */
 internal class ProgressThrottle(
     private val nowMillis: () -> Long,
     private val intervalMillis: Long = 100,
@@ -10,7 +9,8 @@ internal class ProgressThrottle(
 
     fun shouldPublish(done: Int, total: Int): Boolean {
         val now = nowMillis()
-        if (lastTime == null || total != lastTotal || done >= total || now - lastTime!! >= intervalMillis) {
+        val last = lastTime
+        if (last == null || total != lastTotal || done >= total || now - last >= intervalMillis) {
             lastTime = now
             lastTotal = total
             return true

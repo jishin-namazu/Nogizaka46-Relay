@@ -9,84 +9,33 @@ import java.net.URL
 
 class RelayClient {
     fun fetchMessages(settings: AppSettings, limit: Int = 200, offset: Int = 0): List<RelayMessage> {
-        val baseUrl = settings.relayUrl.ifEmpty { ApiConfig.BASE_URL }
-        val token = settings.accessToken.ifEmpty { ApiConfig.ACCESS_TOKEN }
-
-        require(baseUrl.startsWith("https://")) { "同步地址必须使用 HTTPS" }
+        val endpoint = resolveEndpoint(settings)
         require(limit in 1..500) { "同步数量必须在 1 到 500 之间" }
         require(offset >= 0) { "同步偏移量不能为负数" }
 
-        val connection = (URL("${baseUrl.trimEnd('/')}/v1/messages?limit=$limit&offset=$offset").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Authorization", "Bearer $token")
-        }
-        return try {
-            val status = connection.responseCode
-            if (status !in 200..299) error("消息同步服务返回 $status")
-            val payload = connection.inputStream.bufferedReader().use { it.readText() }
+        return get(endpoint, "/v1/messages?limit=$limit&offset=$offset", readTimeout = 30_000, errorLabel = "消息同步服务") { payload ->
             val messages = JSONObject(payload).optJSONArray("messages") ?: JSONArray()
             buildList(messages.length()) {
                 for (index in 0 until messages.length()) {
                     messages.optJSONObject(index)?.let { add(parseMessage(it)) }
                 }
             }
-        } finally {
-            connection.disconnect()
         }
     }
 
-    /**
-     * relay 将给出的消息总数，来自 GET /v1/messages/stats/summary。服务器
-     * 使用与列表相同的非测试谓词计数，因此它与 [fetchMessages] 一致。
-     */
     fun fetchMessageCount(settings: AppSettings): Int {
-        val baseUrl = settings.relayUrl.ifEmpty { ApiConfig.BASE_URL }
-        val token = settings.accessToken.ifEmpty { ApiConfig.ACCESS_TOKEN }
-
-        require(baseUrl.startsWith("https://")) { "同步地址必须使用 HTTPS" }
-
-        val connection = (URL("${baseUrl.trimEnd('/')}/v1/messages/stats/summary").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 15_000
-            readTimeout = 20_000
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Authorization", "Bearer $token")
-        }
-        return try {
-            val status = connection.responseCode
-            if (status !in 200..299) error("消息统计服务返回 $status")
-            val payload = connection.inputStream.bufferedReader().use { it.readText() }
+        val endpoint = resolveEndpoint(settings)
+        return get(endpoint, "/v1/messages/stats/summary", readTimeout = 20_000, errorLabel = "消息统计服务") { payload ->
             JSONObject(payload).optJSONObject("stats")?.optInt("total", -1)?.takeIf { it >= 0 }
                 ?: error("消息统计服务未返回总条数")
-        } finally {
-            connection.disconnect()
         }
     }
 
     fun fetchMessage(settings: AppSettings, messageId: String): RelayMessage {
-        // 优先使用 settings 中的配置，如果为空则使用 ApiConfig 默认值
-        val baseUrl = settings.relayUrl.ifEmpty { ApiConfig.BASE_URL }
-        val token = settings.accessToken.ifEmpty { ApiConfig.ACCESS_TOKEN }
-
-        require(baseUrl.startsWith("https://")) { "同步地址必须使用 HTTPS" }
+        val endpoint = resolveEndpoint(settings)
         val encodedId = Uri.encode(messageId)
-        val connection = (URL("${baseUrl.trimEnd('/')}/v1/messages/$encodedId").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 15_000
-            readTimeout = 20_000
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("Authorization", "Bearer $token")
-        }
-        return try {
-            val status = connection.responseCode
-            if (status !in 200..299) error("消息服务返回 $status")
-            val payload = connection.inputStream.bufferedReader().use { it.readText() }
+        return get(endpoint, "/v1/messages/$encodedId", readTimeout = 20_000, errorLabel = "消息服务") { payload ->
             parseMessage(JSONObject(payload))
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -115,5 +64,37 @@ class RelayClient {
             ringtoneUrl = string("ringtone_url", "ringtoneUrl", "notification_sound_android"),
             isPlayed = json.optBoolean("is_played", json.optBoolean("isPlayed", false)),
         )
+    }
+
+    private class Endpoint(val baseUrl: String, val token: String)
+
+    private fun resolveEndpoint(settings: AppSettings): Endpoint {
+        val baseUrl = settings.relayUrl.ifEmpty { ApiConfig.BASE_URL }
+        val token = settings.accessToken.ifEmpty { ApiConfig.ACCESS_TOKEN }
+        require(baseUrl.startsWith("https://")) { "同步地址必须使用 HTTPS" }
+        return Endpoint(baseUrl, token)
+    }
+
+    private fun <T> get(
+        endpoint: Endpoint,
+        path: String,
+        readTimeout: Int,
+        errorLabel: String,
+        parse: (String) -> T,
+    ): T {
+        val connection = (URL("${endpoint.baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            this.readTimeout = readTimeout
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Authorization", "Bearer ${endpoint.token}")
+        }
+        return try {
+            val status = connection.responseCode
+            if (status !in 200..299) error("$errorLabel 返回 $status")
+            parse(connection.inputStream.bufferedReader().use { it.readText() })
+        } finally {
+            connection.disconnect()
+        }
     }
 }

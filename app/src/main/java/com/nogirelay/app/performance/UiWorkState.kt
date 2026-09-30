@@ -13,7 +13,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
 import kotlinx.coroutines.delay
 
-/** Kept pages retain their UI state while network, decoding and animations can go idle. */
 val LocalRelayPageActive = staticCompositionLocalOf { true }
 val LocalRelayPageWorkPaused = compositionLocalOf { false }
 

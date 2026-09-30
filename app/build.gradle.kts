@@ -5,6 +5,22 @@ plugins {
 
 import java.util.Properties
 
+apply(from = rootProject.file("gradle/haze-glass-patch.gradle.kts"))
+
+// Device rendering checks use a separate sandbox; never let a test runner
+// install/uninstall the user's main application or touch its local data.
+val renderVerification = providers.gradleProperty("relayRenderVerification").orNull == "true"
+
+tasks.configureEach {
+    if (name.startsWith("connected") && name.endsWith("AndroidTest")) {
+        doFirst {
+            check(renderVerification) {
+                "Device tests require -PrelayRenderVerification=true to protect the main app and its local data."
+            }
+        }
+    }
+}
+
 // 1. 读取 local.properties（如果存在则作为兜底配置）
 val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
@@ -45,7 +61,7 @@ if (!googleServicesFile.exists() && !googleServicesEnv.isNullOrBlank()) {
     googleServicesFile.writeText(googleServicesEnv.trim())
 }
 
-if (googleServicesFile.exists()) {
+if (googleServicesFile.exists() && !renderVerification) {
     apply(plugin = "com.google.gms.google-services")
 }
 
@@ -63,6 +79,7 @@ android {
         buildConfigField("String", "DEFAULT_RELAY_URL", "\"$relayBaseUrlLiteral\"")
         buildConfigField("String", "RELAY_ACCESS_TOKEN", "\"$relayAccessTokenLiteral\"")
         buildConfigField("boolean", "SIMPLE_UI", relaySimpleUi.toString())
+        buildConfigField("boolean", "RENDER_VERIFICATION", renderVerification.toString())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -81,6 +98,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (renderVerification) applicationIdSuffix = ".rendercheck"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -103,7 +123,7 @@ android {
     }
 
     base {
-        archivesName.set(if (relaySimpleUi) "app-simple" else "app")
+        archivesName.set(if (renderVerification) "app-rendercheck" else if (relaySimpleUi) "app-simple" else "app")
     }
 
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -151,14 +171,18 @@ dependencies {
 
     // 液态玻璃（Liquid Glass）：Haze 2.0.0
     // haze              背景内容采集 + 效果基础设施
+    // haze-blur         稳定、方向一致的区域背景模糊
     // haze-glass        折射驱动的玻璃材质（折射/模糊/染色/菲涅尔/镜面高光/色散）
-    // haze-glass-material3  将玻璃表面容器色接到 Material 3 的 colorScheme.surface
     implementation("dev.chrisbanes.haze:haze:2.0.0")
+    implementation("dev.chrisbanes.haze:haze-blur:2.0.0")
     implementation("dev.chrisbanes.haze:haze-glass:2.0.0")
-    implementation("dev.chrisbanes.haze:haze-glass-material3:2.0.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
-    testImplementation("org.json:json:20260814")
 }

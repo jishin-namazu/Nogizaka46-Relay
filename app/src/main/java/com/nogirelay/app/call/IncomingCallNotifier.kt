@@ -22,6 +22,8 @@ import com.nogirelay.app.translation.substituteNickname
 import com.nogirelay.app.ui.withoutTextPresentationSelector
 
 object IncomingCallNotifier {
+    private const val TAG = "NogiRelay"
+
     const val EXTRA_MESSAGE_ID = "message_id"
     const val EXTRA_AUTO_ANSWER = "auto_answer"
     const val ACTION_ANSWER = "com.nogirelay.app.ANSWER_CALL"
@@ -33,8 +35,7 @@ object IncomingCallNotifier {
             putExtra(EXTRA_MESSAGE_ID, message.id)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
-        // setPendingIntentCreatorBackgroundActivityStartMode 及其常量是 API 34 的；在
-        // 31-33 上该调用不存在，因此只有 34+ 才会设置 creator options。
+
         val fullScreenPendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val creatorOptions = ActivityOptions.makeBasic().apply {
                 setPendingIntentCreatorBackgroundActivityStartMode(
@@ -103,22 +104,21 @@ object IncomingCallNotifier {
             builder.addAction(Notification.Action.Builder(null, "接听", answerPendingIntent).build())
         }
 
-        Log.d("NogiRelay", "Showing incoming call notification for ${message.id}, isAppInForeground=${isAppInForeground(context)}")
+        Log.d(TAG, "Showing incoming call notification for ${message.id}, isAppInForeground=${isAppInForeground(context)}")
         notificationManager.notify(notificationId(message.id), builder.build())
 
-        // 直接启动方案：如果有 SYSTEM_ALERT_WINDOW，就尝试直接启动
         runCatching {
             if (isAppInForeground(context)) {
-                Log.d("NogiRelay", "App in foreground, starting IncomingCallActivity directly")
+                Log.d(TAG, "App in foreground, starting IncomingCallActivity directly")
                 context.startActivity(fullScreenIntent)
             } else if (Settings.canDrawOverlays(context)) {
-                Log.d("NogiRelay", "App in background but has overlay permission, starting IncomingCallActivity directly")
+                Log.d(TAG, "App in background but has overlay permission, starting IncomingCallActivity directly")
                 context.startActivity(fullScreenIntent)
             } else {
-                Log.d("NogiRelay", "App in background, no overlay permission, relying on notification fullScreenIntent")
+                Log.d(TAG, "App in background, no overlay permission, relying on notification fullScreenIntent")
             }
         }.onFailure { error ->
-            Log.w("NogiRelay", "Call activity launch failed", error)
+            Log.w(TAG, "Call activity launch failed", error)
         }
     }
 
@@ -134,7 +134,6 @@ object IncomingCallNotifier {
         return ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_SYSTEM_DEFINED
     }
 
-    /** 显示一个可重试的通知，而不提前打开通话页面。 */
     fun showUnavailable(context: Context, message: RelayMessage, reason: String) {
         val retryIntent = Intent(context, IncomingCallPreparationService::class.java).apply {
             putExtra(EXTRA_MESSAGE_ID, message.id)
