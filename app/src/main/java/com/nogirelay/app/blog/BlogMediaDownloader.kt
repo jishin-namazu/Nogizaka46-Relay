@@ -1,13 +1,12 @@
 package com.nogirelay.app.blog
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import android.util.Log
 import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.data.isRealBlogImageUrl
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.data.MessageType
-import com.nogirelay.app.ui.ImageAspectRatioCache
+import com.nogirelay.app.ui.preloadRemoteImage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,22 +49,17 @@ object BlogMediaDownloader {
      * Pagination uses this for the first two cards so the new page does not
      * reveal itself while its leading previews are still cold.
      */
-    suspend fun preloadImages(context: Context, urls: List<String>) {
+    suspend fun preloadImages(context: Context, urls: List<String>, limit: Int = 2) {
         val appContext = context.applicationContext
         coroutineScope {
-            urls.distinct().take(2).mapNotNull { url ->
+            urls.distinct().take(limit).mapNotNull { url ->
                 if (url.isBlank() || MediaDownloader.isNotFound(appContext, url)) {
                     null
                 } else {
                     async(Dispatchers.IO) {
                         try {
                             slots.withPermit {
-                                val file = MediaDownloader.downloadUrl(appContext, url, MessageType.IMAGE)
-                                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                                BitmapFactory.decodeFile(file.absolutePath, bounds)
-                                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
-                                    ImageAspectRatioCache.put(url, bounds.outWidth.toFloat() / bounds.outHeight.toFloat())
-                                }
+                                preloadRemoteImage(context, url, targetWidth = 720)
                             }
                         } catch (error: Throwable) {
                             Log.w(TAG, "BLOG image preload failed", error)
