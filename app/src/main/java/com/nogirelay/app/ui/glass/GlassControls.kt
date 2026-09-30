@@ -3,20 +3,15 @@ package com.nogirelay.app.ui.glass
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,7 +36,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,7 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -60,7 +53,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -69,7 +61,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -117,6 +108,10 @@ fun GlassSwitch(
         animationSpec = GlassMotion.GentleSpec,
         label = "glass_switch_tint",
     )
+    val tintFraction = tintProgress.coerceIn(0f, 1f)
+    val trackTint = lerp(GlassControlWhite, GlassColors.Accent, tintFraction)
+    val trackAlpha = controlFillAlpha(GlassTone.Neutral) +
+        (controlFillAlpha(GlassTone.Accent) - controlFillAlpha(GlassTone.Neutral)) * tintFraction
 
     Box(
         modifier = modifier
@@ -145,19 +140,18 @@ fun GlassSwitch(
         ) {
             Box(
                 Modifier.fillMaxSize()
+                    .glassControlShadow(trackShape, tint = trackTint, depth = GlassDepths.Low, press = press)
                     .clip(trackShape)
                     .glass(
                         shape = trackShape,
-                        tone = if (tintProgress > 0.5f) GlassTone.Accent else GlassTone.Neutral,
-                        fillAlpha = if (tintProgress > 0.5f) {
-                            GlassColors.AccentFillAlpha
-                        } else {
-                            GlassColors.NeutralFillStrongAlpha
-                        },
+                        // A continuous tint avoids a material jump halfway through a toggle.
+                        tone = GlassTone.Accent,
+                        tint = trackTint,
+                        fillAlpha = trackAlpha,
                         blur = GlassOpticsPresets.BlurControl.dp,
                         interactionSource = interactionSource,
-                    )
-                    .glassEdgeLight(trackShape, if (tintProgress > 0.5f) GlassTone.Accent else GlassTone.Neutral),
+                        control = true,
+                    ),
             )
             // Equal inset keeps the thumb concentric with either rounded end.
             val thumbInset = 2.dp
@@ -172,12 +166,13 @@ fun GlassSwitch(
                         scaleX = thumbStretch
                         scaleY = 1f / thumbStretch
                     }
-                    .glassShadow(GlassShapes.Circle, GlassDepths.Low)
-                    .clip(GlassShapes.Circle)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.White, Color(0xFFE8E9F0)),
-                        ),
+                    .glassControlShadow(trackShape, depth = GlassDepths.Low.copy(elevation = 6.dp))
+                    .clip(trackShape)
+                    .glass(
+                        shape = trackShape,
+                        fillAlpha = 0.98f,
+                        blur = 12.dp,
+                        control = true,
                     ),
             )
         }
@@ -250,32 +245,13 @@ fun GlassSlider(
         val stretch = if (drag.dragging) drag.stretch else 1f
 
         Box(gestureModifier.fillMaxSize()) {
-            // Track: neutral glass capsule.
-            Box(
-                Modifier
+            GlassProgressTrack(
+                progress = { displayFraction },
+                color = accent,
+                modifier = Modifier
                     .align(Alignment.CenterStart)
                     .fillMaxWidth()
-                    .height(7.dp)
-                    .clip(GlassShapes.Capsule)
-                    .glass(
-                        shape = GlassShapes.Capsule,
-                        fillAlpha = GlassColors.NeutralFillStrongAlpha,
-                        blur = 10.dp,
-                        specular = 0.4f,
-                    ),
-            )
-            // Active track: accent liquid.
-            Box(
-                Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxWidth(displayFraction)
-                    .height(7.dp)
-                    .clip(GlassShapes.Capsule)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(accent.copy(alpha = 0.75f), accent.copy(alpha = 0.95f)),
-                        ),
-                    ),
+                    .height(8.dp),
             )
             // Thumb: white glass droplet that stretches with drag velocity.
             Box(
@@ -287,12 +263,14 @@ fun GlassSlider(
                         scaleX = stretch
                         scaleY = 1f + (1f - stretch) * 0.5f
                     }
-                    .glassShadow(GlassShapes.Circle, GlassDepths.Low)
-                    .clip(GlassShapes.Circle)
-                    .background(
-                        Brush.verticalGradient(listOf(Color.White, Color(0xFFE6E7EE))),
-                    )
-                    .glassEdgeLight(GlassShapes.Circle, strength = 0.9f),
+                    .glassControlShadow(GlassShapes.Capsule, depth = GlassDepths.Low.copy(elevation = 6.dp))
+                    .clip(GlassShapes.Capsule)
+                    .glass(
+                        shape = GlassShapes.Capsule,
+                        fillAlpha = 0.98f,
+                        blur = 12.dp,
+                        control = true,
+                    ),
             )
         }
     }
@@ -314,14 +292,17 @@ fun GlassSegmentedTabs(
     Box(
         modifier = modifier
             .height(44.dp)
+            .glassControlShadow(shape)
             .clip(shape)
-            .glass(shape = shape, fillAlpha = GlassColors.NeutralFillAlpha, blur = GlassOpticsPresets.BlurControl.dp)
-            .glassEdgeLight(shape, strength = 0.6f)
+            .glass(
+                shape = shape,
+                fillAlpha = controlFillAlpha(GlassTone.Neutral),
+                blur = GlassOpticsPresets.BlurControl.dp,
+                control = true,
+            )
             .padding(3.dp),
     ) {
-        // Each tab owns a quiet fill crossfade. The old liquid slider moved a
-        // separate accent object across the track, which made this control
-        // feel disconnected from the app's other transitions.
+        // Crossfade the complete selected surface, including its rounded light.
         Row(Modifier.fillMaxSize().selectableGroup()) {
             labels.forEachIndexed { index, label ->
                 val selected = index == selectedIndex
@@ -339,10 +320,6 @@ fun GlassSegmentedTabs(
                         .fillMaxHeight()
                         .glassPress(press)
                         .clip(shape)
-                        .background(
-                            GlassColors.Accent.copy(alpha = 0.16f * selectedProgress),
-                            shape,
-                        )
                         .selectable(
                             selected = selected,
                             role = Role.Tab,
@@ -352,9 +329,22 @@ fun GlassSegmentedTabs(
                             onClick = { if (!selected) onSelected(index) },
                         ),
                 ) {
+                    if (selectedProgress > 0f) {
+                        Box(
+                            Modifier.matchParentSize()
+                                .graphicsLayer { alpha = selectedProgress.coerceIn(0f, 1f) }
+                                .glass(
+                                    shape = shape,
+                                    tone = GlassTone.Accent,
+                                    fillAlpha = controlFillAlpha(GlassTone.Accent),
+                                    interactionSource = interactionSource,
+                                    control = true,
+                                ),
+                        )
+                    }
                     Text(
                         text = label,
-                        color = lerp(GlassColors.InkSecondary, GlassColors.Accent, selectedProgress),
+                        color = lerp(GlassColors.InkSecondary, GlassColors.OnAccent, selectedProgress.coerceIn(0f, 1f)),
                         fontSize = 13.5.sp,
                         fontWeight = if (selectedProgress > 0.5f) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1,
@@ -381,6 +371,7 @@ fun GlassSearchField(
     focusRequester: FocusRequester? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
+    height: Dp = 46.dp,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
@@ -388,14 +379,8 @@ fun GlassSearchField(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
-            .height(46.dp)
-            .clip(shape)
-            .glass(
-                shape = shape,
-                fillAlpha = if (focused) GlassColors.NeutralFillStrongAlpha else GlassColors.NeutralFillAlpha,
-                blur = GlassOpticsPresets.BlurControl.dp,
-            )
-            .glassEdgeLight(shape, if (focused) GlassTone.Accent else GlassTone.Neutral, strength = if (focused) 1.2f else 0.7f)
+            .height(height)
+            .glassInputSurface(shape, focused, interactionSource)
             .padding(start = 14.dp, end = 4.dp),
     ) {
         Icon(
@@ -480,13 +465,7 @@ fun GlassTextField(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .matchParentSize()
-                .clip(shape)
-                .glass(
-                    shape = shape,
-                    fillAlpha = GlassColors.NeutralFillStrongAlpha,
-                    blur = GlassOpticsPresets.BlurControl.dp,
-                )
-                .glassEdgeLight(shape, if (focused) GlassTone.Accent else GlassTone.Neutral, strength = if (focused) 1.2f else 0.7f)
+                .glassInputSurface(shape, focused, interactionSource)
                 .padding(start = 16.dp, end = 8.dp),
         ) {
             Column(
@@ -532,5 +511,28 @@ fun GlassTextField(
             trailingContent?.invoke()
         }
     }
+}
+
+@Composable
+private fun Modifier.glassInputSurface(
+    shape: RoundedCornerShape,
+    focused: Boolean,
+    interactionSource: MutableInteractionSource,
+): Modifier {
+    val fillAlpha by animateFloatAsState(
+        targetValue = if (focused) 0.90f else controlFillAlpha(GlassTone.Neutral),
+        animationSpec = tween(180),
+        label = "glass_input_focus",
+    )
+    return glassControlShadow(shape)
+        .clip(shape)
+        .glass(
+            shape = shape,
+            fillAlpha = fillAlpha,
+            blur = GlassOpticsPresets.BlurControl.dp,
+            interactionSource = interactionSource,
+            pressedLighting = false,
+            control = true,
+        )
 }
 

@@ -8,6 +8,7 @@ import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogMemberCategories
 import com.nogirelay.app.data.BlogPost
+import com.nogirelay.app.data.BlogImportMerge
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
@@ -154,12 +155,15 @@ object DataImporter {
                 } else {
                     duplicates += 1
 
-                    database.findBlog(post.id)?.let { existing ->
-                        mediaAdopted += adoptBlogMediaCache(context, existing, post)
-                    }
+                    val existing = database.findBlog(post.id)
                     if (database.refreshImportedBlogLinks(post.id, links)) linkRefreshed += 1
+                    val merged = database.findBlog(post.id)
+                    if (existing != null && merged != null) {
+                        mediaAdopted += adoptBlogMediaCache(context, existing, merged)
+                    }
                     val translation = post.translation
-                    if (!translation.isNullOrBlank() &&
+                    if (!translation.isNullOrBlank() && merged != null &&
+                        BlogImportMerge.sameTranslationSource(merged, post) &&
                         database.backfillBlogTranslation(post.id, translation)
                     ) {
                         backfilled += 1

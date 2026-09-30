@@ -19,7 +19,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,7 +42,6 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,7 +69,7 @@ import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.glass.GlassBackdrop
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
-import com.nogirelay.app.ui.glass.GlassCircleButton
+import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassDepths
 import com.nogirelay.app.ui.glass.GlassIconButton
@@ -79,8 +77,6 @@ import com.nogirelay.app.ui.glass.GlassMotion
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
-import com.nogirelay.app.ui.glass.glassEdgeLight
-import com.nogirelay.app.ui.glass.glassShadow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -317,7 +313,7 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                     ) { state ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             when (state) {
-                                BlogDownloadButtonState.DOWNLOADING -> CircularProgressIndicator(
+                                BlogDownloadButtonState.DOWNLOADING -> GlassCircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.dp,
                                     color = Color.White,
@@ -388,26 +384,6 @@ private fun BlogImageCell(
                     .clip(GlassShapes.CardSmall)
                     .graphicsLayer { alpha = if (enabled) 1f else 0.55f },
             )
-            if (selectionProgress > 0.01f) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .size(26.dp)
-                        .clip(GlassShapes.Circle)
-                        .background(
-                            GlassColors.Accent.copy(alpha = selectionProgress),
-                            GlassShapes.Circle,
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Rounded.Check,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
         }
     }
 }

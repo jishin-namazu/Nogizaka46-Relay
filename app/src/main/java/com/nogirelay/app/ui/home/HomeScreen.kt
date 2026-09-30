@@ -37,7 +37,6 @@ import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Icon
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -71,12 +70,12 @@ import com.nogirelay.app.push.PushRegistrar
 import com.nogirelay.app.ui.glass.GlassBottomSheet
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
 import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
 import com.nogirelay.app.ui.glass.GlassHeader
 import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
-import com.nogirelay.app.ui.relaySheetBackdrop
 import com.nogirelay.app.ui.rememberRelaySheetBackdropState
 import com.nogirelay.app.ui.settings.SettingsSection
 import kotlinx.coroutines.isActive
@@ -120,8 +119,7 @@ fun HomeScreen(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .relaySheetBackdrop(sheetBackdrop),
+                .fillMaxSize(),
         ) {
             Column(
                 modifier = Modifier
@@ -294,7 +292,7 @@ private fun HeroStatusCard(
                         label = "sync-button-state",
                     ) { syncing ->
                         if (syncing) {
-                            CircularProgressIndicator(
+                            GlassCircularProgressIndicator(
                                 color = GlassColors.Accent,
                                 strokeWidth = 2.2.dp,
                                 modifier = Modifier.size(21.dp),

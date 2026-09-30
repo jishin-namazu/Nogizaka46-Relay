@@ -3,6 +3,7 @@ package com.nogirelay.app.ui.glass
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,7 +19,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
@@ -37,10 +38,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -61,11 +64,9 @@ import kotlinx.coroutines.launch
 /**
  * Morphing glass popover.
  *
- * The trigger button itself expands into the menu: the popup opens with the
- * glass body exactly covering the button (same position, size, capsule
- * radius), then springs outward to the full panel while menu content fades
- * and slides in slightly late. Dismissal is the exact reverse: content
- * vanishes first, then the panel shrinks back onto the button.
+ * The menu grows beside the trigger, never covering the selector. It opens
+ * downwards or upwards according to available space, scrolling long lists.
+ * The material, contents and shadow fade together inside a padded layer.
  */
 class GlassPopoverState {
     var expanded by mutableStateOf(false)
@@ -105,13 +106,19 @@ fun Modifier.glassPopoverAnchor(state: GlassPopoverState): Modifier = onGlobally
     )
 }
 
-private class GlassPopoverPositionProvider(
+internal class GlassPopoverPositionProvider(
     private val density: androidx.compose.ui.unit.Density,
     private val marginPx: Int,
+    private val effectPaddingPx: Int,
 ) : PopupPositionProvider {
-    var popupOffset by mutableStateOf(IntOffset.Zero)
     var originX by mutableFloatStateOf(1f)
     var opensUpward by mutableStateOf(false)
+    var maxHeightPx by mutableIntStateOf(Int.MAX_VALUE)
+        private set
+    var fitsAvailableSpace by mutableStateOf(false)
+        private set
+    private var previousAnchor: IntRect? = null
+    private var previousWindow: IntSize? = null
 
     override fun calculatePosition(
         anchorBounds: IntRect,
@@ -120,20 +127,31 @@ private class GlassPopoverPositionProvider(
         popupContentSize: IntSize,
     ): IntOffset {
         val gap = with(density) { 6.dp.roundToPx() }
-        val fitsBelow = anchorBounds.bottom + gap + popupContentSize.height <= windowSize.height - marginPx
-        opensUpward = !fitsBelow && anchorBounds.top - gap - popupContentSize.height >= marginPx
-        val y = when {
-            fitsBelow -> anchorBounds.bottom + gap
-            opensUpward -> anchorBounds.top - gap - popupContentSize.height
-            else -> (windowSize.height - popupContentSize.height) / 2
+        // Position the visible card, excluding the transparent blur/spring gutter.
+        val cardWidth = (popupContentSize.width - effectPaddingPx * 2).coerceAtLeast(1)
+        val cardHeight = (popupContentSize.height - effectPaddingPx * 2).coerceAtLeast(1)
+        val above = (anchorBounds.top - gap - marginPx).coerceAtLeast(0)
+        val below = (windowSize.height - marginPx - anchorBounds.bottom - gap).coerceAtLeast(0)
+        if (previousAnchor != anchorBounds || previousWindow != windowSize) {
+            // Choose from the unconstrained menu once, then keep the chosen side
+            // while its scrolling viewport shrinks to fit. Never center on the field.
+            opensUpward = when {
+                cardHeight <= below -> false
+                cardHeight <= above -> true
+                else -> above > below
+            }
+            previousAnchor = anchorBounds
+            previousWindow = windowSize
         }
+        maxHeightPx = (if (opensUpward) above else below).coerceAtLeast(1)
+        fitsAvailableSpace = cardHeight <= maxHeightPx
+        val y = if (opensUpward) anchorBounds.top - gap - cardHeight else anchorBounds.bottom + gap
         val alignEnd = anchorBounds.center.x > windowSize.width / 2
-        val rawX = if (alignEnd) anchorBounds.right - popupContentSize.width else anchorBounds.left
-        val x = rawX.coerceIn(marginPx, (windowSize.width - popupContentSize.width - marginPx).coerceAtLeast(marginPx))
-        originX = ((anchorBounds.center.x - x).toFloat() / popupContentSize.width.coerceAtLeast(1))
+        val rawX = if (alignEnd) anchorBounds.right - cardWidth else anchorBounds.left
+        val x = rawX.coerceIn(marginPx, (windowSize.width - cardWidth - marginPx).coerceAtLeast(marginPx))
+        originX = ((anchorBounds.center.x - x).toFloat() / cardWidth)
             .coerceIn(0f, 1f)
-        popupOffset = IntOffset(x, y)
-        return popupOffset
+        return IntOffset(x - effectPaddingPx, y - effectPaddingPx)
     }
 }
 
@@ -148,10 +166,16 @@ fun GlassPopover(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val marginPx = with(density) { 10.dp.roundToPx() }
-    val provider = remember(density, marginPx) { GlassPopoverPositionProvider(density, marginPx) }
+    // Includes blur sampling, the complete soft shadow and spring overshoot.
+    val effectPadding = 32.dp
+    val effectPaddingPx = with(density) { effectPadding.roundToPx() }
+    val provider = remember(density, marginPx, effectPaddingPx) {
+        GlassPopoverPositionProvider(density, marginPx, effectPaddingPx)
+    }
     val shape = GlassShapes.Popover
     val progress = remember { Animatable(0f) }
     val exiting = state.exiting
+    val overlayLayer = rememberGlassOverlayLayer(minimumLevel = 3f)
 
     LaunchedEffect(exiting) {
         if (exiting) {
@@ -166,55 +190,67 @@ fun GlassPopover(
         properties = PopupProperties(focusable = true, clippingEnabled = false),
         onDismissRequest = { state.dismiss(scope) },
     ) {
-        // Popups live in their own window: no shared haze source there.
-        CompositionLocalProvider(LocalGlassHazeState provides null) {
-            val anchor = state.anchorBounds
-            val p = progress.value
-            // Grow from the anchor: start as a capsule exactly over the button.
-            val anchorW = anchor?.width ?: 0
-            val anchorH = anchor?.height ?: 0
-            Box(
-                modifier = modifier
-                    .width(width)
-                    .widthIn(max = 300.dp)
-                    .graphicsLayer {
-                        // Scale from the anchor bounds toward full size.
-                        val naturalW = size.width.coerceAtLeast(1f)
-                        val naturalH = size.height.coerceAtLeast(1f)
-                        val fromSx = if (anchorW > 0) anchorW / naturalW else 0.35f
-                        val fromSy = if (anchorH > 0) anchorH / naturalH else 0.35f
-                        val sx = fromSx + (1f - fromSx) * p
-                        val sy = fromSy + (1f - fromSy) * p
-                        scaleX = sx
-                        scaleY = sy
-                        transformOrigin = TransformOrigin(provider.originX, if (provider.opensUpward) 1f else 0f)
-                        alpha = 0.35f + 0.65f * p
-                        shadowElevation = (GlassDepths.High.elevation * (0.4f + 0.6f * p)).toPx()
-                        this.shape = shape
-                        clip = false
-                        ambientShadowColor = GlassDepths.High.ambient
-                        spotShadowColor = GlassDepths.High.spot
+        // Haze clips its captured texture to the popup root. Keep that root
+        // larger than the animated card so spring overshoot never outruns blur.
+        Box(
+            Modifier.graphicsLayer {
+                // Fade a stable padded layer. Alpha on the tight card itself
+                // clips its shadow to a gray rectangle until alpha reaches 1.
+                compositingStrategy = CompositingStrategy.Offscreen
+                alpha = if (provider.fitsAvailableSpace) progress.value.coerceIn(0f, 1f) else 0f
+            }.pointerInput(state, effectPaddingPx) {
+                detectTapGestures { point ->
+                    val inset = effectPaddingPx
+                    if (point.x < inset || point.y < inset ||
+                        point.x > size.width - inset || point.y > size.height - inset
+                    ) {
+                        state.dismiss(scope)
                     }
-                    .clip(shape)
-                    .glass(shape = shape, fillAlpha = 0.86f, blur = GlassOpticsPresets.BlurOverlay.dp)
-                    .glassEdgeLight(shape),
-            ) {
-                // Content appears late and slides in from the anchor side.
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState())
-                        .padding(6.dp)
+                }
+            }.padding(effectPadding),
+        ) {
+            // Haze resolves cross-window sources in screen coordinates.
+            CompositionLocalProvider(LocalGlassOverlayLevel provides overlayLayer.level) {
+                val anchor = state.anchorBounds
+                val p = progress.value
+                // Grow away from the anchor edge, keeping its field visible.
+                val anchorW = anchor?.width ?: 0
+                val anchorH = anchor?.height ?: 0
+                Box(
+                    modifier = modifier
+                        .width(width)
                         .graphicsLayer {
-                            val contentP = ((p - 0.35f) / 0.65f).coerceIn(0f, 1f)
-                            alpha = contentP
-                            translationY = with(density) {
-                                (if (provider.opensUpward) 8.dp else (-8).dp).toPx() * (1f - contentP)
-                            }
-                        },
-                    content = content,
-                )
+                            // Scale from the anchor bounds toward full size.
+                            val naturalW = size.width.coerceAtLeast(1f)
+                            val naturalH = size.height.coerceAtLeast(1f)
+                            val fromSx = if (anchorW > 0) anchorW / naturalW else 0.35f
+                            val fromSy = if (anchorH > 0) anchorH / naturalH else 0.35f
+                            val sx = fromSx + (1f - fromSx) * p
+                            val sy = fromSy + (1f - fromSy) * p
+                            scaleX = sx
+                            scaleY = sy
+                            transformOrigin = TransformOrigin(provider.originX, if (provider.opensUpward) 1f else 0f)
+                        }
+                        .glassControlShadow(shape, depth = GlassDepths.Low)
+                        .glassOverlaySurface(overlayLayer, shape),
+                ) {
+                    // Content appears late and slides in from the anchor side.
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = minOf(420.dp, with(density) { provider.maxHeightPx.toDp() }))
+                            .verticalScroll(rememberScrollState())
+                            .padding(6.dp)
+                            .graphicsLayer {
+                                val contentP = ((p - 0.35f) / 0.65f).coerceIn(0f, 1f)
+                                alpha = contentP
+                                translationY = with(density) {
+                                    (if (provider.opensUpward) 8.dp else (-8).dp).toPx() * (1f - contentP)
+                                }
+                            },
+                        content = content,
+                    )
+                }
             }
         }
     }
@@ -230,6 +266,8 @@ fun GlassPopoverItem(
     tint: Color = GlassColors.Ink,
     iconTint: Color = GlassColors.Accent,
     enabled: Boolean = true,
+    trailingContent: (@Composable () -> Unit)? = null,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val press = rememberGlassPress(interactionSource, enabled)
@@ -248,7 +286,7 @@ fun GlassPopoverItem(
                 role = Role.Button,
                 onClick = onClick,
             )
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(contentPadding),
     ) {
         if (icon != null) {
             Icon(
@@ -267,7 +305,9 @@ fun GlassPopoverItem(
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = if (trailingContent != null) Modifier.weight(1f) else Modifier,
         )
+        trailingContent?.invoke()
     }
 }
 

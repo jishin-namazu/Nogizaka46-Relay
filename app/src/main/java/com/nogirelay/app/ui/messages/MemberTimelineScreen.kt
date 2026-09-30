@@ -43,7 +43,6 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Star
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -97,6 +96,7 @@ import com.nogirelay.app.ui.clearSelectionOnTap
 import com.nogirelay.app.ui.preloadRemoteImage
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
 import com.nogirelay.app.ui.glass.GlassDepths
 import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassPanel
@@ -104,10 +104,16 @@ import com.nogirelay.app.ui.glass.GlassSearchField
 import com.nogirelay.app.ui.glass.GlassSegmentedTabs
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.LocalGlassFrostedControls
+import com.nogirelay.app.ui.glass.LocalGlassHazeState
+import com.nogirelay.app.ui.glass.progressiveGlassHeader
+import com.nogirelay.app.ui.glass.rememberGlassHazeState
 import com.nogirelay.app.ui.glass.glassMediaSource
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -214,7 +220,7 @@ internal fun MemberTimelineScreen(
                 MemberTimelineAuxiliaryScreen(
                     memberKey = entry.memberKey,
                     screen = screen,
-                    active = workActive,
+                    active = workActive && screen == auxiliaryScreen,
                     versions = versions,
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
@@ -443,11 +449,15 @@ private suspend fun loadAuxiliaryPage(
     screen: MemberTimelineAuxiliary,
     mediaCategory: MemberMediaCategory,
     offset: Int,
+    searchQuery: String,
+    nickname: String,
 ): List<RelayMessage> = when (screen) {
     MemberTimelineAuxiliary.FAVORITES -> AppGraph.database.favoriteMessagesForMember(
         memberKey,
         limit = AUXILIARY_PAGE_SIZE,
         offset = offset,
+        searchQuery = searchQuery,
+        nickname = nickname,
     )
     MemberTimelineAuxiliary.MEDIA -> AppGraph.database.mediaMessagesForMember(
         memberKey,
@@ -455,15 +465,6 @@ private suspend fun loadAuxiliaryPage(
         limit = AUXILIARY_PAGE_SIZE,
         offset = offset,
     )
-}
-
-private suspend fun loadAuxiliaryCount(
-    memberKey: String,
-    screen: MemberTimelineAuxiliary,
-    mediaCategory: MemberMediaCategory,
-): Int = when (screen) {
-    MemberTimelineAuxiliary.FAVORITES -> AppGraph.database.countFavoriteMessagesForMember(memberKey)
-    MemberTimelineAuxiliary.MEDIA -> AppGraph.database.countMediaMessagesForMember(memberKey, mediaCategory.type)
 }
 
 private suspend fun preloadMessageMedia(
@@ -525,15 +526,30 @@ private fun MemberTimelineAuxiliaryScreen(
     onToggleFavorite: (RelayMessage) -> Unit,
 ) {
     var mediaCategory by remember(memberKey) { mutableStateOf(MemberMediaCategory.IMAGES) }
-    var messages by remember(memberKey, screen, mediaCategory) { mutableStateOf<List<RelayMessage>>(emptyList()) }
+    var query by remember(memberKey, screen) { mutableStateOf("") }
+    val effectiveQuery = rememberSearchQuery(query, active)
+    val request = remember(memberKey, screen, mediaCategory, effectiveQuery, userNickname) { Any() }
+    val latestRequest by rememberUpdatedState(request)
+    val latestVersion by rememberUpdatedState(versions.messages)
+    var messages by remember(request) { mutableStateOf<List<RelayMessage>>(emptyList()) }
     val gridRows = remember(messages) { memberMediaGridRows(messages) }
-    var totalCount by remember(memberKey, screen, mediaCategory) { mutableIntStateOf(0) }
-    var loading by remember(memberKey, screen, mediaCategory) { mutableStateOf(true) }
-    var loadingMore by remember(memberKey, screen, mediaCategory) { mutableStateOf(false) }
-    var exhausted by remember(memberKey, screen, mediaCategory) { mutableStateOf(false) }
-    var loadedVersion by remember(memberKey, screen, mediaCategory) { mutableLongStateOf(-1L) }
+    var loading by remember(request) { mutableStateOf(true) }
+    var loadingMore by remember(request) { mutableStateOf(false) }
+    var exhausted by remember(request) { mutableStateOf(false) }
+    var loadedVersion by remember(request) { mutableLongStateOf(-1L) }
+    var moreJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val textToolbar = LocalTextToolbar.current
+    val bottomPadding = 88.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
+    fun back() {
+        focusManager.clearFocus()
+        textToolbar.hide()
+        if (query.isNotEmpty()) query = "" else onBack()
+    }
+    BackHandler(enabled = active && query.isNotEmpty(), onBack = ::back)
 
     LaunchedEffect(messages, active, screen, mediaCategory) {
         if (active && messages.isNotEmpty()) {
@@ -545,134 +561,151 @@ private fun MemberTimelineAuxiliaryScreen(
         if (!active || loading || loadingMore || exhausted) return
         loadingMore = true
         val offset = messages.size
-        scope.launch {
-            val next = withContext(AppGraph.dispatchers.databaseRead) {
-                loadAuxiliaryPage(memberKey, screen, mediaCategory, offset)
+        val pageRequest = request
+        val pageVersion = versions.messages
+        moreJob = scope.launch {
+            try {
+                val next = withContext(AppGraph.dispatchers.databaseRead) {
+                    loadAuxiliaryPage(memberKey, screen, mediaCategory, offset, effectiveQuery, userNickname)
+                }
+                if (latestRequest !== pageRequest || latestVersion != pageVersion) return@launch
+                val known = messages.mapTo(mutableSetOf()) { it.id }
+                messages = messages + next.filter { known.add(it.id) }
+                exhausted = next.size < AUXILIARY_PAGE_SIZE
+            } finally {
+                if (latestRequest === pageRequest) loadingMore = false
             }
-            val known = messages.mapTo(mutableSetOf()) { it.id }
-            messages = messages + next.filter { known.add(it.id) }
-            exhausted = next.size < AUXILIARY_PAGE_SIZE
-            loadingMore = false
         }
     }
 
-    LaunchedEffect(memberKey, screen, mediaCategory, versions.messages, active) {
-        if (!active) return@LaunchedEffect
-        if (loadedVersion == versions.messages && messages.isNotEmpty()) return@LaunchedEffect
-        loading = messages.isEmpty()
+    LaunchedEffect(request, versions.messages, active) {
+        moreJob?.cancel()
+        moreJob = null
         loadingMore = false
+        if (!active) return@LaunchedEffect
+        if (loadedVersion == versions.messages) return@LaunchedEffect
+        loading = messages.isEmpty()
         exhausted = false
         val loaded = withContext(AppGraph.dispatchers.databaseRead) {
-            loadAuxiliaryPage(memberKey, screen, mediaCategory, 0) to
-                loadAuxiliaryCount(memberKey, screen, mediaCategory)
+            loadAuxiliaryPage(memberKey, screen, mediaCategory, 0, effectiveQuery, userNickname)
         }
-        messages = loaded.first
-        totalCount = loaded.second
-        exhausted = loaded.first.size < AUXILIARY_PAGE_SIZE
+        messages = loaded
+        exhausted = loaded.size < AUXILIARY_PAGE_SIZE
         loadedVersion = versions.messages
         loading = false
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(start = 12.dp, end = 20.dp, top = 10.dp, bottom = 6.dp),
-        ) {
-            GlassBackButton(onClick = onBack, contentDescription = "返回消息流")
-            Spacer(Modifier.width(12.dp))
-            Text(
-                text = if (screen == MemberTimelineAuxiliary.MEDIA) "媒体" else "收藏夹",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = GlassColors.Ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "$totalCount",
-                color = GlassColors.InkTertiary,
-                fontSize = 12.5.sp,
-            )
-        }
-        if (screen == MemberTimelineAuxiliary.MEDIA) {
-            GlassSegmentedTabs(
-                labels = MemberMediaCategory.entries.map(MemberMediaCategory::label),
-                selectedIndex = mediaCategory.ordinal,
-                onSelected = { mediaCategory = MemberMediaCategory.entries[it] },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-            Spacer(Modifier.height(4.dp))
-        }
-        when {
-            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
-            }
-            messages.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    if (screen == MemberTimelineAuxiliary.FAVORITES) "暂无收藏的消息" else "暂无${mediaCategory.label}消息",
-                    color = GlassColors.InkSecondary,
-                )
-            }
-            screen == MemberTimelineAuxiliary.FAVORITES -> AuxiliaryMessageList(
-                messages = messages,
-                hasMore = !exhausted,
-                onLoadMore = ::more,
-                playbackState = playbackState,
-                translationEnabled = translationEnabled,
-                userNickname = userNickname,
-                onOpenMedia = onOpenMedia,
-                onPlayVoice = onPlayVoice,
-                onDownload = onDownload,
-                onRetranslate = onRetranslate,
-                onToggleFavorite = onToggleFavorite,
-            )
-            mediaCategory == MemberMediaCategory.VOICE -> AuxiliaryMessageList(
-                messages = messages,
-                reverseLayout = true,
-                monthSeparators = true,
-                hasMore = !exhausted,
-                onLoadMore = ::more,
-                playbackState = playbackState,
-                translationEnabled = translationEnabled,
-                userNickname = userNickname,
-                onOpenMedia = onOpenMedia,
-                onPlayVoice = onPlayVoice,
-                onDownload = onDownload,
-                onRetranslate = onRetranslate,
-                onToggleFavorite = onToggleFavorite,
-            )
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(MEDIA_GRID_COLUMNS),
-                reverseLayout = true,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 88.dp),
-                modifier = Modifier.fillMaxSize(),
+    FloatingTimelineLayout(
+        header = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth().statusBarsPadding()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
             ) {
-                gridItems(
-                    gridRows,
-                    key = MemberMediaRow::key,
-                    span = { row ->
-                        if (row is MemberMediaRow.Month) GridItemSpan(maxLineSpan) else GridItemSpan(1)
-                    },
-                    contentType = { it::class },
-                ) { row ->
-                    when (row) {
-                        is MemberMediaRow.Media -> MediaMessageCell(
-                            message = row.message,
-                            onClick = { onOpenMedia(row.message) },
-                        )
-                        is MemberMediaRow.Month -> MemberMediaMonthHeader(row.label)
-                        is MemberMediaRow.Gap -> Spacer(Modifier.fillMaxWidth().aspectRatio(1f))
-                    }
+                GlassBackButton(
+                    onClick = ::back,
+                    contentDescription = if (query.isNotEmpty()) "清空搜索" else "返回消息流",
+                )
+                if (screen == MemberTimelineAuxiliary.MEDIA) {
+                    GlassSegmentedTabs(
+                        labels = MemberMediaCategory.entries.map(MemberMediaCategory::label),
+                        selectedIndex = mediaCategory.ordinal,
+                        onSelected = { mediaCategory = MemberMediaCategory.entries[it] },
+                        enabled = active,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    GlassSearchField(
+                        query = query,
+                        onQueryChange = { query = it },
+                        enabled = active,
+                        placeholder = "搜索收藏的消息",
+                        height = 44.dp,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
-                if (!exhausted) {
-                    item(key = "auxiliary_media_loading", span = { GridItemSpan(maxLineSpan) }) {
-                        AuxiliaryLoadFooter(pageKey = messages.size, onLoadMore = ::more)
+            }
+        },
+    ) { headerHeight ->
+        val topPadding = headerHeight + 18.dp
+        key(request) {
+            when {
+                loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    GlassCircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
+                }
+                messages.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        when {
+                            effectiveQuery.isNotBlank() -> "没有匹配的收藏消息"
+                            screen == MemberTimelineAuxiliary.FAVORITES -> "暂无收藏的消息"
+                            else -> "暂无${mediaCategory.label}消息"
+                        },
+                        color = GlassColors.InkSecondary,
+                    )
+                }
+                screen == MemberTimelineAuxiliary.FAVORITES -> AuxiliaryMessageList(
+                    messages = messages,
+                    topContentPadding = topPadding,
+                    bottomContentPadding = bottomPadding,
+                    searchQuery = effectiveQuery,
+                    hasMore = !exhausted,
+                    onLoadMore = ::more,
+                    playbackState = playbackState,
+                    translationEnabled = translationEnabled,
+                    userNickname = userNickname,
+                    onOpenMedia = onOpenMedia,
+                    onPlayVoice = onPlayVoice,
+                    onDownload = onDownload,
+                    onRetranslate = onRetranslate,
+                    onToggleFavorite = onToggleFavorite,
+                )
+                mediaCategory == MemberMediaCategory.VOICE -> AuxiliaryMessageList(
+                    messages = messages,
+                    topContentPadding = topPadding,
+                    bottomContentPadding = bottomPadding,
+                    reverseLayout = true,
+                    monthSeparators = true,
+                    hasMore = !exhausted,
+                    onLoadMore = ::more,
+                    playbackState = playbackState,
+                    translationEnabled = translationEnabled,
+                    userNickname = userNickname,
+                    onOpenMedia = onOpenMedia,
+                    onPlayVoice = onPlayVoice,
+                    onDownload = onDownload,
+                    onRetranslate = onRetranslate,
+                    onToggleFavorite = onToggleFavorite,
+                )
+                else -> LazyVerticalGrid(
+                    columns = GridCells.Fixed(MEDIA_GRID_COLUMNS),
+                    reverseLayout = true,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topPadding, bottom = bottomPadding),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    gridItems(
+                        gridRows,
+                        key = MemberMediaRow::key,
+                        span = { row ->
+                            if (row is MemberMediaRow.Month) GridItemSpan(maxLineSpan) else GridItemSpan(1)
+                        },
+                        contentType = { it::class },
+                    ) { row ->
+                        when (row) {
+                            is MemberMediaRow.Media -> MediaMessageCell(
+                                message = row.message,
+                                onClick = { onOpenMedia(row.message) },
+                            )
+                            is MemberMediaRow.Month -> MemberMediaMonthHeader(row.label)
+                            is MemberMediaRow.Gap -> Spacer(Modifier.fillMaxWidth().aspectRatio(1f))
+                        }
+                    }
+                    if (!exhausted) {
+                        item(key = "auxiliary_media_loading", span = { GridItemSpan(maxLineSpan) }) {
+                            AuxiliaryLoadFooter(pageKey = messages.size, onLoadMore = ::more)
+                        }
                     }
                 }
             }
@@ -684,6 +717,9 @@ private fun MemberTimelineAuxiliaryScreen(
 private fun AuxiliaryMessageList(
     messages: List<RelayMessage>,
     hasMore: Boolean,
+    topContentPadding: Dp,
+    bottomContentPadding: Dp,
+    searchQuery: String = "",
     reverseLayout: Boolean = false,
     monthSeparators: Boolean = false,
     onLoadMore: () -> Unit,
@@ -699,7 +735,7 @@ private fun AuxiliaryMessageList(
     val monthRows = if (monthSeparators) remember(messages) { memberMediaRows(messages) } else emptyList()
     LazyColumn(
         reverseLayout = reverseLayout,
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 88.dp),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topContentPadding, bottom = bottomContentPadding),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -708,6 +744,7 @@ private fun AuxiliaryMessageList(
                 when (row) {
                     is MemberMediaRow.Media -> AuxiliaryMessageCard(
                         message = row.message,
+                        searchQuery = searchQuery,
                         playbackState = playbackState,
                         translationEnabled = translationEnabled,
                         userNickname = userNickname,
@@ -725,6 +762,7 @@ private fun AuxiliaryMessageList(
             items(messages, key = { it.id }, contentType = { "message" }) { message ->
                 AuxiliaryMessageCard(
                     message = message,
+                    searchQuery = searchQuery,
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
                     userNickname = userNickname,
@@ -747,6 +785,7 @@ private fun AuxiliaryMessageList(
 @Composable
 private fun AuxiliaryMessageCard(
     message: RelayMessage,
+    searchQuery: String,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
     userNickname: String,
@@ -763,7 +802,7 @@ private fun AuxiliaryMessageCard(
         audioState = playbackState.takeIf { it.messageId == message.id },
         translationEnabled = translationEnabled,
         userNickname = userNickname,
-        searchQuery = "",
+        searchQuery = searchQuery,
         onOpenMedia = { onOpenMedia(message) },
         onPlayVoice = { onPlayVoice(message) },
         onDownload = { onDownload(message) },
@@ -792,7 +831,7 @@ private fun MemberMediaMonthHeader(label: String) {
 @Composable
 private fun AuxiliaryLoadFooter(pageKey: Int, onLoadMore: () -> Unit) {
     Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
+        GlassCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
     }
     LaunchedEffect(pageKey) { onLoadMore() }
 }
@@ -870,24 +909,35 @@ private fun MediaMessageCell(message: RelayMessage, onClick: () -> Unit) {
 /**
  * Layout that lets the floating header overlap the timeline while the
  * timeline content extends underneath it. Glass controls in the header
- * sample the root haze source, so messages blur as they scroll beneath.
+ * sample only the timeline, keeping the gradient and controls out of their
+ * own backdrop capture.
  */
 @Composable
 private fun FloatingTimelineLayout(
     header: @Composable () -> Unit,
     content: @Composable (headerHeight: Dp) -> Unit,
 ) {
+    val timelineHazeState = rememberGlassHazeState()
     SubcomposeLayout(Modifier.fillMaxSize()) { constraints ->
-        val headerPlaceable = subcompose("header") { header() }.single()
-            .measure(constraints.copy(minHeight = 0))
+        val headerPlaceable = subcompose("header") {
+            CompositionLocalProvider(
+                LocalGlassHazeState provides timelineHazeState,
+                LocalGlassFrostedControls provides true,
+            ) { header() }
+        }.single().measure(constraints.copy(minHeight = 0))
         val contentTopInset = (headerPlaceable.height.toDp() - 10.dp).coerceAtLeast(0.dp)
         val contentPlaceable = subcompose("timeline") {
-            Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().hazeSource(timelineHazeState)) {
                 content(contentTopInset)
             }
         }.single().measure(constraints)
+        val blurHeight = (headerPlaceable.height + 32.dp.roundToPx()).coerceAtMost(constraints.maxHeight)
+        val backdropPlaceable = subcompose("header-backdrop") {
+            Box(Modifier.fillMaxSize().progressiveGlassHeader(timelineHazeState))
+        }.single().measure(constraints.copy(minHeight = blurHeight, maxHeight = blurHeight))
         layout(constraints.maxWidth, constraints.maxHeight) {
             contentPlaceable.placeRelative(0, 0)
+            backdropPlaceable.placeRelative(0, 0)
             headerPlaceable.placeRelative(0, 0)
         }
     }
@@ -1193,7 +1243,7 @@ private fun MemberTimelineContent(
             Box(Modifier.fillMaxSize().padding(top = topContentPadding, bottom = bottomContentPadding), contentAlignment = Alignment.Center) {
                 when {
                     loadError -> TextButton(onClick = { retryKey++ }) { Text("加载失败，点击重试", color = GlassColors.Accent) }
-                    !initialized -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
+                    !initialized -> GlassCircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
                     else -> Text(
                         if (query.isBlank() && !filter.isActive) "暂无消息" else "没有找到相关消息",
                         color = GlassColors.InkSecondary,
@@ -1210,7 +1260,7 @@ private fun TimelineBoundary(visible: Boolean, loading: Boolean, error: Boolean,
         Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
             when {
                 error -> TextButton(onClick = onRetry) { Text("加载失败，点击重试", color = GlassColors.Accent) }
-                loading -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
+                loading -> GlassCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
                 else -> Text(label, fontSize = 11.sp, color = GlassColors.InkTertiary)
             }
         }

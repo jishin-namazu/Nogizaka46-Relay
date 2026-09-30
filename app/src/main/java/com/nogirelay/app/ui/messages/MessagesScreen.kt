@@ -61,7 +61,6 @@ import com.nogirelay.app.ui.glass.GlassHeader
 import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
-import com.nogirelay.app.ui.relaySheetBackdrop
 import com.nogirelay.app.ui.rememberRelaySheetBackdropState
 import com.nogirelay.app.ui.transfer.DataTransferDrawer
 import kotlinx.coroutines.Dispatchers
@@ -195,8 +194,7 @@ fun MessagesScreen(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .relaySheetBackdrop(sheetBackdrop),
+                .fillMaxSize(),
         ) {
             if (uiState.loading && threads.isEmpty()) {
                 Box(Modifier.fillMaxSize())

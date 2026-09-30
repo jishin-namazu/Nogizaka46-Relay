@@ -50,7 +50,6 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -104,6 +103,7 @@ import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.performance.RefreshRatePolicy
 import com.nogirelay.app.performance.RefreshRatePolicyOwner
 import com.nogirelay.app.ui.glass.GlassCircleButton
+import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassMediaTransition
 import com.nogirelay.app.ui.glass.GlassSlider
@@ -494,7 +494,7 @@ private fun MediaViewerTopBar(
     ) {
         GlassCircleButton(
             onClick = onClose,
-            tone = GlassTone.OnDark,
+            tone = GlassTone.Neutral,
             contentDescription = "返回",
         ) {
             Icon(
@@ -525,7 +525,7 @@ private fun MediaViewerTopBar(
         GlassCircleButton(
             onClick = onDownload,
             enabled = !isDownloading,
-            tone = GlassTone.OnDark,
+            tone = GlassTone.Neutral,
             contentDescription = when {
                 isDownloading -> "保存中"
                 isDownloaded -> "已保存"
@@ -558,8 +558,8 @@ private fun MediaViewerTopBar(
                     label = "download_button_state",
                 ) { state ->
                     when (state) {
-                        DownloadButtonState.DOWNLOADING -> CircularProgressIndicator(
-                            color = Color.White,
+                        DownloadButtonState.DOWNLOADING -> GlassCircularProgressIndicator(
+                            color = GlassColors.Accent,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(20.dp),
                         )
@@ -1030,7 +1030,7 @@ private fun VideoPlayer(
                     .background(Color.White.copy(alpha = 0.10f)),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator(
+                GlassCircularProgressIndicator(
                     color = Color.White,
                     modifier = Modifier.size(30.dp),
                     strokeWidth = 2.5.dp,
@@ -1063,7 +1063,7 @@ private fun VideoPlayer(
                         togglePlayPause()
                         lastInteractionTime = System.currentTimeMillis()
                     },
-                    tone = GlassTone.OnDark,
+                    tone = GlassTone.Neutral,
                     size = 64.dp,
                     contentDescription = when {
                         isCompleted -> "重播"
@@ -1254,7 +1254,7 @@ private fun VideoBottomBar(
     ) {
         GlassCircleButton(
             onClick = onTogglePlayPause,
-            tone = GlassTone.OnDark,
+            tone = GlassTone.Neutral,
             size = 46.dp,
             contentDescription = when {
                 isCompleted -> "重播"
@@ -1315,7 +1315,7 @@ private fun VideoBottomBar(
                     onInteraction()
                 },
                 enabled = duration > 0,
-                accent = Color.White,
+                accent = GlassColors.Accent,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

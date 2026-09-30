@@ -85,9 +85,12 @@ private fun MemberPickerGridContent(
 ) {
     val groups = remember(members) { memberGroups(members) }
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 104.dp),
+        columns = GridCells.Adaptive(minSize = 112.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
+        // Selected tiles cast a shadow below their bounds. Keep the final row
+        // clear of the scrolling viewport's clip, including the press rebound.
+        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
         modifier = modifier.fillMaxWidth().heightIn(max = 430.dp),
     ) {
         groups.forEach { (category, groupMembers) ->
@@ -125,7 +128,7 @@ fun MemberPickerCard(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    graduatedTagAtCorner: Boolean = false,
+    graduatedTagAtCorner: Boolean = true,
 ) {
     val selectionProgress by animateFloatAsState(
         targetValue = if (selected) 1f else 0f,
@@ -143,6 +146,8 @@ fun MemberPickerCard(
         edgeStrength = 0.6f + 0.4f * selectionProgress,
         modifier = modifier,
     ) {
+        // The corner badge is an overlay, so both member states keep the same
+        // centered avatar/name block and equal space above and below it.
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,

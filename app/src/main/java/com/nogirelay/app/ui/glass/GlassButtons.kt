@@ -59,7 +59,8 @@ fun GlassCircleButton(
     Box(
         modifier = modifier
             .size(size)
-            .glassPress(press, shape, depth)
+            .glassPress(press)
+            .glassControlShadow(shape, tone, tint, depth, press)
             .graphicsLayer {
                 if (pressScale != 1f) {
                     scaleX *= pressScale
@@ -94,19 +95,16 @@ fun GlassCircleButton(
                 shape = shape,
                 tone = tone,
                 fillAlpha = if (fillAlpha.isNaN()) {
-                    when (tone) {
-                        GlassTone.Neutral -> GlassColors.NeutralFillAlpha
-                        GlassTone.Accent -> GlassColors.AccentFillAlpha
-                        GlassTone.OnDark -> 0.14f
-                    }
+                    controlFillAlpha(tone)
                 } else {
                     fillAlpha
                 },
                 tint = tint,
                 blur = GlassOpticsPresets.BlurControl.dp,
                 interactionSource = interactionSource,
+                control = true,
             )
-            .glassEdgeLight(shape, tone),
+            .then(if (tone == GlassTone.OnDark) Modifier.glassEdgeLight(shape, tone) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         CompositionLocalProvider(
@@ -162,6 +160,7 @@ fun GlassCapsuleButton(
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp),
     contentDescription: String? = null,
     shape: androidx.compose.foundation.shape.RoundedCornerShape = GlassShapes.Capsule,
+    tint: androidx.compose.ui.graphics.Color? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -169,7 +168,8 @@ fun GlassCapsuleButton(
     Row(
         modifier = modifier
             .heightIn(min = height)
-            .glassPress(press, shape, GlassDepths.Low)
+            .glassPress(press)
+            .glassControlShadow(shape, tone, tint, press = press)
             .semantics {
                 if (contentDescription != null) this.contentDescription = contentDescription
             }
@@ -184,10 +184,13 @@ fun GlassCapsuleButton(
             .glass(
                 shape = shape,
                 tone = tone,
+                tint = tint,
+                fillAlpha = controlFillAlpha(tone),
                 blur = GlassOpticsPresets.BlurControl.dp,
                 interactionSource = interactionSource,
+                control = true,
             )
-            .glassEdgeLight(shape, tone)
+            .then(if (tone == GlassTone.OnDark) Modifier.glassEdgeLight(shape, tone) else Modifier)
             .padding(contentPadding),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -222,7 +225,12 @@ fun GlassChip(
     Row(
         modifier = modifier
             .height(height)
-            .glassPress(press, shape, if (selected) GlassDepths.Low else GlassDepths.None)
+            .glassPress(press)
+            .glassControlShadow(
+                shape, tone,
+                depth = if (selected) GlassDepths.Low else GlassDepths.None,
+                press = press,
+            )
             .semantics { this.selected = selected }
             .clip(shape)
             .clickable(
@@ -235,11 +243,11 @@ fun GlassChip(
             .glass(
                 shape = shape,
                 tone = tone,
-                fillAlpha = if (selected) GlassColors.AccentFillAlpha else GlassColors.NeutralFillAlpha,
+                fillAlpha = controlFillAlpha(tone),
                 blur = GlassOpticsPresets.BlurControl.dp,
                 interactionSource = interactionSource,
+                control = true,
             )
-            .glassEdgeLight(shape, tone, strength = if (selected) 0.9f else 0.7f)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -270,7 +278,7 @@ fun GlassPanel(
     tone: GlassTone = GlassTone.Neutral,
     depth: GlassDepth = GlassDepths.Medium,
     blur: Dp = GlassOpticsPresets.BlurPanel.dp,
-    fillAlpha: Float = GlassColors.NeutralFillAlpha,
+    fillAlpha: Float = controlFillAlpha(tone),
     edgeStrength: Float = 1f,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
@@ -282,11 +290,12 @@ fun GlassPanel(
         modifier = modifier
             .then(
                 if (onClick != null) {
-                    Modifier.glassPress(press, shape, depth)
+                    Modifier.glassPress(press)
                 } else {
-                    Modifier.glassShadow(shape, depth)
+                    Modifier
                 },
             )
+            .glassControlShadow(shape, tone, depth = depth, press = if (onClick != null) press else null)
             .clip(shape)
             .then(
                 if (onClick != null) {
@@ -307,8 +316,10 @@ fun GlassPanel(
                 fillAlpha = fillAlpha,
                 blur = blur,
                 interactionSource = if (onClick != null) interactionSource else null,
+                control = true,
+                edgeStrength = edgeStrength,
             )
-            .glassEdgeLight(shape, tone, edgeStrength),
+            .then(if (tone == GlassTone.OnDark) Modifier.glassEdgeLight(shape, tone, edgeStrength) else Modifier),
         content = content,
     )
 }

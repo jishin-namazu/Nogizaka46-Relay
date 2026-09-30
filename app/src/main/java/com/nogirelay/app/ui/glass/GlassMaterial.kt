@@ -92,6 +92,7 @@ private fun glassStyle(
     blurDp: Dp,
     specular: Float,
     tintOverride: Color?,
+    control: Boolean,
 ): GlassStyle {
     val accent = GlassColors.Accent
     val body = when (tone) {
@@ -99,7 +100,7 @@ private fun glassStyle(
         GlassTone.Accent -> accent
         GlassTone.OnDark -> Color.White
     }
-    val style = remember(shape, tone, fillAlpha, blurDp, specular, tintOverride) {
+    val style = remember(shape, tone, fillAlpha, blurDp, specular, tintOverride, control) {
         GlassStyle.regular.then {
             optics(
                 GlassDefaults.optics.copy(
@@ -111,7 +112,9 @@ private fun glassStyle(
             // state keeps visible blur + refraction underneath the tint.
             backgroundColor(Color.Transparent)
             tint(
-                tintOverride ?: body.copy(
+                if (control) controlBodyColor(tone, tintOverride).let {
+                    it.copy(alpha = (it.alpha * fillAlpha).coerceIn(0f, 1f))
+                } else tintOverride ?: body.copy(
                     alpha = if (tone == GlassTone.Accent) {
                         // Leave a little optical depth for the highlight and
                         // refraction layers instead of making a flat swatch.
@@ -129,6 +132,17 @@ private fun glassStyle(
             chromaticAberrationStrength(GlassOpticsPresets.Chromatic)
             chromaticAberrationMode(ChromaticAberrationMode.Simple)
             lightPosition(androidx.compose.ui.Alignment.TopCenter)
+            if (control) {
+                // Buttons, cards and selectors share a shallow luminous bevel.
+                // Suppress the regular glass preset's dark outline underneath it.
+                edgeShadow(Color.Transparent)
+                whitePoint(0f)
+                chromaMultiplier(1f)
+                contentNormalBlend(0f)
+                specularIntensity(0.10f)
+                ambientResponse(0.04f)
+                chromaticAberrationStrength(0f)
+            }
         }
     }
     return style
@@ -156,10 +170,23 @@ fun Modifier.glass(
     tint: Color? = null,
     interactionSource: MutableInteractionSource? = null,
     pressedLighting: Boolean = true,
+    control: Boolean = false,
+    edgeStrength: Float = 1f,
 ): Modifier {
     val hazeState = LocalGlassHazeState.current
     val blurEnabled = LocalGlassBlurEnabled.current
-    val style = glassStyle(shape, tone, fillAlpha, blur, specular, tint)
+    val styledControl = control && tone != GlassTone.OnDark
+    if (styledControl && LocalGlassFrostedControls.current) {
+        return frostedGlass(
+            shape = shape,
+            tone = tone,
+            tint = tint,
+            fillAlpha = fillAlpha * if (tone == GlassTone.Accent) 0.82f else 0.5f,
+            blur = blur,
+            edgeStrength = edgeStrength,
+        )
+    }
+    val style = glassStyle(shape, tone, fillAlpha, blur, specular, tint, styledControl)
 
     val pressStyle: (dev.chrisbanes.haze.glass.GlassStyleScope.() -> Unit)? =
         if (interactionSource != null && pressedLighting) {
@@ -191,11 +218,13 @@ fun Modifier.glass(
                 interactionSource = interactionSource,
             )
         } else {
-            // Fallback: soft translucent fill with the same color language.
-            // Fallback is only reachable from overlay windows (popover /
-            // dialog / sheet) with no haze source — those need a solid milky
-            // body to stay readable over arbitrary content.
-            val fallback = when (tone) {
+            // Missing sources and disabled blur retain the control's tint and
+            // opacity. Panels use a denser fill to keep overlay content readable.
+            val fallback = if (styledControl) {
+                controlBodyColor(tone, tint).let {
+                    it.copy(alpha = (it.alpha * fillAlpha).coerceIn(0f, 1f))
+                }
+            } else tint ?: when (tone) {
                 GlassTone.Neutral -> Color.White.copy(alpha = 0.94f)
                 GlassTone.Accent -> GlassColors.Accent.copy(alpha = 0.92f)
                 GlassTone.OnDark -> Color(0xFF26272E).copy(alpha = 0.88f)
@@ -206,10 +235,11 @@ fun Modifier.glass(
             }
         },
     )
-    // Colored controls keep the app accent hue, but gain the same dimensional
-    // surface as the reference: a soft upper highlight and a slightly deeper
-    // lower body. This is an optical layer only; icons and layout are untouched.
-    return if (tone == GlassTone.Accent) {
+    // Shared button/card surfaces use a luminous bevel. Legacy surfaces retain
+    // their original lighting; both finishes sit behind icons and text.
+    return if (styledControl) {
+        surface.glassControlFinish(shape, tone, tint, edgeStrength)
+    } else if (tone == GlassTone.Accent) {
         surface.then(Modifier.accentSurfaceLight(shape))
     } else {
         surface
@@ -232,9 +262,9 @@ private fun Modifier.accentSurfaceLight(shape: RoundedCornerShape): Modifier = d
         radius = size.maxDimension * 0.72f,
     )
     onDrawWithContent {
-        drawContent()
         drawOutline(outline, brush = body)
         drawOutline(outline, brush = highlight, blendMode = BlendMode.Screen)
+        drawContent()
     }
 }
 
