@@ -1,6 +1,9 @@
 package com.nogirelay.app.ui.transfer
 
+import android.content.Context
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +48,7 @@ import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogMemberCategories
 import com.nogirelay.app.performance.LocalRelayPageWorkPaused
 import com.nogirelay.app.ui.RemoteImage
+import com.nogirelay.app.ui.preloadRemoteImage
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassDepths
@@ -53,8 +59,30 @@ import com.nogirelay.app.ui.glass.GlassMotion
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 val MemberCategoryOrder = BlogMemberCategories.STANDARD_CATEGORIES + "其他"
+
+private val memberAvatarPreloadSlots = Semaphore(4)
+
+/** Warm avatar files and decoded bitmaps before a picker is scrolled. */
+internal suspend fun preloadMemberAvatars(context: Context, members: List<BlogMember>) {
+    val urls = members.mapNotNull { it.avatarUrl?.takeIf(String::isNotBlank) }.distinct()
+    coroutineScope {
+        urls.map { url ->
+            async(Dispatchers.IO) {
+                memberAvatarPreloadSlots.withPermit {
+                    preloadRemoteImage(context, url, targetWidth = 160)
+                }
+            }
+        }.awaitAll()
+    }
+}
 
 fun memberGroups(members: List<BlogMember>): List<Pair<String, List<BlogMember>>> =
     members.groupBy(BlogMember::category)
@@ -74,6 +102,10 @@ fun MemberPickerGrid(
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(members) {
+        if (members.isNotEmpty()) preloadMemberAvatars(context, members)
+    }
     CompositionLocalProvider(LocalRelayPageWorkPaused provides false) {
         MemberPickerGridContent(members, selectedIds, onSelectedChange, modifier, contentPadding, header, footer)
     }
@@ -151,6 +183,10 @@ fun MemberPickerCard(
     modifier: Modifier = Modifier,
     graduatedTagAtCorner: Boolean = true,
 ) {
+    val appearance = remember(member.id) { Animatable(0f) }
+    LaunchedEffect(member.id) {
+        appearance.animateTo(1f, tween(durationMillis = 220))
+    }
     val selectionProgress by animateFloatAsState(
         targetValue = if (selected) 1f else 0f,
         animationSpec = GlassMotion.GentleSpec,
@@ -165,7 +201,13 @@ fun MemberPickerCard(
         depth = if (selected) GlassDepths.Low else GlassDepths.None,
         blur = 14.dp,
         edgeStrength = 0.6f + 0.4f * selectionProgress,
-        modifier = modifier,
+        modifier = modifier.graphicsLayer {
+            val progress = appearance.value.coerceIn(0f, 1f)
+            alpha = progress
+            val scale = 0.96f + 0.04f * progress
+            scaleX = scale
+            scaleY = scale
+        },
     ) {
         // The corner badge is an overlay, so both member states keep the same
         // centered avatar/name block and equal space above and below it.
@@ -183,6 +225,7 @@ fun MemberPickerCard(
                     contentDescription = member.name,
                     loadCachedImmediately = false,
                     revalidateRemote = true,
+                    crossfadeDurationMillis = 180,
                     modifier = Modifier
                         .size(if (graduatedTagAtCorner) 40.dp else 46.dp)
                         .clip(GlassShapes.Circle),
