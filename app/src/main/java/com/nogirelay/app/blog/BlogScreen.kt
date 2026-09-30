@@ -351,6 +351,12 @@ fun BlogScreen(
         }
     }
 
+    LaunchedEffect(blogs, listActive) {
+        if (!listActive || blogs.isEmpty()) return@LaunchedEffect
+        val urls = blogs.mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) }
+        BlogMediaDownloader.preloadImages(context, urls, limit = urls.size)
+    }
+
     fun goToPage(targetPage: Int) {
         val safePage = targetPage.coerceIn(0, totalPages - 1)
         if (safePage == currentPage || pageRequesting) return

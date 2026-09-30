@@ -4,6 +4,8 @@ import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.net.toUri
@@ -40,6 +42,14 @@ class MainActivity : ComponentActivity() {
     private val notificationBlogIds = MutableStateFlow<String?>(null)
     private lateinit var proximityControl: ProximityScreenControl
     private lateinit var audioManager: AudioManager
+    private val proximityHandler = Handler(Looper.getMainLooper())
+    private var proximityEnabled = false
+    private val enableProximityAfterSettling = Runnable {
+        if (!proximityEnabled) {
+            proximityEnabled = true
+            proximityControl.setEnabled(true)
+        }
+    }
     private var lastAutoSyncAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -143,6 +153,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        proximityHandler.removeCallbacks(enableProximityAfterSettling)
         proximityControl.close()
         super.onDestroy()
     }
@@ -158,7 +169,18 @@ class MainActivity : ComponentActivity() {
                 device.type == AudioDeviceInfo.TYPE_USB_HEADSET
             }
         val shouldEnable = playback.isPlaying && !speakerOn && !isExternalAudioConnected
-        proximityControl.setEnabled(shouldEnable)
+        if (shouldEnable) {
+            if (!proximityEnabled) {
+                proximityHandler.removeCallbacks(enableProximityAfterSettling)
+                proximityHandler.postDelayed(enableProximityAfterSettling, PROXIMITY_START_DELAY_MS)
+            }
+        } else {
+            proximityHandler.removeCallbacks(enableProximityAfterSettling)
+            if (proximityEnabled) {
+                proximityEnabled = false
+                proximityControl.setEnabled(false)
+            }
+        }
     }
 
     private fun openMedia(message: RelayMessage, transitionKey: String) {
@@ -202,7 +224,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-
+        const val PROXIMITY_START_DELAY_MS = 450L
         const val AUTO_SYNC_MIN_INTERVAL_MS = 60_000L
     }
 }

@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalTextToolbar
@@ -85,6 +86,7 @@ import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.data.readDatabase
+import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.performance.rememberSearchQuery
 import com.nogirelay.app.ui.RemoteImage
@@ -92,6 +94,7 @@ import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterDialog
 import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.clearSelectionOnTap
+import com.nogirelay.app.ui.preloadRemoteImage
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassDepths
@@ -103,9 +106,15 @@ import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
 import com.nogirelay.app.ui.glass.glassMediaSource
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -344,6 +353,7 @@ private fun FilterDrawerEntry(
 }
 
 private const val AUXILIARY_PAGE_SIZE = 200
+private val mediaPreloadSlots = Semaphore(3)
 
 private enum class MemberTimelineAuxiliary { MEDIA, FAVORITES }
 
@@ -456,6 +466,48 @@ private suspend fun loadAuxiliaryCount(
     MemberTimelineAuxiliary.MEDIA -> AppGraph.database.countMediaMessagesForMember(memberKey, mediaCategory.type)
 }
 
+private suspend fun preloadMessageMedia(
+    context: android.content.Context,
+    messages: List<RelayMessage>,
+    targetWidth: Int,
+) {
+    val previewUrls = messages.mapNotNull { message ->
+        when (message.type) {
+            MessageType.IMAGE -> message.mediaUrl?.takeIf(String::isNotBlank)
+                ?: message.thumbnailUrl?.takeIf(String::isNotBlank)
+            MessageType.VIDEO -> message.thumbnailUrl?.takeIf(String::isNotBlank)
+            else -> null
+        }
+    }.distinct()
+    val voiceUrls = messages.asSequence()
+        .filter { it.type == MessageType.AUDIO }
+        .mapNotNull { it.mediaUrl?.takeIf(String::isNotBlank) }
+        .distinct()
+        .take(12)
+        .toList()
+
+    coroutineScope {
+        previewUrls.map { url ->
+            async(Dispatchers.IO) {
+                mediaPreloadSlots.withPermit {
+                    preloadRemoteImage(context, url, targetWidth = targetWidth)
+                }
+            }
+        }.toList().awaitAll()
+        voiceUrls.map { url ->
+            async(Dispatchers.IO) {
+                mediaPreloadSlots.withPermit {
+                    runCatching {
+                        if (MediaDownloader.cachedFileForUrl(context, url, MessageType.AUDIO) == null) {
+                            MediaDownloader.downloadUrl(context, url, MessageType.AUDIO)
+                        }
+                    }
+                }
+            }
+        }.toList().awaitAll()
+    }
+}
+
 @Composable
 private fun MemberTimelineAuxiliaryScreen(
     memberKey: String,
@@ -481,6 +533,13 @@ private fun MemberTimelineAuxiliaryScreen(
     var exhausted by remember(memberKey, screen, mediaCategory) { mutableStateOf(false) }
     var loadedVersion by remember(memberKey, screen, mediaCategory) { mutableLongStateOf(-1L) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    LaunchedEffect(messages, active, screen, mediaCategory) {
+        if (active && messages.isNotEmpty()) {
+            preloadMessageMedia(context, messages, targetWidth = 720)
+        }
+    }
 
     fun more() {
         if (!active || loading || loadingMore || exhausted) return
@@ -591,7 +650,7 @@ private fun MemberTimelineAuxiliaryScreen(
                 reverseLayout = true,
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 128.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 88.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
                 gridItems(
@@ -640,7 +699,7 @@ private fun AuxiliaryMessageList(
     val monthRows = if (monthSeparators) remember(messages) { memberMediaRows(messages) } else emptyList()
     LazyColumn(
         reverseLayout = reverseLayout,
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 128.dp),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 88.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
@@ -922,7 +981,7 @@ private fun MemberTimelineContent(
     }
     val mutex = remember { Mutex() }
     val listState = rememberLazyListState()
-    val bottomContentPadding = 128.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomContentPadding = 88.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val density = LocalDensity.current
     val currentTopInset by rememberUpdatedState(with(density) { topContentPadding.roundToPx() })
     val currentBottomInset by rememberUpdatedState(with(density) { bottomContentPadding.roundToPx() })
@@ -947,10 +1006,17 @@ private fun MemberTimelineContent(
     val currentActive by rememberUpdatedState(active)
     val latestInitialLoaded by rememberUpdatedState(onInitialLoaded)
     val rows by remember { derivedStateOf { messageTimelineRows(window.messages) } }
+    val context = LocalContext.current
     val atLatest by remember {
         derivedStateOf {
             initialized && !window.hasNewer && listState.firstVisibleItemIndex <= 1 &&
                 listState.firstVisibleItemScrollOffset == 0
+        }
+    }
+
+    LaunchedEffect(window.messages, active) {
+        if (active && window.messages.isNotEmpty()) {
+            preloadMessageMedia(context, window.messages, targetWidth = 720)
         }
     }
 

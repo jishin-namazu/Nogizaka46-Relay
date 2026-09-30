@@ -114,6 +114,34 @@ object RemoteImageMemoryCache {
     fun trim(clear: Boolean) = cache.trimTo(if (clear) 0 else limitKb * 512L)
 }
 
+/** Downloads and decodes one image into the same cache used by [RemoteImage]. */
+internal suspend fun preloadRemoteImage(
+    context: Context,
+    url: String,
+    messageType: MessageType = MessageType.IMAGE,
+    targetWidth: Int = FALLBACK_DECODE_DIMENSION,
+): Boolean {
+    if (url.isBlank() || RemoteImageMemoryCache.getForUrl(url) != null) return true
+    return try {
+        val appContext = context.applicationContext
+        if (MediaDownloader.isNotFound(appContext, url)) return false
+        val file = withContext(AppGraph.dispatchers.network) {
+            MediaDownloader.cachedFileForUrl(appContext, url, messageType)
+                ?: MediaDownloader.downloadUrl(appContext, url, messageType)
+        }
+        val bitmap = withContext(AppGraph.dispatchers.imageDecode) {
+            decodeSampled(file, targetWidth, targetWidth)
+        } ?: return false
+        RemoteImageMemoryCache.put("preload@$targetWidth@$url", url, bitmap)
+        ImageAspectRatioCache.put(url, bitmap.width.toFloat() / bitmap.height.toFloat())
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
+    }
+}
+
 internal fun isGifSignature(header: ByteArray): Boolean {
     if (header.size < GIF_HEADER_BYTES) return false
     val signature = String(header, 0, GIF_HEADER_BYTES, Charsets.US_ASCII)
