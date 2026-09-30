@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -371,28 +372,33 @@ private fun VoiceMessagePlayer(message: RelayMessage, audioState: VoicePlaybackS
         Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
             androidx.compose.animation.AnimatedVisibility(
                 visible = playing,
+                // Fade the button and its full shadow in a padded layer. A tight
+                // 40.dp alpha layer cuts the shadow into a gray rectangle.
+                modifier = Modifier.requiredSize(104.dp),
                 enter = fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.9f),
                 exit = fadeOut(tween(180)) + scaleOut(tween(180), targetScale = 0.9f),
             ) {
-                val speakerOn = audioState?.speakerOn == true
-                GlassCircleButton(
-                    contentDescription = if (speakerOn) "切换到听筒" else "切换到扬声器",
-                    tone = if (speakerOn) GlassTone.Accent else GlassTone.Neutral,
-                    enabled = enabled && playing,
-                    size = 40.dp,
-                    modifier = if (playing) Modifier else Modifier.clearAndSetSemantics {},
-                    onClick = {
-                        context.startService(Intent(context, VoicePlaybackService::class.java).apply {
-                            action = VoicePlaybackService.ACTION_SET_SPEAKER
-                            putExtra(VoicePlaybackService.EXTRA_SPEAKER_ON, !speakerOn)
-                        })
-                    },
-                ) {
-                    Icon(
-                        painterResource(R.drawable.ic_audio_speaker_official),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
+                Box(Modifier.padding(32.dp)) {
+                    val speakerOn = audioState?.speakerOn == true
+                    GlassCircleButton(
+                        contentDescription = if (speakerOn) "切换到听筒" else "切换到扬声器",
+                        tone = if (speakerOn) GlassTone.Accent else GlassTone.Neutral,
+                        enabled = enabled && playing,
+                        size = 40.dp,
+                        modifier = if (playing) Modifier else Modifier.clearAndSetSemantics {},
+                        onClick = {
+                            context.startService(Intent(context, VoicePlaybackService::class.java).apply {
+                                action = VoicePlaybackService.ACTION_SET_SPEAKER
+                                putExtra(VoicePlaybackService.EXTRA_SPEAKER_ON, !speakerOn)
+                            })
+                        },
+                    ) {
+                        Icon(
+                            painterResource(R.drawable.ic_audio_speaker_official),
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
         }

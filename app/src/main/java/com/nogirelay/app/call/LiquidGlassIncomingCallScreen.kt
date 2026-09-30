@@ -67,6 +67,8 @@ import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.performance.isRelayUiStarted
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.glass.GlassCircleButton
+import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassControlWhite
 import com.nogirelay.app.ui.glass.GlassMotion
 import com.nogirelay.app.ui.glass.GlassTone
 import java.util.Locale
@@ -222,7 +224,7 @@ private fun LiquidGlassCallContent(
                                 GlassCallAction(
                                     label = if (speakerOn) "扬声器开" else "扬声器",
                                     icon = Icons.Rounded.VolumeUp,
-                                    tint = if (speakerOn) Color(0xFFB7A1FF) else Color.White,
+                                    tint = if (speakerOn) GlassColors.Accent else GlassControlWhite,
                                     onClick = onToggleSpeaker,
                                     controlSize = if (compact) 68.dp else 78.dp,
                                     checked = speakerOn,
@@ -287,9 +289,8 @@ private fun CallStatus(status: String, isRinging: Boolean, elapsedSeconds: Int, 
 }
 
 /**
- * Big tinted-glass droplet: a [GlassCircleButton] in dark tone with a
- * semantic color tint (green answer / red decline), breathing gently while
- * ringing, squishing on press via the shared soft-body physics.
+ * Shared app button material with semantic colors (green answer / red decline),
+ * breathing gently while ringing and squishing on press via the shared physics.
  */
 @Composable
 private fun GlassCallAction(
@@ -309,39 +310,38 @@ private fun GlassCallAction(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (breath > 0.01f) {
-                // Soft halo breathing behind the droplet while ringing.
-                Box(
-                    Modifier
-                        .size(controlSize)
-                        .graphicsLayer {
-                            scaleX = 1f + breath * 0.16f
-                            scaleY = scaleX
-                            alpha = breath * 0.30f
-                        }
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(tint.copy(alpha = 0.35f)),
-                )
-            }
+        Box(
+            modifier = Modifier.size(controlSize).graphicsLayer {
+                // Move the halo and droplet together so their centers stay aligned.
+                translationY = -1.5.dp.toPx() * breath
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            // The halo uses the button's bounds and stays mounted as it fades out.
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .graphicsLayer {
+                        scaleX = 1f + breath * 0.16f
+                        scaleY = scaleX
+                        alpha = breath * 0.30f
+                    }
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(tint.copy(alpha = 0.35f)),
+            )
             GlassCircleButton(
                 onClick = onClick,
                 enabled = enabled,
-                tone = GlassTone.OnDark,
-                tint = tint.copy(alpha = 0.30f),
-                fillAlpha = 0.30f,
+                tone = if (checked == false) GlassTone.Neutral else GlassTone.Accent,
+                tint = tint,
                 size = controlSize,
                 pressScale = 1f + breath * 0.028f,
                 contentDescription = label,
                 toggleValue = checked,
-                modifier = Modifier.graphicsLayer {
-                    translationY = -1.5.dp.toPx() * breath
-                },
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = tint,
                     modifier = Modifier.size(controlSize * 0.36f),
                 )
             }

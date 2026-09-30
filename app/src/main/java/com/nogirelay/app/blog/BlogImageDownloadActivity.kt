@@ -55,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +72,7 @@ import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
 import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
 import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassControlWhite
 import com.nogirelay.app.ui.glass.GlassDepths
 import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassMotion
@@ -363,13 +365,16 @@ private fun BlogImageCell(
         animationSpec = GlassMotion.GentleSpec,
         label = "blog_image_selection",
     )
+    val selection = selectionProgress.coerceIn(0f, 1f)
     GlassPanel(
         onClick = onClick,
         onClickLabel = "第 ${index + 1} 张博客图片",
         shape = GlassShapes.Card,
-        tone = if (selectionProgress > 0.5f) GlassTone.Accent else GlassTone.Neutral,
-        fillAlpha = 0.24f + 0.28f * selectionProgress,
-        depth = if (selected) GlassDepths.Low else GlassDepths.None,
+        tone = GlassTone.Accent,
+        tint = lerp(GlassControlWhite, GlassColors.Accent, selection),
+        fillAlpha = 0.24f + 0.28f * selection,
+        depth = GlassDepths.Low,
+        shadowAlpha = selection,
         blur = 12.dp,
         modifier = Modifier.fillMaxWidth(),
     ) {

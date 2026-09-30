@@ -282,6 +282,8 @@ fun GlassPanel(
     edgeStrength: Float = 1f,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
+    tint: androidx.compose.ui.graphics.Color? = null,
+    shadowAlpha: Float = 1f,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -295,7 +297,11 @@ fun GlassPanel(
                     Modifier
                 },
             )
-            .glassControlShadow(shape, tone, depth = depth, press = if (onClick != null) press else null)
+            .glassControlShadow(
+                shape, tone, tint, depth,
+                press = if (onClick != null) press else null,
+                alpha = shadowAlpha,
+            )
             .clip(shape)
             .then(
                 if (onClick != null) {
@@ -318,6 +324,7 @@ fun GlassPanel(
                 interactionSource = if (onClick != null) interactionSource else null,
                 control = true,
                 edgeStrength = edgeStrength,
+                tint = tint,
             )
             .then(if (tone == GlassTone.OnDark) Modifier.glassEdgeLight(shape, tone, edgeStrength) else Modifier),
         content = content,

@@ -86,6 +86,7 @@ import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.data.readDatabase
 import com.nogirelay.app.media.MediaDownloader
+import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.performance.rememberSearchQuery
 import com.nogirelay.app.ui.RemoteImage
@@ -152,19 +153,20 @@ internal fun MemberTimelineScreen(
     onRetranslate: (RelayMessage) -> Unit,
 ) {
     var auxiliaryScreen by remember(entry) { mutableStateOf<MemberTimelineAuxiliary?>(null) }
-    val favoriteScope = rememberCoroutineScope()
+    var timelineEntry by remember(entry) { mutableStateOf(entry) }
+    val screenScope = rememberCoroutineScope()
     var query by remember(entry) { mutableStateOf("") }
     val workActive = active && com.nogirelay.app.performance.isRelayUiStarted() && !backdropState.isAttached
     val effectiveQuery = rememberSearchQuery(query, workActive)
     var timeFilter by remember(entry) { mutableStateOf(TimeFilter()) }
     var showFilter by remember(entry) { mutableStateOf(false) }
-    var initialTargetConsumed by remember(entry) { mutableStateOf(false) }
+    var initialTargetConsumed by remember(timelineEntry) { mutableStateOf(false) }
     var sessionUnreadIds by remember(entry) { mutableStateOf(emptySet<String>()) }
     val focusManager = LocalFocusManager.current
     val textToolbar = LocalTextToolbar.current
 
     fun toggleFavorite(message: RelayMessage) {
-        favoriteScope.launch {
+        screenScope.launch {
             withContext(AppGraph.dispatchers.databaseWrite) {
                 AppGraph.database.setMessageFavorite(message.id, !message.isFavorite)
             }
@@ -172,9 +174,34 @@ internal fun MemberTimelineScreen(
         }
     }
 
+    fun returnToTimeline() {
+        val sourceScreen = auxiliaryScreen ?: return
+        val playback = VoicePlaybackService.playbackState.value
+        val targetId = playback.messageId.takeIf { playback.isPlaying }
+        if (targetId == null) {
+            auxiliaryScreen = null
+            return
+        }
+        screenScope.launch {
+            val belongsToMember = withContext(AppGraph.dispatchers.databaseRead) {
+                AppGraph.database.find(targetId)?.memberKey == entry.memberKey
+            }
+            if (auxiliaryScreen != sourceScreen) return@launch
+            val latestPlayback = VoicePlaybackService.playbackState.value
+            if (belongsToMember && latestPlayback.isPlaying && latestPlayback.messageId == targetId) {
+                // Capture the target once on navigation, rather than following
+                // every playback update and pulling the user back while scrolling.
+                timelineEntry = MemberMessageEntry(entry.memberKey, latestPlayback)
+                query = ""
+                timeFilter = TimeFilter()
+            }
+            auxiliaryScreen = null
+        }
+    }
+
     fun back() {
         if (auxiliaryScreen != null) {
-            auxiliaryScreen = null
+            returnToTimeline()
             return
         }
         focusManager.clearFocus()
@@ -225,7 +252,7 @@ internal fun MemberTimelineScreen(
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
                     userNickname = userNickname,
-                    onBack = { auxiliaryScreen = null },
+                    onBack = ::returnToTimeline,
                     onOpenMedia = openScopedMedia,
                     onPlayVoice = onPlayVoice,
                     onDownload = onDownload,
@@ -249,15 +276,15 @@ internal fun MemberTimelineScreen(
                         )
                     },
                 ) { headerHeight ->
-                    key(entry, effectiveQuery, timeFilter, userNickname) {
+                    key(timelineEntry, effectiveQuery, timeFilter, userNickname) {
                         MemberTimelineContent(
                             memberKey = entry.memberKey,
                             query = effectiveQuery,
                             filter = timeFilter,
-                            initialTargetId = entry.targetMessageId.takeIf {
+                            initialTargetId = timelineEntry.targetMessageId.takeIf {
                                 !initialTargetConsumed && effectiveQuery.isBlank() && !timeFilter.isActive
                             },
-                            active = workActive,
+                            active = workActive && auxiliaryScreen == null,
                             versions = versions,
                             playbackState = playbackState,
                             translationEnabled = translationEnabled,
@@ -266,7 +293,7 @@ internal fun MemberTimelineScreen(
                             onInitialLoaded = {
                                 if (!initialTargetConsumed) {
                                     initialTargetConsumed = true
-                                    entry.notificationMessageId?.let(onInitialMessageHandled)
+                                    timelineEntry.notificationMessageId?.let(onInitialMessageHandled)
                                 }
                             },
                             onViewingLatest = { onViewingLatest(it && query.isBlank() && !timeFilter.isActive) },
@@ -585,7 +612,9 @@ private fun MemberTimelineAuxiliaryScreen(
         if (!active) return@LaunchedEffect
         if (loadedVersion == versions.messages) return@LaunchedEffect
         loading = messages.isEmpty()
-        exhausted = false
+        // Keep the last known pagination state until the refreshed page arrives.
+        // Resetting it here inserts a load-more row on markPlayed updates and
+        // shifts a short reverse-layout voice list for a single frame.
         val loaded = withContext(AppGraph.dispatchers.databaseRead) {
             loadAuxiliaryPage(memberKey, screen, mediaCategory, 0, effectiveQuery, userNickname)
         }

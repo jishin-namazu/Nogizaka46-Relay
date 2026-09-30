@@ -70,9 +70,12 @@ fun MemberPickerGrid(
     selectedIds: Set<String>,
     onSelectedChange: (Set<String>) -> Unit,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(top = 4.dp, bottom = 24.dp),
+    header: (@Composable () -> Unit)? = null,
+    footer: (@Composable () -> Unit)? = null,
 ) {
     CompositionLocalProvider(LocalRelayPageWorkPaused provides false) {
-        MemberPickerGridContent(members, selectedIds, onSelectedChange, modifier)
+        MemberPickerGridContent(members, selectedIds, onSelectedChange, modifier, contentPadding, header, footer)
     }
 }
 
@@ -82,17 +85,32 @@ private fun MemberPickerGridContent(
     selectedIds: Set<String>,
     onSelectedChange: (Set<String>) -> Unit,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues,
+    header: (@Composable () -> Unit)?,
+    footer: (@Composable () -> Unit)?,
 ) {
     val groups = remember(members) { memberGroups(members) }
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 112.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        // Selected tiles cast a shadow below their bounds. Keep the final row
-        // clear of the scrolling viewport's clip, including the press rebound.
-        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
-        modifier = modifier.fillMaxWidth().heightIn(max = 430.dp),
+        contentPadding = contentPadding,
+        modifier = modifier.fillMaxWidth(),
+        overscrollEffect = null,
     ) {
+        if (header != null) {
+            item(key = "picker-header", span = { GridItemSpan(maxLineSpan) }) { header() }
+        }
+        if (members.isEmpty()) {
+            item(key = "picker-empty", span = { GridItemSpan(maxLineSpan) }) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(120.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("正在加载成员...", color = GlassColors.InkSecondary, fontSize = 13.sp)
+                }
+            }
+        }
         groups.forEach { (category, groupMembers) ->
             item(key = "category-$category", span = { GridItemSpan(maxLineSpan) }) {
                 Text(
@@ -114,6 +132,9 @@ private fun MemberPickerGridContent(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 112.dp),
                 )
             }
+        }
+        if (footer != null) {
+            item(key = "picker-footer", span = { GridItemSpan(maxLineSpan) }) { footer() }
         }
     }
 }
@@ -226,72 +247,66 @@ fun TransferMemberPickerDialog(
 ) {
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     val allMemberIds = remember(members) { members.mapTo(linkedSetOf(), BlogMember::id) }
-    GlassDialog(onDismissRequest = onDismiss) {
-        GlassDialogTitle(title)
-        Spacer(Modifier.height(12.dp))
-        if (members.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxWidth().height(120.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "正在加载成员...",
-                    color = GlassColors.InkSecondary,
-                    fontSize = 13.sp,
-                )
-            }
-        } else {
-            MemberPickerGrid(
-                members = members,
-                selectedIds = draft,
-                onSelectedChange = { draft = it },
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            GlassIconButton(
-                onClick = { draft = allMemberIds },
-                enabled = members.isNotEmpty(),
-                imageVector = Icons.Rounded.DoneAll,
-                contentDescription = "全选",
-                size = 42.dp,
-                iconSize = 20.dp,
-            )
-            GlassIconButton(
-                onClick = { draft = emptySet() },
-                enabled = draft.isNotEmpty(),
-                imageVector = Icons.Rounded.ClearAll,
-                contentDescription = "全不选",
-                size = 42.dp,
-                iconSize = 20.dp,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                "已选 ${draft.size} 位",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 12.5.sp,
-                color = GlassColors.InkSecondary,
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            GlassCapsuleButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
-            }
-            GlassCapsuleButton(
-                onClick = { onConfirm(draft) },
-                enabled = draft.isNotEmpty(),
-                tone = GlassTone.Accent,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
+    GlassDialog(
+        onDismissRequest = onDismiss,
+        frostedBackground = false,
+        contentPadding = PaddingValues(0.dp),
+    ) {
+        MemberPickerGrid(
+            members = members,
+            selectedIds = draft,
+            onSelectedChange = { draft = it },
+            contentPadding = PaddingValues(22.dp),
+            header = { GlassDialogTitle(title) },
+            footer = {
+                Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        GlassIconButton(
+                            onClick = { draft = allMemberIds },
+                            enabled = members.isNotEmpty(),
+                            imageVector = Icons.Rounded.DoneAll,
+                            contentDescription = "全选",
+                            size = 42.dp,
+                            iconSize = 20.dp,
+                        )
+                        GlassIconButton(
+                            onClick = { draft = emptySet() },
+                            enabled = draft.isNotEmpty(),
+                            imageVector = Icons.Rounded.ClearAll,
+                            contentDescription = "全不选",
+                            size = 42.dp,
+                            iconSize = 20.dp,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "已选 ${draft.size} 位",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontSize = 12.5.sp,
+                            color = GlassColors.InkSecondary,
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                        GlassCapsuleButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                            Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                        }
+                        GlassCapsuleButton(
+                            onClick = { onConfirm(draft) },
+                            enabled = draft.isNotEmpty(),
+                            tone = GlassTone.Accent,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            },
+        )
     }
 }
 

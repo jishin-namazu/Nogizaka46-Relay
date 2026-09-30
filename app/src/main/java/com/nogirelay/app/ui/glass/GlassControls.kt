@@ -241,12 +241,16 @@ fun GlassSlider(
             Modifier
         }
 
-        val displayFraction = if (drag.dragging) drag.position else fraction
+        val displayFraction = (if (drag.dragging) drag.position else fraction).coerceIn(0f, 1f)
         val stretch = if (drag.dragging) drag.stretch else 1f
+        // The thumb travels between inset centers, not the track's outer edges.
+        // Fill to that same center so the rounded fill always overlaps the thumb.
+        val thumbCenterPx = thumbRadiusPx + usablePx * displayFraction
+        val trackFraction = (thumbCenterPx / widthPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
 
         Box(gestureModifier.fillMaxSize()) {
             GlassProgressTrack(
-                progress = { displayFraction },
+                progress = { trackFraction },
                 color = accent,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
