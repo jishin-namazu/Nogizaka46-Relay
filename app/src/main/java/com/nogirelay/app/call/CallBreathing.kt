@@ -13,7 +13,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 
-/** One shared, draw-only rhythm; never spins a completed-animation loop when motion is disabled. */
 @Composable
 internal fun rememberCallBreathing(isRinging: Boolean, visualActive: Boolean): State<Float> {
     val breath = remember { Animatable(0f) }

@@ -12,7 +12,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -27,14 +26,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 
-/**
- * VS15 (U+FE0E) 请求前一个字符使用单色的“文本呈现”形式。
- * 成员消息中可能包含它（例如 "☺︎"），但 Android 字体栈通常没有
- * 该基础字符的单色字形，因此这一组合会渲染成豆腐块，而普通形式
- * 或 emoji 呈现形式（"☺" / "☺️"）却能正常显示。
- * 该选择符不可见，去掉它只会放宽所请求的呈现方式；
- * 已存储的消息和翻译输入保持不变。
- */
 private const val TEXT_PRESENTATION_SELECTOR = "\uFE0E"
 
 fun String.withoutTextPresentationSelector(): String =
@@ -44,16 +35,10 @@ fun String.withoutTextPresentationSelector(): String =
         this
     }
 
-/** 摘录在单词边界处开始或结束时最多可额外借用的字符数。 */
 private const val SNIPPET_WORD_EXTENSION_LIMIT = 10
-/** 相邻匹配之间合并为单个摘录的最大间隔。 */
+
 private const val SNIPPET_MERGE_GAP = 10
 
-/**
- * 返回 [text] 中所有不区分大小写的 [query] 匹配附近的简短摘录；文本不包含
- * 查询时返回空列表。彼此间距在 [mergeGap] 个字符以内的匹配会合并为单个摘录，
- * 避免相邻出现位置产生重复片段。
- */
 fun searchSnippets(
     text: String,
     query: String,
@@ -125,18 +110,6 @@ fun searchSnippets(
     return snippets
 }
 
-/**
- * 返回 [text] 中第一个不区分大小写的 [query] 匹配附近的简短摘录；文本不
- * 包含查询时返回 null。
- *
- * 匹配之前只保留少量文本，确保匹配词本身始终位于列表
- * 可显示的第一行内；随后把截断点移到最近的单词边界，
- * 使摘录绝不会从单词中间开始或结束。搜索结果用它作为
- * 摘要，因此列表永远不会展开整篇 BLOG 正文。
- */
-fun searchSnippet(text: String, query: String, leading: Int = 12, trailing: Int = 28): String? =
-    searchSnippets(text, query, leading, trailing, maxSnippets = 1).firstOrNull()
-
 fun highlightMatches(
     text: String,
     query: String,
@@ -207,19 +180,9 @@ fun DrawScope.drawSearchHighlightBoxes(
             val rangeEnd = minOf(matchEnd, lineEnd)
             if (rangeStart >= rangeEnd) continue
 
-            var minX = Float.MAX_VALUE
-            var maxX = Float.MIN_VALUE
-            for (offset in rangeStart until rangeEnd) {
-                if (offset < result.layoutInput.text.length) {
-                    val box = result.getBoundingBox(offset)
-                    if (box.right > box.left && box.left < result.size.width && box.right > 0f) {
-                        minX = minOf(minX, box.left)
-                        maxX = maxOf(maxX, minOf(box.right, result.size.width.toFloat()))
-                    }
-                }
-            }
-            val left = minX
-            val right = maxX
+            val bounds = result.getPathForRange(rangeStart, rangeEnd).getBounds()
+            val left = bounds.left.coerceAtLeast(0f)
+            val right = minOf(bounds.right, result.size.width.toFloat())
             if (right <= left) continue
 
             val baselineDistance = result.firstBaseline - result.getLineTop(0)
@@ -229,11 +192,7 @@ fun DrawScope.drawSearchHighlightBoxes(
             } else {
                 (result.getLineBottom(line) - result.getLineTop(line)) * 0.72f
             }
-            // 字符主体的视觉中心：baseline - 0.38 * fontSize。
-            // 总高度：1.14 * fontSize（0.76 字形主体 + 0.19 上方空白 + 0.19 下方空白）。
-            // 顶部 = baseline - 0.95 * fontSize（空白 = 0.19 * fontSize）。
-            // 底部 = baseline + 0.19 * fontSize（空白 = 0.19 * fontSize）。
-            // 这保证了所有字号下文本上下方空白都精确地 1:1 对称。
+
             val top = baseline - 0.95f * lineFontSizePx
             val bottom = baseline + 0.19f * lineFontSizePx
 
@@ -297,6 +256,7 @@ fun SearchHighlightText(
         maxLines = maxLines,
         overflow = overflow,
         softWrap = softWrap,
-        onTextLayout = { textLayoutResult = it },
+
+        onTextLayout = { result -> if (isSearching) textLayoutResult = result },
     )
 }

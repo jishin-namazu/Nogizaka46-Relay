@@ -25,22 +25,11 @@ object BlogContentParser {
         return result
     }
 
-    /**
-     * 按出现顺序返回正文中每个 `<img>` 的目标 URL；`src` 为空或解析不出官方地址时返回 null，
-     * 但仍占一个位置，使同一篇正文的前后两次解析能逐位对齐。归档导入据此把旧、新正文的
-     * 图片一一配对，从而复用已下载的缓存。
-     */
     fun imageUrlsInOrder(html: String): List<String?> =
         imageTag.findAll(html).map { match ->
             imageSource.find(match.value)?.groupValues?.getOrNull(2)?.let(::officialUrl)
         }.toList()
 
-    /**
-     * 把每个 `<img>` 标签的内容抹平成一个固定占位符，只保留图片的位置与数量。
-     *
-     * 译文是由标题加正文纯文本派生的，图片只是换主机（镜像 → 官方 CDN）或相对/绝对地址互换时，
-     * 两份正文的这个形状相等，译文依然有效；形状不同才说明文字或图片结构真的变了。
-     */
     fun bodyTextShape(html: String): String = imageTag.replace(html, "<img>")
 
     fun plainText(blocks: List<BlogContentBlock>): String = blocks

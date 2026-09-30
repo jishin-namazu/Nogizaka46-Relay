@@ -27,7 +27,7 @@ data class ExportRequest(
     val memberKeys: Set<String>,
     val includeTranslations: Boolean,
     val outputName: String,
-    /** false = 只导出记录本身，不打包媒体；manifest 的 includesMedia 也会是 false。 */
+
     val includeMedia: Boolean = true,
 )
 
@@ -39,29 +39,21 @@ data class ExportReport(
     val outputName: String,
 )
 
-/** 一个归档会引用某种媒体角色的多少个文件，以及其中有多少已在本地。 */
 data class MediaRoleStat(val role: String, val referenced: Int, val cached: Int)
 
-/** 在写入任何内容之前、显示在导出按钮旁的预览。 */
 data class ExportEstimate(
     val records: Int,
     val mediaReferenced: Int,
     val mediaCached: Int,
     val mediaBytes: Long,
     val byRole: List<MediaRoleStat> = emptyList(),
-    /** 此选择引用、但设备尚未拥有的唯一媒体。 */
+
     val missing: List<MediaCandidate> = emptyList(),
 )
 
-/**
- * 为一种类型和一组成员写出 Nogi Relay 归档。
- *
- * 导出会打包设备缓存中已有的媒体，其余内容记录在
- * `data/skipped.jsonl` 中。记录始终完整写出。
- */
 object DataExporter {
     private const val BUFFER = 64 * 1024
-    /** 走引用表时每多少条候选回报一次进度。 */
+
     private const val PROGRESS_STEP = 128
 
     private class ResolvedMedia(
@@ -75,14 +67,13 @@ object DataExporter {
         context: Context,
         kind: ExportKind,
         memberKeys: Set<String>,
-        /** false = 导出不含媒体：只要记录条数，不遍历记录也不收集缺失列表。 */
+
         includeMedia: Boolean = true,
-        /** 回报已扫描的记录数占所选范围总数的比例。 */
+
         onProgress: ((done: Int, total: Int) -> Unit)? = null,
     ): ExportEstimate {
         val database = AppGraph.database
-        // 扫描运行在数据库游标内部，那里无法做挂起上下文检查，所以
-        // 改为捕获 job 并轮询。
+
         val job = coroutineContext[Job]
         val throttle = com.nogirelay.app.performance.ProgressThrottle(android.os.SystemClock::elapsedRealtime)
         fun publishProgress(done: Int, total: Int) {
@@ -96,21 +87,17 @@ object DataExporter {
         val missing = mutableListOf<MediaCandidate>()
         var bytes = 0L
 
-        // 先计数是把“正在统计…”变成真实进度条的关键；下面的遍历恰好
-        // 会访问这么多行。
         val total = when (kind) {
             ExportKind.MESSAGES -> database.countMessagesForMembers(memberKeys)
             ExportKind.BLOGS -> database.countBlogsForMembers(memberKeys)
         }
         publishProgress(0, total)
 
-        // 不含媒体时条数已经由 count 查询给出，没必要再走一遍游标去检查每个文件的缓存状态。
         if (!includeMedia) {
             publishProgress(total, total)
             return ExportEstimate(records = total, mediaReferenced = 0, mediaCached = 0, mediaBytes = 0)
         }
 
-        // Check each row, but publish at most every 100ms plus phase/final updates.
         fun reportProgress() {
             publishProgress(records, total)
         }
@@ -119,8 +106,6 @@ object DataExporter {
             if (job?.isActive != true) throw CancellationException("统计已取消")
         }
 
-        // 在这里收集缺失列表，才能让补齐流程立即开始下载，
-        // 而不必为了重新发现相同的 URL 再遍历一遍所有记录。
         fun inspect(candidates: List<MediaCandidate>) {
             candidates.forEach { candidate ->
                 val key = candidate.role + "|" + candidate.url
@@ -137,7 +122,6 @@ object DataExporter {
             }
         }
 
-        // 引用表就绪时读表，否则遍历记录逐条解析并触发后台重建。
         val refRows = if (database.mediaRefsReady()) {
             database.mediaRefsFor(kind.toMediaRefKind(), memberKeys)
         } else {
@@ -210,7 +194,7 @@ object DataExporter {
         val resolvedByKey = HashMap<String, ResolvedMedia?>()
         val skipped = mutableListOf<JSONObject>()
         var recordCount = 0
-        // 引用表就绪时媒体候选来自表，否则逐条解析并触发重建。
+
         val refsByRecord: Map<String, List<MediaCandidate>>? = if (request.includeMedia) {
             if (database.mediaRefsReady()) {
                 database.mediaRefsFor(request.kind.toMediaRefKind(), request.memberKeys)
@@ -224,7 +208,7 @@ object DataExporter {
         }
 
         val rawOutput = resolver.openOutputStream(outputUri) ?: error("无法写入所选文件")
-        // 游标读取期间无法做挂起上下文检查，所以捕获 job 并轮询。
+
         val job = coroutineContext[Job]
         try {
             ZipOutputStream(BufferedOutputStream(rawOutput, BUFFER)).use { zip ->
@@ -233,16 +217,14 @@ object DataExporter {
                 zip.closeEntry()
 
                 zip.putNextEntry(ZipEntry(request.kind.entryName))
-                // 单查询流式读取，不用 LIMIT/OFFSET 分页：分页会让 SQLite 为每一页重新
-                // 物化并排序整个结果集（本库 27k 条 BLOG 实测首页 0.2 s、末页 2.0 s），
-                // 记录恰好卡在 500 的整数倍上、逐个分页边界停顿，界面就成了每 500 条跳一格。
+
                 fun writeRecord(item: Any) {
-                    // 游标读取期间无法做挂起上下文检查，因此轮询捕获的 job。
+
                     if (job?.isActive != true) throw CancellationException("导出已取消")
                     val refs = mutableListOf<MediaRef>()
-                    // 不含媒体时 refs 保持为空，记录本身照常写全，导入端会看到 includesMedia=false。
+
                     if (request.includeMedia) {
-                        // 引用表就绪时以其为准：没有行即这条记录没有媒体。
+
                         val recordRefs = refsByRecord?.get(recordId(request.kind, item))
                             ?: if (refsByRecord == null) candidates(request.kind, item) else emptyList()
                         recordRefs.forEach { candidate ->
@@ -279,7 +261,7 @@ object DataExporter {
                     }
                     zip.write((json.toString() + "\n").toByteArray(Charsets.UTF_8))
                     recordCount += 1
-                    // 逐条回报：记录随游标连续推进，不再按 500 条的分页边界跳。
+
                     onProgress("读取记录", recordCount, totalRecords)
                 }
                 when (request.kind) {
@@ -303,7 +285,7 @@ object DataExporter {
                 }
             }
         } catch (error: Throwable) {
-            // 被取消或失败的导出不能留下写了一半的归档。
+
             runCatching { resolver.delete(outputUri, null, null) }
             throw error
         }
@@ -375,10 +357,6 @@ object DataExporter {
         )
     }
 
-    /**
-     * 媒体本身已经压缩，因此条目按原样存储。STORED 需要事先提供大小和 CRC，
-     * 这正是 [resolve] 在生成内容哈希的同一遍中收集的。
-     */
     private fun addStored(zip: ZipOutputStream, media: ResolvedMedia) {
         val entry = ZipEntry(media.path).apply {
             method = ZipEntry.STORED

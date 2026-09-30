@@ -17,6 +17,7 @@ import com.nogirelay.app.translation.TranslationManager
 data class SyncOutcome(val messages: Int, val blogs: Int)
 
 object ContentSyncManager {
+    private const val TAG = "NogiRelay"
 
     fun syncContent(context: Context): SyncOutcome {
         val messageResult = runCatching { syncMessagesFromServer(context) }
@@ -26,15 +27,11 @@ object ContentSyncManager {
                 "消息同步失败：${messageResult.exceptionOrNull()?.message}；BLOG 同步失败：${blogResult.exceptionOrNull()?.message}",
             )
         }
-        messageResult.exceptionOrNull()?.let { Log.w("NogiRelay", "Message sync failed", it) }
-        blogResult.exceptionOrNull()?.let { Log.w("NogiRelay", "BLOG sync failed", it) }
+        messageResult.exceptionOrNull()?.let { Log.w(TAG, "Message sync failed", it) }
+        blogResult.exceptionOrNull()?.let { Log.w(TAG, "BLOG sync failed", it) }
         return SyncOutcome(messageResult.getOrDefault(0), blogResult.getOrDefault(0))
     }
 
-    /**
-     * 包装 BLOG 遍历，使这一轮写入的 id 能送达翻译器：新的 BLOG
-     * 总是会被翻译，而历史积压只有在"博客全量翻译"打开时才会推进。
-     */
     private fun syncBlogsFromOfficial(context: Context): Int {
         val newBlogIds = linkedSetOf<String>()
         return try {
@@ -49,7 +46,7 @@ object ContentSyncManager {
         runCatching {
             AppGraph.database.replaceBlogMembers(AppGraph.blogClient.fetchMembers())
         }.onFailure { error ->
-            Log.w("NogiRelay", "BLOG member directory sync failed; keeping the last successful list", error)
+            Log.w(TAG, "BLOG member directory sync failed; keeping the last successful list", error)
         }
         val fullSyncComplete = AppGraph.database.isBlogFullSyncComplete()
         val syncBoundaryId = AppGraph.database.blogSyncHeadId()
@@ -91,10 +88,10 @@ object ContentSyncManager {
             if (newestId != null) {
                 AppGraph.database.markBlogSyncHead(newestId)
                 if (finalCount != expectedCount || finalHeadId != newestId) {
-                    Log.d("NogiRelay", "BLOG 增量同步期间官网发布了新博客 (head=$finalHeadId, syncedHead=$newestId)；已安全推进边界至 $newestId，新增博客将在下个周期同步")
+                    Log.d(TAG, "BLOG 增量同步期间官网发布了新博客 (head=$finalHeadId, syncedHead=$newestId)；已安全推进边界至 $newestId，新增博客将在下个周期同步")
                 }
             }
-            Log.d("NogiRelay", "BLOG incremental sync complete: inserted=$inserted")
+            Log.d(TAG, "BLOG incremental sync complete: inserted=$inserted")
             return inserted
         }
 
@@ -111,7 +108,7 @@ object ContentSyncManager {
                 }
                 page.posts.forEach { post ->
                     seenIds += post.id
-                    // 全量回填属于历史内容，不当作"新博客"，只有增量分支才会喂给翻译器。
+
                     if (AppGraph.database.upsertBlog(post)) inserted += 1
                     BlogMediaDownloader.enqueue(context, post)
                 }
@@ -122,11 +119,11 @@ object ContentSyncManager {
             val headCovered = finalHead.posts.all { it.id in seenIds }
             if (stable && expectedCount == finalCount && seenIds.size == finalCount && headCovered) {
                 AppGraph.database.markBlogFullSyncComplete(finalHead.posts.firstOrNull()?.id)
-                Log.d("NogiRelay", "BLOG full sync verified: count=$finalCount, attempts=${attempt + 1}")
+                Log.d(TAG, "BLOG full sync verified: count=$finalCount, attempts=${attempt + 1}")
                 return inserted
             }
             Log.w(
-                "NogiRelay",
+                TAG,
                 "BLOG full sync snapshot changed; retrying: expected=$expectedCount, final=$finalCount, unique=${seenIds.size}, headCovered=$headCovered",
             )
         }
@@ -143,8 +140,7 @@ object ContentSyncManager {
 
         val fullSyncComplete = AppGraph.database.isMessageFullSyncComplete()
         val syncBoundaryId = AppGraph.database.messageSyncHeadId()
-        // 只有增量同步抓到的那批算"新消息"；首次全量回填属于历史积压，
-        // 交给"消息全量翻译"开关（打开时 [TranslationManager.enqueueAfterSync] 会整批扫）。
+
         val newMessageIds = linkedSetOf<String>()
         return try {
             if (fullSyncComplete && syncBoundaryId != null) {
@@ -157,12 +153,6 @@ object ContentSyncManager {
         }
     }
 
-    /**
-     * 首次成功回填之后的消息同步，构建方式类似 [syncBlogsFromOfficial]：服务器
-     * 按最新优先列出，因此遍历从 offset 0 开始，并在上一批头部出现的那一刻停止。
-     * 只有在总数和头部都被确认未变时边界才会移动；如果列表在遍历过程中
-     * 发生了变化，遍历结果会被丢弃，以便下次同步重复执行并抓取新到的内容。
-     */
     private fun syncNewMessages(
         context: Context,
         settings: AppSettings,
@@ -178,8 +168,7 @@ object ContentSyncManager {
         while (true) {
             val page = AppGraph.relayClient.fetchMessages(settings, limit = pageSize, offset = offset)
             if (page.isEmpty()) {
-                // 只有在计数与"已到末尾"一致时，到达末尾才可信；
-                // 上一批头部也可能在服务器端清理后消失，这里会恢复。
+
                 if (expectedCount == null || offset >= expectedCount) completed = true
                 break
             }
@@ -200,7 +189,7 @@ object ContentSyncManager {
         }
         val finalCount = messageCountOrNull(settings)
         val finalHeadId = AppGraph.relayClient.fetchMessages(settings, limit = 1, offset = 0).firstOrNull()?.id
-        // total 为 null 只会去掉校验中的计数那一半；头部比较始终执行。
+
         val countCovered = expectedCount == null || finalCount == null || expectedCount == finalCount
         if (!completed) {
             error("消息增量同步未能完整到达同步边界或末尾；未移动同步边界，下次将安全重试")
@@ -208,19 +197,13 @@ object ContentSyncManager {
         if (newestId != null) {
             AppGraph.database.markMessageSyncHead(newestId)
             if (!countCovered || finalHeadId != newestId) {
-                Log.d("NogiRelay", "消息增量同步期间服务器接收到新消息 (head=$finalHeadId, syncedHead=$newestId)；已安全推进边界至 $newestId，新增消息将在下个周期同步")
+                Log.d(TAG, "消息增量同步期间服务器接收到新消息 (head=$finalHeadId, syncedHead=$newestId)；已安全推进边界至 $newestId，新增消息将在下个周期同步")
             }
         }
-        Log.d("NogiRelay", "Message incremental sync complete: inserted=${inserted}")
+        Log.d(TAG, "Message incremental sync complete: inserted=${inserted}")
         return inserted
     }
 
-    /**
-     * 一次性消息回填，构建方式类似 BLOG 全量同步：逐页遍历全部内容，并且
-     * 仅当快照从开始到结束完全一致时才记录全量同步标记——总数不能
-     * 变动，稳定的列表会让每一行恰好出现一次，且最新一页必须被这一轮
-     * 遍历覆盖。任何其他情况都会重试，而不是留下一个随后会被边界永久掩盖的缺口。
-     */
     private fun syncMessageHistory(context: Context, settings: AppSettings): Int {
         val pageSize = 200
         var inserted = 0
@@ -232,7 +215,7 @@ object ContentSyncManager {
             while (expectedCount == null || offset < expectedCount) {
                 val page = AppGraph.relayClient.fetchMessages(settings, limit = pageSize, offset = offset)
                 if (page.isEmpty()) {
-                    // 在 total 仍承诺有行的情况下什么都没读到，意味着列表在遍历过程中发生了变化。
+
                     if (expectedCount != null && offset < expectedCount) stable = false
                     break
                 }
@@ -249,37 +232,32 @@ object ContentSyncManager {
             val countCovered = if (expectedCount != null && finalCount != null) {
                 expectedCount == finalCount && seenIds.size == finalCount
             } else {
-                // 较旧的 relay 没有 /v1/messages/stats/summary：退回到"没有任何行重复出现"的
-                // 判定，这正是列表发生偏移时产生的结果。
+
                 seenIds.size == offset
             }
             if (stable && countCovered && headCovered) {
                 AppGraph.database.markMessageFullSyncComplete(finalHead.firstOrNull()?.id)
-                Log.d("NogiRelay", "Message full sync verified: count=${seenIds.size}, attempts=${attempt + 1}")
+                Log.d(TAG, "Message full sync verified: count=${seenIds.size}, attempts=${attempt + 1}")
                 return inserted
             }
             Log.w(
-                "NogiRelay",
+                TAG,
                 "Message full sync snapshot changed; retrying: expected=$expectedCount final=$finalCount unique=${seenIds.size} walked=$offset headCovered=$headCovered",
             )
         }
         error("消息列表在同步期间持续变化；已保存抓到的内容，但未标记全量完成，下次会重新校验")
     }
 
-    /**
-     * 来自 relay 的消息总数；当服务器早于 /v1/messages/stats/summary 或
-     * 短暂不可达时为 null。调用方将 null 视为"总数未知"，并仅用头部进行校验。
-     */
     private fun messageCountOrNull(settings: AppSettings): Int? =
         runCatching { AppGraph.relayClient.fetchMessageCount(settings) }
-            .onFailure { Log.w("NogiRelay", "Message count unavailable; verifying with the head only", it) }
+            .onFailure { Log.w(TAG, "Message count unavailable; verifying with the head only", it) }
             .getOrNull()
 
     private fun storeSyncedMessage(context: Context, message: RelayMessage, isUnread: Boolean = false): Boolean {
         val inserted = AppGraph.database.insert(message, isUnread = isUnread)
         if (message.type != MessageType.TEXT) {
             runCatching { MediaDownloader.enqueueIfNeeded(context, message) }
-                .onFailure { error -> Log.w("NogiRelay", "Media download enqueue failed for ${message.id}", error) }
+                .onFailure { error -> Log.w(TAG, "Media download enqueue failed for ${message.id}", error) }
         }
         return inserted
     }

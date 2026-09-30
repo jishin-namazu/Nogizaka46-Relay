@@ -1,0 +1,2 @@
+      vec3 litColor = color * ambient;
+      return inputIsSdr ? clamp(litColor, 0.0, 1.0) : litColor;

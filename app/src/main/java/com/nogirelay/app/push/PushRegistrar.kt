@@ -15,10 +15,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private val pushMainHandler = Handler(Looper.getMainLooper())
 
-/**
- * 注册结果的交付闸门：无论 token 获取与 HTTP 注册发生在哪个线程，
- * 结果都只交付一次，并且统一回到主线程，这样调用方可以直接更新 UI 状态。
- */
 private class ResultDelivery(
     private val onComplete: (Result<Unit>) -> Unit,
 ) {
@@ -35,19 +31,11 @@ private class ResultDelivery(
 }
 
 object PushRegistrar {
-    /**
-     * 兜底超时：设备长时间没有网络或 FCM 服务不回调 token 时，
-     * 界面也必须能拿到一个结果，而不是一直停在"正在注册"。
-     * 取值大于 HTTP 注册自身的连接+读取超时上限。
-     */
+
     private const val REGISTRATION_TIMEOUT_MS = 45_000L
 
     fun isConfigured(context: Context): Boolean = FirebaseApp.getApps(context).isNotEmpty()
 
-    /**
-     * 获取 FCM token 并注册到同步服务。[onComplete] 保证只在主线程回调一次，
-     * 即使 FCM 的 token 任务或网络请求迟迟不返回，也会有超时兜底结果。
-     */
     fun registerCurrentToken(
         context: Context,
         onComplete: (Result<Unit>) -> Unit = {},
@@ -104,7 +92,6 @@ object PushRegistrar {
         AppGraph.initialize(context)
         val settings = AppGraph.settings.read()
 
-        // 优先使用 settings 中的配置，如果为空则使用 ApiConfig 默认值
         val baseUrl = settings.relayUrl.ifEmpty { ApiConfig.BASE_URL }
         val accessToken = settings.accessToken.ifEmpty { ApiConfig.ACCESS_TOKEN }
 

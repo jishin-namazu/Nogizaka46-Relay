@@ -1,0 +1,6 @@
+      // Fresnel reflection replaces transmitted radiance instead of amplifying it.
+      // Multiplication followed by channel clipping creates a white plateau with
+      // a rectangular inner edge on light backdrops. A bounded reflection mix
+      // preserves the continuous normal field, hue and premultiplied coverage.
+      float reflection = clamp(ambient - 1.0, 0.0, 1.0);
+      return inputIsSdr ? mix(color, vec3(1.0), reflection) : color * ambient;

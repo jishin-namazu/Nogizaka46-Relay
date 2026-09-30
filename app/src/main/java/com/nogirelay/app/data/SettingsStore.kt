@@ -9,11 +9,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
 
-/**
- * 将设置持久化到 SharedPreferences。API key、模型和缓存的模型列表按提供方
- * 分别存储，因此切换当前提供方时会保留每个提供方各自的配置，而不是覆盖
- * 单一的共享槽位。
- */
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val modelCatalogs = mutableMapOf<AIProviderType, Pair<String, List<AIModel>>>()
@@ -61,17 +56,13 @@ class SettingsStore(context: Context) {
             putString(KEY_INCOMING_CALL_STYLE, settings.incomingCallStyle.name)
         }
 
-        // A successful device registration belongs to one relay URL + access token.
         if (relayConfigChanged) AppGraph.notifyDataChanged(DataChange.SETTINGS)
     }
 
-    /** 为 [provider] 保存的 API Key，即使当前激活的是另一个提供方。 */
     fun apiKeyFor(provider: AIProviderType): String = prefs.getString(apiKeyKey(provider), "").orEmpty()
 
-    /** 为 [provider] 保存的翻译模型。 */
     fun modelFor(provider: AIProviderType): String = prefs.getString(modelKey(provider), "").orEmpty()
 
-    /** 最近一次校验成功后为 [provider] 缓存的模型列表。 */
     @Synchronized
     fun cachedModelsFor(provider: AIProviderType): List<AIModel> {
         val serialized = prefs.getString(modelsKey(provider), "[]").orEmpty()
@@ -97,7 +88,6 @@ class SettingsStore(context: Context) {
         AppGraph.notifyDataChanged(DataChange.SETTINGS)
     }
 
-    /** True only when the current token and relay configuration were confirmed by the server. */
     fun isPushRegistrationConfirmed(): Boolean {
         val current = currentPushRegistrationFingerprint() ?: return false
         return prefs.getString(KEY_PUSH_REGISTRATION_FINGERPRINT, null) == current
@@ -144,11 +134,6 @@ class SettingsStore(context: Context) {
         return runCatching { IncomingCallStyle.valueOf(stored) }.getOrDefault(IncomingCallStyle.CLASSIC)
     }
 
-    /**
-     * 旧版本为当前激活的提供方保留一份共享的 key/模型/模型列表。把这些值
-     * 一次性迁移到对应提供方的槽位，这样升级就不会丢失当前设置，而其他
-     * 提供方则从空槽位开始，不会继承这些值。
-     */
     private fun migrateLegacyProviderSlots() {
         if (prefs.getBoolean(KEY_PROVIDER_SLOTS_MIGRATED, false)) return
         val provider = readProvider()

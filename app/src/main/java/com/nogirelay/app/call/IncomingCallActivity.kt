@@ -97,10 +97,10 @@ class IncomingCallActivity : ComponentActivity() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
             if (addedDevices.any(::isOfficialHeadsetDevice)) {
                 if (callState == CallState.PLAYING) {
-                    // 新连接的耳机优先于扬声器模式。
+
                     setSpeakerEnabled(false)
                 } else if (callState == CallState.RINGING && ringtonePlayer == null) {
-                    // 在静音/振动模式下，允许耳机私下接收铃声。
+
                     startRingtone()
                 }
             }
@@ -110,13 +110,13 @@ class IncomingCallActivity : ComponentActivity() {
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
             if (removedDevices.any(::isOfficialHeadsetDevice)) {
                 if (callState == CallState.PLAYING) {
-                    // 拔出所选耳机后重新解析兜底路由。
+
                     setSpeakerEnabled(false)
                 } else if (callState == CallState.RINGING &&
                     audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL &&
                     !isExternalAudioConnected()
                 ) {
-                    // 拔出后绝不能把静音模式的私密铃声泄漏到手机扬声器。
+
                     stopRingtone()
                 }
             }
@@ -154,7 +154,7 @@ class IncomingCallActivity : ComponentActivity() {
                     updateProximityLock(playbackState)
                 }
                 BackHandler { decline() }
-                // 通知、自动接听和测试入口共用同一份已保存的风格偏好与通话控制。
+
                 when (incomingCallStyle) {
                     IncomingCallStyle.CLASSIC -> IncomingCallScreen(
                         message = message,
@@ -303,13 +303,13 @@ class IncomingCallActivity : ComponentActivity() {
 
     private fun startRingtone() {
         if (ringtonePlayer != null) return
-        
+
         val headset = preferredExternalAudioDevice()
-        // 保持手机本身处于系统静音，同时仍通过已连接的耳机提醒。
+
         if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL && headset == null) return
-        
+
         val silentModeWithHeadset = audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL && headset != null
-        
+
         val ringtoneAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -333,9 +333,7 @@ class IncomingCallActivity : ComponentActivity() {
                 resources.openRawResourceFd(R.raw.ringtone).use { descriptor ->
                     setDataSource(descriptor.fileDescriptor, descriptor.startOffset, descriptor.length)
                 }
-                // 在带耳机的静音模式下，让系统自动选择路由。setPreferredDevice
-                // 仅在 API 28 及以上存在，因此旧设备保持默认路由，
-                // 而不是让整个播放器初始化失败。
+
                 if (headset != null && !silentModeWithHeadset && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     check(setPreferredDevice(headset)) { "Unable to route ringtone to connected headset" }
                 }

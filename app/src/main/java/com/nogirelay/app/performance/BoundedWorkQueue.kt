@@ -9,7 +9,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
-/** Backpressure bounds queued IDs and worker count; payloads are loaded only by a worker. */
 internal class BoundedWorkQueue<T>(
     scope: CoroutineScope,
     parallelism: Int,
@@ -44,8 +43,7 @@ internal class BoundedWorkQueue<T>(
     suspend fun enqueue(work: T) {
         val entry = Work(key(work), work)
         if (pending.putIfAbsent(entry.id, entry) != null) return
-        // A cancelled send may already have delivered its work. The receiver or
-        // onUndeliveredElement owns cleanup, keeping that work deduplicated until it ends.
+
         channel.send(entry)
     }
 }

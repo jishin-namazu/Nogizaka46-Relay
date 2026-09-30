@@ -30,7 +30,6 @@ internal data class MemberTimelineWindow(
     val hasOlder: Boolean = false,
 )
 
-/** Rows stay newest-first in storage; the reverse-layout timeline presents newest at the bottom. */
 internal class MemberTimelineLoader(
     private val source: MemberTimelineSource,
     private val batchSize: Int = MESSAGE_TIMELINE_BATCH_SIZE,
@@ -137,7 +136,6 @@ internal sealed interface MessageTimelineRow {
     data class Day(override val key: String, val label: String) : MessageTimelineRow
 }
 
-/** Date separators follow each descending group, placing them above it in reverse layout. */
 internal fun messageTimelineRows(
     messages: List<RelayMessage>,
     zone: ZoneId = ZoneId.systemDefault(),

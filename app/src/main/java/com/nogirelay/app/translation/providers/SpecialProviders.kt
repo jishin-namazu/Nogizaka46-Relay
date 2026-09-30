@@ -34,9 +34,7 @@ class GeminiProvider : BaseAIProvider() {
             put("generationConfig", JSONObject().apply {
                 put("maxOutputTokens", TRANSLATION_MAX_OUTPUT_TOKENS)
                 val id = model.lowercase()
-                // 结构化输出仅针对文本类 Gemini 模型（2.5 和 3.x）有文档说明。图像、
-                // 音频、Live、转写、机器人以及非 Gemini 模型要么拒绝 responseSchema，
-                // 要么忽略它，因此它们只保留仅提示词的约定。
+
                 if (jsonOutputSupport(model).isSupported) {
                     put("responseMimeType", "application/json")
                     put("responseSchema", IndexedSegmentTranslations.geminiSchema)
@@ -89,10 +87,6 @@ class GeminiProvider : BaseAIProvider() {
 
     override fun filterChatModels(models: List<AIModel>): List<AIModel> = models
 
-    /**
-     * 仅针对文本类 Gemini 模型（2.5 和 3.x）有文档说明。图像、音频、Live、转写、
-     * 机器人以及非 Gemini 模型要么拒绝 `responseSchema`，要么忽略它。
-     */
     override fun jsonOutputSupport(model: String): JsonOutputSupport {
         val id = model.lowercase()
         val isTextGemini = (id.contains("gemini-2.5") || id.startsWith("gemini-3")) &&
@@ -125,7 +119,7 @@ class GrokProvider : OpenAIResponsesProvider() {
     override val responsesEndpoint = "$baseUrl/v1/responses"
 
     override fun applyReasoningControls(request: JSONObject, model: String) {
-        // Grok 的推理无法禁用；"low" 是文档中记录的最低思考强度。
+
         if (model.startsWith("grok-4", ignoreCase = true)) {
             request.put("reasoning", JSONObject().put("effort", "low"))
         }

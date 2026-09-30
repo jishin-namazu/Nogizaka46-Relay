@@ -4,7 +4,6 @@ import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.net.toUri
@@ -41,10 +40,11 @@ class MainActivity : ComponentActivity() {
     private val notificationBlogIds = MutableStateFlow<String?>(null)
     private lateinit var proximityControl: ProximityScreenControl
     private lateinit var audioManager: AudioManager
+    private var lastAutoSyncAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 启动主题模拟官方 App 的闪屏，直到 Compose 绘制出第一帧。
+
         setTheme(R.style.Theme_NogiRelay)
         AppGraph.initialize(this)
         val current = AppGraph.settings.read()
@@ -63,16 +63,14 @@ class MainActivity : ComponentActivity() {
         if (AppGraph.settings.read().relayUrl.isNotBlank()) {
             PushRegistrar.registerCurrentToken(this)
         }
-        Log.d("MainActivity", "Calling TranslationManager.enqueue from onCreate")
         TranslationManager.enqueue(this)
         BlogTranslationManager.enqueuePending(this)
-        // 媒体引用表未建或解析版本变化时，在后台重建。
+
         MediaRefIndex.ensureBuilt(AppGraph.database)
 
         proximityControl = OfficialProximityScreenControl(this)
         audioManager = getSystemService(AudioManager::class.java)
-        // Draw Compose backgrounds behind both system bars so the home backdrop can transition
-        // through the status bar while its scroll content moves.
+
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         setTransparentSystemBarColors()
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
@@ -113,7 +111,12 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.CONTENT)
-        syncRequests.update { it + 1 }
+
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastAutoSyncAt == 0L || now - lastAutoSyncAt >= AUTO_SYNC_MIN_INTERVAL_MS) {
+            lastAutoSyncAt = now
+            syncRequests.update { it + 1 }
+        }
     }
 
     override fun onResume() {
@@ -158,8 +161,8 @@ class MainActivity : ComponentActivity() {
         proximityControl.setEnabled(shouldEnable)
     }
 
-    private fun openMedia(message: RelayMessage) {
-        startActivity(Intent(this, MediaViewerActivity::class.java).putExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID, message.id))
+    private fun openMedia(message: RelayMessage, transitionKey: String) {
+        startActivity(MediaViewerActivity.messageIntent(this, message.id, transitionKey))
     }
 
     private fun playVoice(message: RelayMessage) {
@@ -196,5 +199,10 @@ class MainActivity : ComponentActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             },
         )
+    }
+
+    private companion object {
+
+        const val AUTO_SYNC_MIN_INTERVAL_MS = 60_000L
     }
 }

@@ -27,7 +27,6 @@
         <activity
             android:name=".ui.MediaViewerActivity"
             android:exported="false"
-            android:screenOrientation="portrait"
             tools:ignore="DiscouragedApi,LockedOrientationActivity"
             android:theme="@style/Theme.NogiRelay.MediaViewer" />
 

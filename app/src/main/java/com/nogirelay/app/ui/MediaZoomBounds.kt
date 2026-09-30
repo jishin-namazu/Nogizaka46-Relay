@@ -6,16 +6,11 @@ internal data class MediaOffset(val x: Float, val y: Float) {
     }
 }
 
-/** 把手势增量从变换后内容的坐标转换为屏幕像素。 */
 internal fun contentPanToScreen(x: Float, y: Float, scale: Float): MediaOffset {
     val safeScale = scale.coerceAtLeast(1f)
     return MediaOffset(x * safeScale, y * safeScale)
 }
 
-/**
- * 让经过缩放、视口大小的媒体层在两个轴上都覆盖视口。
- * 在 1x 时没有可平移的溢出，而每一个额外缩放出的像素都能被平移进视野。
- */
 internal fun constrainMediaOffset(
     x: Float,
     y: Float,

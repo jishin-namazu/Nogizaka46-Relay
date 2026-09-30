@@ -1,6 +1,5 @@
 package com.nogirelay.app.data
 
-/** 进程内可见性状态，用于避免把已经打开的 BLOG 标记为未读。 */
 object BlogReadTracker {
     @Volatile
     private var appVisible = false

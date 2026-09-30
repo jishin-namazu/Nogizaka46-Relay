@@ -7,7 +7,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-/** Propagate cancellation into SQLite, including while its blocking query is running. */
 suspend fun <T> readDatabase(block: (CancellationSignal) -> T): T = suspendCancellableCoroutine { continuation ->
     val signal = CancellationSignal()
     val job = CoroutineScope(AppGraph.dispatchers.databaseRead).launch {

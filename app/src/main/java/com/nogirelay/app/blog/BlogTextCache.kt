@@ -2,7 +2,6 @@ package com.nogirelay.app.blog
 
 import android.util.LruCache
 
-/** Bound both retained HTML and parsed text. Read-state changes don't need HTML parsing. */
 internal object BlogTextCache {
     data class Parsed(val html: String, val blocks: List<BlogContentBlock>, val plainText: String)
     private val cache = object : LruCache<String, Parsed>(2 * 1024 * 1024) {

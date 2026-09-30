@@ -76,7 +76,6 @@ object MediaDownloader {
         return File(File(context.filesDir, "media-cache"), "$digest.notfound")
     }
 
-    /** 清除缓存的 404 标记；存档导入可能提供此前缺失的字节。 */
     fun clearNotFound(context: Context, url: String) {
         if (url.isBlank()) return
         notFoundUrls.remove(url)
@@ -85,24 +84,16 @@ object MediaDownloader {
 
     data class SavedDownload(val uri: Uri, val displayName: String)
 
-    /**
-     * 把一条消息所需的全部内容下载到本地：主媒体、生成的视频封面，
-     * 以及消息携带的来电全屏照片（若有）。
-     * 来电照片会提前缓存，使真实来电无需等待网络，并让存档导出能一并携带；
-     * 照片缺失绝不会导致消息本身失败。
-     */
     fun enqueueIfNeeded(context: Context, message: RelayMessage): File? {
         val appContext = context.applicationContext
         val mediaUrl = mediaUrlFor(message)
         val file = mediaUrl?.let { downloadUrl(appContext, it, message.type) }
 
-        // 如果是视频，下载完成后生成高清缩略图，并顺手记下音轨情况
         if (message.type == MessageType.VIDEO) {
             generateVideoThumbnail(appContext, message)
             persistVideoAudioTrack(appContext, message)
         }
 
-        // 只有语音消息会触发全屏来电，因此只有它需要缓存照片。
         if (message.type == MessageType.AUDIO) {
             message.phoneImageUrl?.takeIf { it.isNotBlank() }?.let { photo ->
                 runCatching { downloadUrl(appContext, photo, MessageType.IMAGE) }
@@ -112,11 +103,6 @@ object MediaDownloader {
         return file
     }
 
-    /**
-     * 把已缓存/已下载的媒体文件复制到系统 Download 目录。
-     * 后台预取继续使用私有缓存；
-     * 只有用户显式下载才会调用此方法。
-     */
     fun saveToDownloads(context: Context, message: RelayMessage): SavedDownload {
         require(message.type != MessageType.TEXT) { "文字消息没有可保存的媒体" }
         if (needsLegacyWritePermission(context)) error("请先允许存储权限")
@@ -134,7 +120,6 @@ object MediaDownloader {
         }
     }
 
-    /** 把一个图片 URL 以调用方提供的名称保存到公共 Download 目录。 */
     fun saveImageUrlToDownloads(context: Context, url: String, baseName: String): SavedDownload {
         if (needsLegacyWritePermission(context)) error("请先允许存储权限")
         val source = downloadUrl(context.applicationContext, url, MessageType.IMAGE)
@@ -163,14 +148,10 @@ object MediaDownloader {
         return file.takeIf { it.isFile && it.length() > 0L }
     }
 
-    /**
-     * 解析视频有没有音轨：优先用库里已记录的结果，只有从未记录且视频已下载时才检测一次，
-     * 检测完立即写回数据库，之后的预览直接读库，不会每次重复检测。
-     */
     suspend fun resolveVideoHasAudio(context: Context, message: RelayMessage): Boolean? {
         if (message.type != MessageType.VIDEO) return null
         message.videoHasAudio?.let { return it }
-        // 列表里的条目可能还是旧数据，先确认库里有没有记录。
+
         val stored = withContext(AppGraph.dispatchers.databaseRead) {
             runCatching { AppGraph.database.find(message.id)?.videoHasAudio }.getOrNull()
         }
@@ -182,7 +163,6 @@ object MediaDownloader {
         return detected
     }
 
-    /** 下载完成后记下音轨情况；已有记录时不再重复检测。 */
     private fun persistVideoAudioTrack(context: Context, message: RelayMessage) {
         val existing = runCatching { AppGraph.database.find(message.id)?.videoHasAudio }.getOrNull()
         if (existing != null) return
@@ -190,7 +170,6 @@ object MediaDownloader {
         runCatching { AppGraph.database.setVideoHasAudio(message.id, hasAudio) }
     }
 
-    /** 返回已缓存视频是否包含音轨；未缓存或不可读时返回 null。 */
     fun cachedVideoHasAudioTrack(context: Context, message: RelayMessage): Boolean? {
         if (message.type != MessageType.VIDEO) return null
         val mediaUrl = mediaUrlFor(message) ?: return null
@@ -208,7 +187,6 @@ object MediaDownloader {
         }.getOrNull()
     }
 
-    /** 返回已有的私有文件，或把该 URL 下载为一个私有文件。 */
     fun downloadUrl(context: Context, url: String, type: MessageType): File {
         require(url.isNotBlank()) { "媒体地址为空" }
         val appContext = context.applicationContext
@@ -237,10 +215,6 @@ object MediaDownloader {
         }
     }
 
-    /**
-     * 本地文件仍然立即返回；后台再用条件请求检查同一 URL 的远端内容是否变化。
-     * 只有服务器返回新的 ETag / Last-Modified / 长度时才原子替换缓存。
-     */
     fun revalidateCachedUrlIfChanged(context: Context, url: String, type: MessageType): Boolean {
         if (url.isBlank()) return false
         val appContext = context.applicationContext
@@ -435,7 +409,6 @@ object MediaDownloader {
         }
     }
 
-    /** MediaStore.Downloads 从 API 29 起才存在；两个调用方都用 SDK 检查做保护。 */
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun saveWithMediaStore(
         context: Context,
@@ -545,10 +518,6 @@ object MediaDownloader {
         }
     }
 
-    /**
-     * [url] 的绝对缓存路径。与存档导入器共用，使恢复的媒体正好落在读取方查找的位置，
-     * 无需更改 schema 或进行网络往返。
-     */
     fun cacheFileForUrl(context: Context, url: String, extension: String): File {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(url.toByteArray(Charsets.UTF_8))
@@ -556,17 +525,9 @@ object MediaDownloader {
         return File(File(context.applicationContext.filesDir, "media-cache"), "$digest.$extension")
     }
 
-    /** 按 [type] 推断扩展名后的缓存路径；与读取方查找的位置完全一致。 */
     fun cacheFileForUrl(context: Context, url: String, type: MessageType): File =
         cacheFile(context, url, type)
 
-    /**
-     * 把 [fromUrl] 已落盘的缓存字节搬到 [toUrl] 的缓存位，使读取方无需重新联网。
-     *
-     * 归档导入把图片主机从镜像换成官方时使用：缓存文件按 URL 的 sha256 命名，如果不建立
-     * 这层搬运，同一张图在新 URL 下会被当成未缓存而整库重下。优先硬链接（同目录同一分区，
-     * 不占额外空间），失败时退回复制。返回是否真的建立了新缓存位。
-     */
     fun adoptCachedBytes(context: Context, fromUrl: String, toUrl: String, type: MessageType): Boolean {
         if (fromUrl.isBlank() || toUrl.isBlank() || fromUrl == toUrl) return false
         val appContext = context.applicationContext
@@ -616,30 +577,30 @@ object MediaDownloader {
     fun generateVideoThumbnail(context: Context, message: RelayMessage): File? {
         if (message.type != MessageType.VIDEO) return null
         val mediaUrl = message.mediaUrl ?: return null
-        
+
         val thumbnailFile = videoThumbnailFile(context.applicationContext, mediaUrl)
         if (thumbnailFile.exists() && thumbnailFile.length() > 0L) {
             return thumbnailFile
         }
 
         val videoFile = cachedFileForUrl(context, mediaUrl, MessageType.VIDEO) ?: return null
-        
+
         val lock = locks.computeIfAbsent("thumbnail:$mediaUrl") { Any() }
         return try {
             synchronized(lock) {
                 if (thumbnailFile.exists() && thumbnailFile.length() > 0L) {
                     return@synchronized thumbnailFile
                 }
-                
+
                 val retriever = MediaMetadataRetriever()
                 try {
                     retriever.setDataSource(videoFile.absolutePath)
                     val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                         ?: return@synchronized null
-                    
+
                     val parent = thumbnailFile.parentFile ?: return@synchronized null
                     if (!parent.exists() && !parent.mkdirs()) return@synchronized null
-                    
+
                     val temp = File(parent, "${thumbnailFile.name}.part-${System.nanoTime()}")
                     try {
                         FileOutputStream(temp).use { output ->
