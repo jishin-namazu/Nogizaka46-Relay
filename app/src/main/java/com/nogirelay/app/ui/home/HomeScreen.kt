@@ -175,11 +175,12 @@ fun HomeScreen(
                 GlassBottomSheet(
                     onDismissRequest = { showSettingsSheet = false },
                     backdropState = sheetBackdrop,
-                ) { dismiss ->
+                ) { dismiss, handle ->
                     SettingsSection(
                         onSettingsChanged = onSettingsChanged,
                         onTestCall = onTestCall,
                         header = {
+                            handle()
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween,

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -292,14 +293,16 @@ fun TimeFilterDialog(
     GlassBottomSheet(
         onDismissRequest = onDismiss,
         backdropState = backdropState,
-    ) { dismiss ->
+    ) { dismiss, handle ->
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState(), overscrollEffect = null)
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 28.dp),
         ) {
+            handle()
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "消息筛选",

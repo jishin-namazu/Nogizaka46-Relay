@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
@@ -110,6 +112,8 @@ internal class GlassPopoverPositionProvider(
     private val density: androidx.compose.ui.unit.Density,
     private val marginPx: Int,
     private val effectPaddingPx: Int,
+    private val topInsetPx: Int = 0,
+    private val bottomInsetPx: Int = 0,
 ) : PopupPositionProvider {
     var originX by mutableFloatStateOf(1f)
     var opensUpward by mutableStateOf(false)
@@ -130,8 +134,12 @@ internal class GlassPopoverPositionProvider(
         // Position the visible card, excluding the transparent blur/spring gutter.
         val cardWidth = (popupContentSize.width - effectPaddingPx * 2).coerceAtLeast(1)
         val cardHeight = (popupContentSize.height - effectPaddingPx * 2).coerceAtLeast(1)
-        val above = (anchorBounds.top - gap - marginPx).coerceAtLeast(0)
-        val below = (windowSize.height - marginPx - anchorBounds.bottom - gap).coerceAtLeast(0)
+        val safeTop = topInsetPx + marginPx
+        val safeBottom = (windowSize.height - bottomInsetPx - marginPx).coerceAtLeast(safeTop)
+        val aboveEdge = minOf(anchorBounds.top - gap, safeBottom)
+        val belowEdge = maxOf(anchorBounds.bottom + gap, safeTop)
+        val above = (aboveEdge - safeTop).coerceAtLeast(0)
+        val below = (safeBottom - belowEdge).coerceAtLeast(0)
         if (previousAnchor != anchorBounds || previousWindow != windowSize) {
             // Choose from the unconstrained menu once, then keep the chosen side
             // while its scrolling viewport shrinks to fit. Never center on the field.
@@ -145,7 +153,8 @@ internal class GlassPopoverPositionProvider(
         }
         maxHeightPx = (if (opensUpward) above else below).coerceAtLeast(1)
         fitsAvailableSpace = cardHeight <= maxHeightPx
-        val y = if (opensUpward) anchorBounds.top - gap - cardHeight else anchorBounds.bottom + gap
+        val y = (if (opensUpward) aboveEdge - cardHeight else belowEdge)
+            .coerceIn(safeTop, (safeBottom - cardHeight).coerceAtLeast(safeTop))
         val alignEnd = anchorBounds.center.x > windowSize.width / 2
         val rawX = if (alignEnd) anchorBounds.right - cardWidth else anchorBounds.left
         val x = rawX.coerceIn(marginPx, (windowSize.width - cardWidth - marginPx).coerceAtLeast(marginPx))
@@ -165,12 +174,15 @@ fun GlassPopover(
     if (!state.expanded) return
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val marginPx = with(density) { 10.dp.roundToPx() }
+    val marginPx = with(density) { 16.dp.roundToPx() }
+    val safeInsets = WindowInsets.safeDrawing
+    val topInsetPx = safeInsets.getTop(density)
+    val bottomInsetPx = safeInsets.getBottom(density)
     // Includes blur sampling, the complete soft shadow and spring overshoot.
     val effectPadding = 32.dp
     val effectPaddingPx = with(density) { effectPadding.roundToPx() }
-    val provider = remember(density, marginPx, effectPaddingPx) {
-        GlassPopoverPositionProvider(density, marginPx, effectPaddingPx)
+    val provider = remember(density, marginPx, effectPaddingPx, topInsetPx, bottomInsetPx) {
+        GlassPopoverPositionProvider(density, marginPx, effectPaddingPx, topInsetPx, bottomInsetPx)
     }
     val shape = GlassShapes.Popover
     val progress = remember { Animatable(0f) }
@@ -212,7 +224,7 @@ fun GlassPopover(
             // Haze resolves cross-window sources in screen coordinates.
             CompositionLocalProvider(LocalGlassOverlayLevel provides overlayLayer.level) {
                 val anchor = state.anchorBounds
-                val p = progress.value
+                val p = progress.value.coerceIn(0f, 1f)
                 // Grow away from the anchor edge, keeping its field visible.
                 val anchorW = anchor?.width ?: 0
                 val anchorH = anchor?.height ?: 0

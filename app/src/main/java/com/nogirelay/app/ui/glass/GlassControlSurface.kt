@@ -44,17 +44,19 @@ internal fun Modifier.glassControlShadow(
     tint: Color? = null,
     depth: GlassDepth = GlassDepths.Low,
     press: GlassPress? = null,
+    alpha: Float = 1f,
 ): Modifier {
     if (depth.elevation <= 0.dp) return this
     val scale = (depth.elevation.value / 16f).coerceIn(0.5f, 1.35f)
     val compression = press?.shadowFactor ?: 1f
+    val opacity = alpha.coerceIn(0f, 1f)
     val cast = dropShadow(
         shape,
         Shadow(
             radius = (14f * scale * compression).dp,
             spread = (-2f * scale).dp,
             offset = DpOffset(0.dp, (7f * scale * compression).dp),
-            color = Color(0xFF4C5360).copy(alpha = 0.14f * compression),
+            color = Color(0xFF4C5360).copy(alpha = 0.14f * compression * opacity),
         ),
     )
     return if (tone == GlassTone.Accent) {
@@ -64,7 +66,7 @@ internal fun Modifier.glassControlShadow(
                 radius = (7f * scale * compression).dp,
                 spread = (-2f * scale).dp,
                 offset = DpOffset(0.dp, (3f * scale * compression).dp),
-                color = controlRimColor(controlBodyColor(tone, tint)).copy(alpha = 0.18f * compression),
+                color = controlRimColor(controlBodyColor(tone, tint)).copy(alpha = 0.18f * compression * opacity),
             ),
         )
     } else cast

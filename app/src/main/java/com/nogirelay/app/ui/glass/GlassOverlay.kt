@@ -6,13 +6,17 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
@@ -31,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.graphicsLayer
@@ -58,12 +63,14 @@ import kotlinx.coroutines.launch
 fun GlassDialog(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
+    frostedBackground: Boolean = true,
+    contentPadding: PaddingValues = PaddingValues(22.dp),
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val overlayLayer = rememberGlassOverlayLayer(minimumLevel = 2f)
     Dialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         val appear = remember { androidx.compose.animation.core.Animatable(0f) }
         LaunchedEffect(Unit) { appear.animateTo(1f, GlassMotion.MorphSpec) }
@@ -72,19 +79,28 @@ fun GlassDialog(
         Box(
             modifier = modifier
                 .fillMaxWidth(0.92f)
-                .padding(24.dp)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(horizontal = 24.dp, vertical = 16.dp)
                 .graphicsLayer {
-                    val p = appear.value
+                    val p = appear.value.coerceIn(0f, 1f)
                     alpha = 0.3f + 0.7f * p
                     scaleX = 0.92f + 0.08f * p
                     scaleY = 0.92f + 0.08f * p
                     translationY = (1f - p) * 18.dp.toPx()
                 }
                 .glassControlShadow(GlassShapes.CardLarge, depth = GlassDepths.High)
-                .glassOverlaySurface(overlayLayer, GlassShapes.CardLarge, fillAlpha = 0.56f),
+                .then(
+                    if (frostedBackground) {
+                        Modifier.glassOverlaySurface(overlayLayer, GlassShapes.CardLarge, fillAlpha = 0.56f)
+                    } else {
+                        Modifier.glassOverlaySource(overlayLayer)
+                            .clip(GlassShapes.CardLarge)
+                            .background(GlassColors.SheetSurface)
+                    },
+                ),
         ) {
             CompositionLocalProvider(LocalGlassOverlayLevel provides overlayLayer.level) {
-                Column(Modifier.fillMaxWidth().padding(22.dp), content = content)
+                Column(Modifier.fillMaxWidth().padding(contentPadding), content = content)
             }
         }
     }
@@ -115,6 +131,8 @@ fun GlassDialogText(text: String) {
 /**
  * Bottom sheet with an opaque, rounded background. It still publishes its
  * contents as a source for the frosted selection menus opened above it.
+ * Place the supplied handle inside the content's scroll container, and keep
+ * navigation-bar spacing at the end of that content so the viewport stays full-height.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -122,7 +140,10 @@ fun GlassBottomSheet(
     onDismissRequest: () -> Unit,
     backdropState: RelaySheetBackdropState,
     modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.(dismiss: (afterHidden: () -> Unit) -> Unit) -> Unit,
+    content: @Composable ColumnScope.(
+        dismiss: (afterHidden: () -> Unit) -> Unit,
+        handle: @Composable () -> Unit,
+    ) -> Unit,
 ) {
     val overlayLayer = rememberGlassOverlayLayer(minimumLevel = 1f)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -193,9 +214,9 @@ fun GlassBottomSheet(
             layout(placeable.width, placeable.height) { placeable.place(0, 0) }
         },
         sheetState = sheetState,
-        // Keep the handle and content together inside Material's moving surface.
+        // The handle scrolls with the content inside Material's moving surface.
         dragHandle = null,
-        // Paint behind the safe area, then inset only the sheet's content.
+        // Content adds its own trailing safe area inside the scroll container.
         contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
         containerColor = GlassColors.SheetSurface,
         contentColor = GlassColors.Ink,
@@ -207,33 +228,47 @@ fun GlassBottomSheet(
             LocalRelayPageWorkPaused provides false,
             LocalGlassOverlayLevel provides overlayLayer.level,
         ) {
+            val topSafeInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
             Column(
                 Modifier.fillMaxWidth()
-                    .glassOverlaySource(overlayLayer)
-                    .background(GlassColors.SheetSurface)
-                    .windowInsetsPadding(BottomSheetDefaults.windowInsets),
-            ) {
-                Box(
-                    Modifier.fillMaxWidth().height(40.dp)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Button,
-                            enabled = !closing && !dismissed,
-                            onClick = { dismiss(latestOnDismiss) },
+                    // Cap the content inside the moving surface. Material must still
+                    // measure its anchors against the full window to leave this gap above it.
+                    .layout { measurable, constraints ->
+                        val topClearance = topSafeInsets.getTop(this) + 16.dp.roundToPx()
+                        val maxSheetHeight = (constraints.maxHeight - topClearance).coerceAtLeast(0)
+                        val placeable = measurable.measure(
+                            constraints.copy(
+                                minHeight = constraints.minHeight.coerceAtMost(maxSheetHeight),
+                                maxHeight = maxSheetHeight,
+                            ),
                         )
-                        .semantics {
-                            contentDescription = "关闭抽屉"
-                            dismissSemantics { dismiss(latestOnDismiss); true }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
+                        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                    }
+                    .glassOverlaySource(overlayLayer)
+                    .background(GlassColors.SheetSurface),
+            ) {
+                content(::dismiss) {
                     Box(
-                        Modifier.width(40.dp).height(4.5.dp)
-                            .background(GlassColors.Ink.copy(alpha = 0.18f), GlassShapes.Capsule),
-                    )
+                        Modifier.fillMaxWidth().height(40.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                role = Role.Button,
+                                enabled = !closing && !dismissed,
+                                onClick = { dismiss(latestOnDismiss) },
+                            )
+                            .semantics {
+                                contentDescription = "关闭抽屉"
+                                dismissSemantics { dismiss(latestOnDismiss); true }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            Modifier.width(40.dp).height(4.5.dp)
+                                .background(GlassColors.Ink.copy(alpha = 0.18f), GlassShapes.Capsule),
+                        )
+                    }
                 }
-                content(::dismiss)
             }
         }
     }

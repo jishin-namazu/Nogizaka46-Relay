@@ -678,19 +678,20 @@ private fun BlogFilterDialog(
     GlassBottomSheet(
         onDismissRequest = onDismiss,
         backdropState = backdropState,
-    ) { dismiss ->
+    ) { dismiss, handle ->
         Box(modifier = Modifier.fillMaxWidth()) {
             val columnCount = 2
             val groups = remember(members) { memberGroups(members) }
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 28.dp),
+                    .padding(horizontal = 24.dp),
+                contentPadding = PaddingValues(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 overscrollEffect = null,
             ) {
                 item(key = "filter-header") {
+                    handle()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "博客筛选",
