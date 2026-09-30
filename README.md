@@ -20,8 +20,7 @@
 | 文档 | 核心用途与内容 |
 | :--- | :--- |
 | 🚀 **[DEPLOYMENT.md](DEPLOYMENT.md)** | **生产部署与运维指南**：在 Fly.io 等在线服务器上一键部署、配置密钥、上传会话与推送验收 |
-| 📖 **[DEVELOPMENT.md](DEVELOPMENT.md)** | **开发文档**：系统架构深度解析、双进程设计、数据库平滑演进、全套 REST API 规范、全屏来电与大模型翻译实现原理及本地调试 |
-| 🖥️ **[server/README.md](server/README.md)** | **服务端代码索引**：服务端核心代码入口、运行脚本与服务架构导读 |
+| 🖥️ **[server/README.md](server/README.md)** | **服务端运维与命令指南**：会话管理、REST API 操作、媒体下载、推送测试与排障命令 |
 
 ---
 
@@ -33,37 +32,6 @@
 
 - **双进程容器架构**：主 API 进程（提供 REST API、设备管理与 `/health` 探针）和 Monitor 进程（API 会话轮询、博客监控与 8081 媒体服务）独立运行。
 - **正文分离同步设计**：Relay 服务端仅保存用于去重、防漏和推送通知的博客元数据，正文与高清图片由 Android 客户端直接从官网同步，节省服务端网络与存储开销。
-
----
-
-## 📱 界面预览 / Screenshots
-
-<table align="center">
-  <tr>
-    <th width="25%" align="center">主页仪表盘与状态</th>
-    <th width="25%" align="center">大模型与昵称配置</th>
-    <th width="25%" align="center">消息列表与最近动态</th>
-    <th width="25%" align="center">私信流翻译与关键词检索</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/images/01_home_dashboard.jpg" alt="主页仪表盘与状态" width="100%" /></td>
-    <td align="center"><img src="docs/images/02_settings_ai_translation.jpg" alt="翻译大模型与昵称配置" width="100%" /></td>
-    <td align="center"><img src="docs/images/03_messages_list.jpg" alt="消息列表与最近动态" width="100%" /></td>
-    <td align="center"><img src="docs/images/04_message_detail_translation.jpg" alt="私信流翻译与关键词检索" width="100%" /></td>
-  </tr>
-  <tr>
-    <th width="25%" align="center">博客列表与关键词检索</th>
-    <th width="25%" align="center">期别成员与时间筛选</th>
-    <th width="25%" align="center">中日双语对照阅读</th>
-    <th width="25%" align="center">博客原图下载</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/images/05_blog_list.jpg" alt="博客列表与关键词检索" width="100%" /></td>
-    <td align="center"><img src="docs/images/06_blog_filter_modal.jpg" alt="期别成员与时间筛选" width="100%" /></td>
-    <td align="center"><img src="docs/images/07_blog_detail_reading.jpg" alt="中日双语对照阅读" width="100%" /></td>
-    <td align="center"><img src="docs/images/08_blog_images_batch_download.jpg" alt="博客原图下载" width="100%" /></td>
-  </tr>
-</table>
 
 ---
 
@@ -96,14 +64,12 @@
 - **结构化输出保证 (JSON Schema)**：针对 Claude、OpenAI Responses、Gemini 强约束输出 `{"segments":[{"index":0,"text":"..."}]}`，其余厂商通过提示词约束；客户端统一通过 `IndexedSegmentTranslations` 进行严格的索引完备性校验。
 - **抑制思考模式**：统一关闭或降级推理模型的深度思考模式（Claude 采用 `thinking: { type: "disabled" }`），单次请求超时放宽至 120 秒，降低翻译时延与费用。
 - **格式还原**：采用 `TranslationLayout` 本地骨架回填算法，大模型仅翻译纯文本片段，译文严格还原原文的手动换行、空行与空格排版；昵称占位符 `%%%` 替换为用户自定义昵称。
-- **界面参考**：[大模型与昵称配置面板](docs/images/02_settings_ai_translation.jpg) ｜ [消息双语排版](docs/images/04_message_detail_translation.jpg)
 
 ### 6. BLOG 监控、离线检索与多媒体管理器
 - **边界推进算法**：服务端首次建立基线翻全部分页，日常增量追赶至已存头部 ID（`head_id_v1`），仅推送新博客元数据。
 - **富文本排版与中日对照**：Android 客户端直接解析官方 JSONP 博客与成员名录，正文图片支持手势缩放、左右滑动切换与单图直下；译文段落以优雅紫色字体自适应嵌入且不影响正文边距。
 - **全文检索**：支持跨成员、按时间段（今天/近7天/自定义年月日）与关键词检索；搜索结果高亮匹配可见字符，并在命中正文时提供前后词边界对齐的精准摘要（词前约 12 字、词后约 28 字）。
 - **图片下载**：网格视图支持全选/单选一键批量下载全篇博客原图至系统相册。
-- **界面参考**：[博客列表与搜索](docs/images/05_blog_list.jpg) ｜ [期别与时间多维筛选](docs/images/06_blog_filter_modal.jpg) ｜ [双语段落下嵌阅读](docs/images/07_blog_detail_reading.jpg) ｜ [原图下载管理器](docs/images/08_blog_images_batch_download.jpg)
 
 ### 7. 归档导入导出与媒体补齐 (Data Transfer)
 - **单向归档格式**：一次导出只覆盖消息或博客一种内容，产物为 `manifest.json` + `data/*.jsonl` + 内容寻址的 `media/<sha256>.<ext>`，可选 `data/skipped.jsonl` 列出本地未缓存的媒体。
@@ -167,7 +133,6 @@ Nogizaka46-Relay/
 ├── Dockerfile                  # 基于 Node.js Slim 的生产镜像定义
 ├── fly.toml.example            # Fly.io 生产配置模板 
 ├── local.properties.example    # Android 本地 SDK 路径与预填参数配置模板
-├── DEVELOPMENT.md              # 深度开发文档
 └── DEPLOYMENT.md               # 生产部署与运维文档
 ```
 
@@ -183,7 +148,7 @@ Nogizaka46-Relay/
 👉 **[生产部署与运维指南 (DEPLOYMENT.md)](DEPLOYMENT.md)**
 
 > [!TIP]
-> **多端冲突运维提示**：若因在其他设备登录 Web 版导致云端提示 `[NOGI_SESSION_UPDATE_REQUIRED]`，请查阅 [多端冲突恢复指引](#1-官网会话托管与智能生命周期状态机) 或 [server/README.md](server/README.md#2-官网会话管理与热更新) 进行两步热更新，无需重启服务。
+> **多端冲突运维提示**：若因在其他设备登录 Web 版导致云端提示 `[NOGI_SESSION_UPDATE_REQUIRED]`，请查阅 [多端冲突恢复指引](#1-官网会话托管与生命周期状态机) 或 [server/README.md](server/README.md#2-官网会话管理与热更新) 进行两步热更新，无需重启服务。
 
 ---
 
