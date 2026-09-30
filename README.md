@@ -47,23 +47,25 @@
   2. **上传并激活**：运行 `node upload-session.js ./nogi-browser-state.json <SERVER_URL> <ADMIN_TOKEN>`，终端提示 `✓ Session activated` 即完成更新。
 
 ### 2. 过去消息全量回填与增量轮询
-- **Continuation 游标遍历**：服务启动、新订阅成员出现或会话更新时，自动调用 `past_messages` 接口并完整遍历 timeline continuation 分页游标，历史消息全量回填入库且静默入库（不产生重复 FCM 推送）。
-- **增量快速追赶**：已完成回填的成员在日常轮询中仅拉取最新一页（200 条），对比最高已存 ID 快速熔断。
+- **Continuation 游标遍历**：服务启动、新订阅成员出现或会话更新时，自动调用 `past_messages` 接口并完整遍历 timeline continuation 分页游标；默认开启 `NOGI_BACKFILL_ON_START`，历史回填不发送推送。
+- **增量轮询**：已完成回填的成员在日常轮询中拉取最新一页（200 条），按上一轮已处理的消息 ID 集合去重；处理失败的记录留待重试。
 
 ### 3. SHA-256 媒体归档引擎与独立媒体流服务
 - **内容寻址与多方去重**：所有语音、图片、视频及来电全屏写真按二进制 SHA-256 摘要寻址归档在持久化卷中。成员在多次来电中重复使用的写真在磁盘上只存一份。
 - **受保护流式响应**：Monitor 内置专有 HTTP 服务（默认端口 `8081`），提供 `GET /v1/messages/:id/media/:kind`，受全局 Bearer 密钥保护，支持音视频断点式流式播放，规避官网 CloudFront 鉴权失效问题。
 
 ### 4. 模拟全屏语音来电系统 (Android)
-- **保障机制**：FCM 收到语音消息后，通过前台服务（`dataSync`）提前在后台将语音音频与背景写真完整预下载至本地缓存，随后才唤起全屏呼叫，避免接听时网络卡顿。
+- **资源准备**：FCM 收到语音消息后，通过前台服务（`dataSync`）先缓存语音，并尝试预取背景写真；语音准备成功后显示来电，下载失败时显示可重试通知。
 - **全屏锁屏唤醒**：配置全屏意图（`USE_FULL_SCREEN_INTENT`）、锁屏展示（`showWhenLocked`）与亮屏拉起（`turnScreenOn`），配合电话铃声（`R.raw.ringtone`）与振动。
 - **传感器**：接听贴近耳边时通过距离传感器自动熄屏（`PROXIMITY_SCREEN_OFF_WAKE_LOCK`）防误触。
+- **来电样式**：在「系统与翻译设置」的「来电页面」中选择「经典」或「液态玻璃」，默认经典，下次来电时生效。
 
 ### 5. 多大模型上下文感知翻译 (AI Translation System)
 - **11 家主流模型支持**：覆盖 OpenAI、Kimi (Moonshot)、Claude (Anthropic)、DeepSeek、智谱 GLM、Google Gemini、通义千问 Qwen、xAI Grok、MiniMax、小米 MiMo、腾讯混元；支持 `MESSAGES`、`RESPONSES`、`GEMINI_GENERATE_CONTENT` 三类协议标准。
-- **结构化输出保证 (JSON Schema)**：针对 Claude、OpenAI Responses、Gemini 强约束输出 `{"segments":[{"index":0,"text":"..."}]}`，其余厂商通过提示词约束；客户端统一通过 `IndexedSegmentTranslations` 进行严格的索引完备性校验。
-- **抑制思考模式**：统一关闭或降级推理模型的深度思考模式（Claude 采用 `thinking: { type: "disabled" }`），单次请求超时放宽至 120 秒，降低翻译时延与费用。
+- **结构化输出与校验**：客户端按供应商和所选模型选择结构化输出策略，设置页显示「JSON Schema」「JSON 模式」或「提示词约束」。OpenAI、Claude、Kimi、Gemini、通义千问均有相应适配，具体能力取决于模型；所有结果都由 `IndexedSegmentTranslations` 校验片段数量与索引。
+- **推理与超时策略**：按模型分别设置思考开关、推理强度或预算，部分模型保留低强度推理；网络连接超时为 15 秒，读取超时为 120 秒。
 - **格式还原**：采用 `TranslationLayout` 本地骨架回填算法，大模型仅翻译纯文本片段，译文严格还原原文的手动换行、空行与空格排版；昵称占位符 `%%%` 替换为用户自定义昵称。
+- **翻译范围**：AI 翻译默认关闭，配置供应商、API Key 与模型后启用。「消息全量翻译」和「博客全量翻译」可分别开启；关闭全量翻译时，新消息自动翻译，历史消息需手动触发，博客在新发布或打开阅读时翻译。「重新翻译全部」会清空本机消息与博客的译文后重新处理。
 
 ### 6. BLOG 监控、离线检索与多媒体管理器
 - **边界推进算法**：服务端首次建立基线翻全部分页，日常增量追赶至已存头部 ID（`head_id_v1`），仅推送新博客元数据。
@@ -72,9 +74,9 @@
 - **图片下载**：网格视图支持全选/单选一键批量下载全篇博客原图至系统相册。
 
 ### 7. 归档导入导出与媒体补齐 (Data Transfer)
-- **单向归档格式**：一次导出只覆盖消息或博客一种内容，产物为 `manifest.json` + `data/*.jsonl` + 内容寻址的 `media/<sha256>.<ext>`，可选 `data/skipped.jsonl` 列出本地未缓存的媒体。
-- **逐条回写导入**：导入时每解析一条记录就在独立事务里落库；重复 id 只在归档显式列出的链接值确实不同时更新，译文只在本地缺失时补写；单行解析失败不影响整次导入。
-- **离线导出 + 后台补齐**：导出只打包本地已缓存的媒体，缺失项由前台服务后台下载补齐，404 写入永久标记不再重试。
+- **ZIP 归档**：从「消息」或「博客」页的「数据管理」按成员导出对应内容，可分别选择是否包含媒体和译文。归档包含 `manifest.json`、`data/*.jsonl`，以及选中的本地媒体 `media/<sha256>.<ext>`；`data/skipped.jsonl` 记录跳过的缺失媒体。导入前可选择成员，并决定是否导入媒体及成员目录。
+- **逐条合并导入**：每条记录在独立事务中写入；重复记录可刷新归档提供的有效链接，并补写本地缺失的译文。重复博客仅在本地正文缺失或正文内容一致时更新正文，补写译文还要求标题与正文一致，避免旧归档覆盖不同版本的文章。单行解析失败不影响其余记录。
+- **离线导出与后台补齐**：导出只打包本地已缓存的媒体，不会自动联网补下载；可先在数据管理中点击「补齐缺失媒体」，由前台服务完成下载。HTTP 404 会按 URL 持久记录，后续跳过该失效链接。
 - **成员目录与期别归一化**：归档携带成员目录行；期别分类统一折回 `6/5/4/3/2/1期生 + 運営スタッフ`，筛选按分类字符串分组不再出现重复分区；头像优先取成员表，为空时回落到博客表。
 
 ### 8. Web 管理后台 (Admin Dashboard)
@@ -94,11 +96,10 @@
 ```text
 Nogizaka46-Relay/
 ├── docs/
-│   ├── architecture/           # 架构图 (HTML / PNG)
-│   └── images/                 # App 运行界面截图
+│   └── architecture/           # 架构图 (JSON / HTML / PNG)
 ├── app/                        # Android 原生客户端代码
 │   ├── src/main/java/com/nogirelay/app/
-│   │   ├── MainActivity.kt     # 轻量 Activity 入口 (生命周期、传感器、Intent 分发)
+│   │   ├── MainActivity.kt     # Activity 入口 (生命周期、Intent 分发与听筒防误触)
 │   │   ├── UnreadTag.kt        # 公共未读角标组件
 │   │   ├── blog/               # 博客解析、详情阅读、多图下载与通知
 │   │   ├── call/               # 拟真来电、全屏呼叫、距离传感器与振动
@@ -107,15 +108,18 @@ Nogizaka46-Relay/
 │   │   │   └── transfer/       # 归档格式、导入导出、媒体补齐
 │   │   │                       #   (ExportFormat / DataExporter / DataImporter)
 │   │   ├── media/              # 媒体后台下载器、前台语音播放服务
-│   │   ├── notification/       # Android 5 套专用通知渠道定义
+│   │   ├── notification/       # 来电、准备、消息、博客、播放、媒体补齐 6 类通知渠道
 │   │   ├── push/               # FCM 接收器 (NogiFirebaseMessagingService)
 │   │   ├── translation/        # 大模型统一接口、11家厂商适配器与版式还原
-│   │   └── ui/                 # Material 3 模块化 UI 体系
+│   │   └── ui/                 # Compose / Material 3 与自定义玻璃控件
+│   │       ├── glass/          # 玻璃材质、按钮、弹层与导航组件
 │   │       ├── home/           # 主页仪表盘与权限状态 (HomeScreen)
 │   │       ├── messages/       # 消息列表、会话抽屉与卡片 (MessagesScreen)
 │   │       ├── navigation/     # 全局三 Tab 导航与脚手架 (RelayApp)
 │   │       ├── settings/       # 大模型配置与推送设置面板 (SettingsSection)
 │   │       └── transfer/       # 归档导入导出抽屉与成员选择器
+│   ├── src/main/kotlin/com/nogirelay/app/data/api/ApiConfig.kt
+│   │                           # BuildConfig 同步地址与令牌入口
 │   └── build.gradle.kts        # 客户端依赖与构建配置
 ├── server/                     # Node.js 中继服务端代码
 │   ├── src/
@@ -165,7 +169,7 @@ npm install
 cp .env.example .env
 # 编辑 .env 配置你的 DATABASE_URL、ADMIN_TOKEN 与 CLIENT_TOKEN
 
-# 初始化数据库
+# 初始化默认本地数据库（postgres 用户、nogi_relay 数据库）
 npm run db:setup
 
 # 提取官网登录会话 (在弹出的浏览器中登录后回车)
@@ -178,9 +182,13 @@ npm start
 npm run monitor
 ```
 
+`db:setup` 脚本不会读取 `.env` 中的 `DATABASE_URL`；使用其他数据库时，请改用 `psql "<DATABASE_URL>" -f database/schema.sql`。上面的 HTTP 本地服务可用于命令行调试；手机 App 连接时需提供可访问的 HTTPS 地址。
+
 ---
 
 ### 3. Android 客户端构建与安装
+
+当前工程使用 Android SDK Platform 37（`compileSdk` / `targetSdk = 37`）和项目自带的 Gradle 9.8.0 Wrapper，Java 编译目标为 17；安装设备最低要求 Android 8.0（API 26）。本机需准备兼容该 Gradle 版本的 JDK 与对应 Android SDK。
 
 在项目根目录下复制模板并配置 `local.properties`：
 ```powershell
@@ -196,16 +204,31 @@ relay.baseUrl=https://YOUR_RELAY_HOST
 relay.access.token=YOUR_CLIENT_TOKEN
 ```
 
+这些地址与令牌可留空，安装后在 App 的「主页」→「系统与翻译设置」中填写。App 的同步地址必须使用 **HTTPS**。构建时也可用 `RELAY_BASE_URL`、`RELAY_ACCESS_TOKEN` 环境变量或 `-PrelayBaseUrl=...`、`-PrelayAccessToken=...` 传入；环境变量优先于 Gradle 参数，Gradle 参数优先于 `local.properties`。
+
+要使用 FCM 推送，请在与服务端相同的 Firebase 项目中注册包名为 `com.nogirelay.app` 的 Android 应用，将下载的 `google-services.json` 放到 `app/`，或通过 `GOOGLE_SERVICES_JSON` 环境变量提供完整 JSON。未配置 Firebase 时仍可编译，但无法注册和接收 FCM 推送。
+
 执行编译：
 ```powershell
 # 标准 Debug 构建
 .\gradlew.bat :app:assembleDebug
 
-# 简易模式（隐藏全屏来电测试等调试按钮）
+# 简易模式（隐藏设置中的「测试全屏来电」按钮）
 .\gradlew.bat :app:assembleDebug -PrelaySimpleUi=true --no-daemon
 ```
 
 构建生成的 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`（简易模式下自动命名为 `app-simple-debug.apk`）。
+
+连接开启 USB 调试的设备后，可用 `.\gradlew.bat :app:installDebug` 安装标准 Debug 版本；安装简易版本时同样加上 `-PrelaySimpleUi=true`。
+
+---
+
+### 4. App 内的设置与浏览
+
+- **主页**：查看推送注册状态与权限，手动同步历史；从右上角或设置入口打开「系统与翻译设置」。这里集中配置 FCM、昵称、AI 翻译与来电页面样式。
+- **消息**：先选择成员进入消息流；在成员页面搜索、按时间筛选，从「筛选与更多」进入「媒体」或「收藏夹」。「媒体」分为图片、视频、语音，正在播放语音时返回消息流会定位到该成员的播放记录。
+- **博客**：按成员、期别、时间和关键词筛选，使用上一页、下一页或页码跳转浏览；打开文章阅读原文与译文，或选择博客图片下载。
+- **数据管理**：分别位于消息与博客页，提供对应类型的 ZIP 导入导出、成员选择和缺失媒体补齐。消息已读、语音已播放及收藏由客户端本地维护。
 
 ---
 

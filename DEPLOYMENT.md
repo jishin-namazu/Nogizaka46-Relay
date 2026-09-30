@@ -134,10 +134,12 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 ### 步骤 6：手机客户端连接与推送验收
 
 1. **Android 端连接**：
-   - 打开 Nogi Relay App，进入「主页」->「设置」；
-   - **服务器地址**：`https://<YOUR_APP_NAME>.fly.dev`（填入你的自定义应用域名）；
-   - **访问令牌**：普通客户端输入 `CLIENT_TOKEN`，可注册设备并读取消息和媒体；管理员操作使用 `ADMIN_TOKEN`；
-   - 保存后主页云朵图标变为绿色连接状态。
+   - 按 [Android 客户端构建与安装](README.md#3-android-客户端构建与安装) 配置与服务端相同 Firebase 项目的 `google-services.json` 并安装 App；
+   - 打开「主页」→「系统与翻译设置」→「FCM 推送服务」；
+   - **同步服务地址**：`https://<YOUR_APP_NAME>.fly.dev`，必须使用 HTTPS；
+   - **访问令牌**：填写 `CLIENT_TOKEN`，用于注册设备、读取消息和媒体；下方管理端测试命令使用 `ADMIN_TOKEN`；
+   - 点击「保存并注册推送」，等待「设备已注册，系统推送已就绪」。主页随后显示「推送已就绪」，表示当前配置的设备注册已成功；实际投递仍需执行下方测试确认；
+   - 在主页检查「通知权限」「全屏来电」「后台弹出界面」和「系统推送」，按提示开启相应权限。
 2. **端到端测试推送**：
    ```bash
    # 测试普通文本推送
@@ -145,14 +147,10 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
      -H "Authorization: Bearer 管理员token" \
      -H "Content-Type: application/json" \
      -d '{"member_name": "乃木坂46", "text": "生产环境部署与推送验收成功！"}'
-
-   # 测试全屏语音来电
-   curl -X POST https://<YOUR_APP_NAME>.fly.dev/v1/push/test-call \
-     -H "Authorization: Bearer 管理员token" \
-     -H "Content-Type: application/json" \
-     -d '{"member_name": "乃木坂46"}'
    ```
-   手机收到通知或弹出全屏来电即表示全链路通畅
+   手机收到上述通知后，再用一条新收到的真实订阅语音验证下载、来电显示与接听播放。普通通知成功不代表语音下载和全屏权限已全部通过。
+
+   标准版设置中的「测试全屏来电」使用本机测试资源，只检查来电界面与播放。服务端合成语音测试另见 [测试全屏来电](server/README.md#74-模拟发送测试全屏来电)：当前测试音频接口要求管理员令牌，使用 `CLIENT_TOKEN` 的手机无法下载该测试音频。
 
 ---
 
