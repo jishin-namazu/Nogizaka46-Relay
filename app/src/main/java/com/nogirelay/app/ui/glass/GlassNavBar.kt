@@ -93,8 +93,10 @@ fun GlassNavBar(
                 .clip(shape)
                 .frostedGlass(
                     shape = shape,
-                    fillAlpha = 0.42f,
-                    blur = 24.dp,
+                    // Keep a clearly white glass body while retaining the
+                    // page colors as soft blurred patches underneath it.
+                    fillAlpha = 0.60f,
+                    blur = 28.dp,
                     sourceSelection = pageSources,
                 ),
         )

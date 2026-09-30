@@ -494,7 +494,7 @@ private fun MediaViewerTopBar(
     ) {
         GlassCircleButton(
             onClick = onClose,
-            tone = GlassTone.Neutral,
+            tone = GlassTone.OnDark,
             contentDescription = "返回",
         ) {
             Icon(
@@ -525,7 +525,7 @@ private fun MediaViewerTopBar(
         GlassCircleButton(
             onClick = onDownload,
             enabled = !isDownloading,
-            tone = GlassTone.Neutral,
+            tone = GlassTone.OnDark,
             contentDescription = when {
                 isDownloading -> "保存中"
                 isDownloaded -> "已保存"
@@ -1063,7 +1063,7 @@ private fun VideoPlayer(
                         togglePlayPause()
                         lastInteractionTime = System.currentTimeMillis()
                     },
-                    tone = GlassTone.Neutral,
+                    tone = GlassTone.OnDark,
                     size = 64.dp,
                     contentDescription = when {
                         isCompleted -> "重播"
@@ -1254,7 +1254,7 @@ private fun VideoBottomBar(
     ) {
         GlassCircleButton(
             onClick = onTogglePlayPause,
-            tone = GlassTone.Neutral,
+            tone = GlassTone.OnDark,
             size = 46.dp,
             contentDescription = when {
                 isCompleted -> "重播"

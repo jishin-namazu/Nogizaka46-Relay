@@ -244,7 +244,15 @@ fun GlassPopover(
                             transformOrigin = TransformOrigin(provider.originX, if (provider.opensUpward) 1f else 0f)
                         }
                         .glassControlShadow(shape, depth = GlassDepths.Low)
-                        .glassOverlaySurface(overlayLayer, shape),
+                        // The menu should read as a white glass card first;
+                        // the background remains visible as broad blurred
+                        // color rather than showing through too clearly.
+                        .glassOverlaySurface(
+                            layer = overlayLayer,
+                            shape = shape,
+                            fillAlpha = 0.64f,
+                            blur = GlassOpticsPresets.BlurOverlay.dp,
+                        ),
                 ) {
                     // Content appears late and slides in from the anchor side.
                     Column(

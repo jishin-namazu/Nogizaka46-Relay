@@ -181,7 +181,10 @@ fun Modifier.glass(
             shape = shape,
             tone = tone,
             tint = tint,
-            fillAlpha = fillAlpha * if (tone == GlassTone.Accent) 0.82f else 0.5f,
+            // Floating header controls need a visible white body over photos
+            // and message content. Keep the blur underneath, but do not let
+            // the frosted controls become almost transparent.
+            fillAlpha = fillAlpha * if (tone == GlassTone.Accent) 0.82f else 0.72f,
             blur = blur,
             edgeStrength = edgeStrength,
         )

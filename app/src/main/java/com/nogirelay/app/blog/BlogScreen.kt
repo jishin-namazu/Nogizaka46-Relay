@@ -131,6 +131,7 @@ import com.nogirelay.app.ui.hasInvertedRange
 import com.nogirelay.app.ui.transfer.DataTransferDrawer
 import com.nogirelay.app.ui.transfer.MemberPickerCard
 import com.nogirelay.app.ui.transfer.memberGroups
+import com.nogirelay.app.ui.transfer.preloadMemberAvatars
 import com.nogirelay.app.data.transfer.ExportKind
 import com.nogirelay.app.ui.withoutTextPresentationSelector
 import kotlinx.coroutines.Dispatchers
@@ -672,6 +673,10 @@ private fun BlogFilterDialog(
     onDismiss: () -> Unit,
     onConfirm: (Set<String>, TimeFilter) -> Unit,
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(members) {
+        if (members.isNotEmpty()) preloadMemberAvatars(context, members)
+    }
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     var draftTimeFilter by remember(timeFilter) { mutableStateOf(timeFilter) }
     val allMemberIds = remember(members) { members.mapTo(linkedSetOf(), BlogMember::id) }
