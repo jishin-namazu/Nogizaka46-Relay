@@ -41,4 +41,5 @@ manifest.json
 # Local scratch work and test directories, at any depth
 _work/
 test/
-app/src/androidTest/
+tests/
+androidTest/
