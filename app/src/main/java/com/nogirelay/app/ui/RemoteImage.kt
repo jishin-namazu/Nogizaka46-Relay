@@ -11,6 +11,8 @@ import android.util.LruCache
 import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -241,6 +244,16 @@ fun RemoteImage(
     val currentRatio = bitmap?.let { it.width.toFloat() / it.height.toFloat() }
         ?: animated?.aspectRatio()
         ?: knownAspectRatio
+    val hasContent = bitmap != null || animated != null
+    val contentAlpha = remember(cacheKey) {
+        Animatable(if (hasContent) 1f else 0f)
+    }
+    LaunchedEffect(cacheKey, hasContent) {
+        contentAlpha.animateTo(
+            targetValue = if (hasContent) 1f else 0f,
+            animationSpec = tween(if (hasContent) 140 else 0),
+        )
+    }
     val latestOnAspectRatio by rememberUpdatedState(onAspectRatio)
     LaunchedEffect(currentRatio) {
         currentRatio?.takeIf { it > 0f }?.let { latestOnAspectRatio?.invoke(it) }
@@ -251,15 +264,12 @@ fun RemoteImage(
         modifier
     }
 
-    val hasContent = bitmap != null || animated != null
     val finalModifier = if (!hasContent && isError && !isNotFound) {
         boxModifier
             .clickable { retryCount++ }
             .background(placeholderColor)
     } else {
-        boxModifier.background(
-            if (hasContent || placeholderResId != null) Color.Transparent else placeholderColor,
-        )
+        boxModifier.background(if (placeholderResId != null) Color.Transparent else placeholderColor)
     }
 
     Box(
@@ -274,14 +284,18 @@ fun RemoteImage(
                 contentDescription = contentDescription,
                 contentScale = contentScale,
                 active = active,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = contentAlpha.value },
             )
         } else if (image != null) {
             Image(
                 bitmap = image.asImageBitmap(),
                 contentDescription = contentDescription,
                 contentScale = contentScale,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = contentAlpha.value },
             )
         } else if (placeholderResId != null) {
             Image(

@@ -1,6 +1,7 @@
 package com.nogirelay.app.ui.messages
 
 import android.content.Intent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
@@ -8,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -256,15 +258,23 @@ private fun MessageTextContent(body: String?, translation: String?, query: Strin
             )
         }
     }
-    translation?.let {
-        if (body != null) Spacer(Modifier.height(8.dp))
-        SelectionContainer {
-            SearchHighlightText(
-                text = it,
-                query = query,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
-                color = GlassColors.AccentInk,
-            )
+    AnimatedContent(
+        targetState = translation,
+        transitionSpec = {
+            fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+        },
+        label = "message-translation",
+    ) { translated ->
+        translated?.let {
+            if (body != null) Spacer(Modifier.height(8.dp))
+            SelectionContainer {
+                SearchHighlightText(
+                    text = it,
+                    query = query,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
+                    color = GlassColors.AccentInk,
+                )
+            }
         }
     }
 }

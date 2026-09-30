@@ -2,15 +2,16 @@ package com.nogirelay.app.ui.glass
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.interaction.InteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -33,9 +34,11 @@ class GlassPress internal constructor(
     /** 0 = resting, 1 = fully pressed. */
     val progress: Float get() = progressState.value
 
-    val scaleX: Float get() = 1f - 0.026f * progress
-    val scaleY: Float get() = 1f - 0.058f * progress
-    val sinkDp: Dp get() = (1.4f * progress).dp
+    // Match the calibration sample: the whole surface moves together, while
+    // keeping the icon artwork and its measured size unchanged at rest.
+    val scaleX: Float get() = 1f - 0.055f * progress
+    val scaleY: Float get() = 1f - 0.09f * progress
+    val sinkDp: Dp get() = (2f * progress).dp
 
     /** Shadow pulls in and weakens while pressed. */
     val shadowFactor: Float get() = 1f - 0.45f * progress
@@ -46,14 +49,24 @@ fun rememberGlassPress(
     interactionSource: InteractionSource,
     enabled: Boolean = true,
 ): GlassPress {
-    val pressed by interactionSource.collectIsPressedAsState()
     val anim = remember { Animatable(0f) }
-    androidx.compose.runtime.LaunchedEffect(pressed, enabled) {
-        val target = if (pressed && enabled) 1f else 0f
-        anim.animateTo(
-            target,
-            if (target > anim.value) GlassMotion.PressInSpec else GlassMotion.ReleaseSpec,
-        )
+    val enabledState = rememberUpdatedState(enabled)
+    androidx.compose.runtime.LaunchedEffect(interactionSource) {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> {
+                    if (enabledState.value) {
+                        // Finish the short press-in even if Release arrives in
+                        // the same frame; this is what makes taps visible.
+                        anim.animateTo(1f, GlassMotion.PressInSpec)
+                    }
+                }
+                is PressInteraction.Release,
+                is PressInteraction.Cancel -> {
+                    anim.animateTo(0f, GlassMotion.ReleaseSpec)
+                }
+            }
+        }
     }
     return remember(interactionSource) {
         GlassPress(progressState = object : State<Float> {

@@ -54,15 +54,19 @@ object GlassColors {
     val InkSecondary = Color(0xFF5B5762)
     val InkTertiary = Color(0xFF746F7C)
 
-    /** Vivid purple accent shared by navigation, actions and translated text. */
-    val Accent = AppAccent
-    val AccentDeep = AppAccentDark
+    /** Brighter control purple; brand text colors remain on the darker tokens. */
+    // High-chroma purple for colored glass surfaces, with a deep companion
+    // tone for the lower edge and the cast color.
+    val Accent = Color(0xFF9446A6)
+    val AccentDeep = Color(0xFF682B76)
     val AccentInk = AppAccentDark
 
     /** Neutral "inactive" glass: milky cool gray. */
     val NeutralTint = Color(0xFFFFFFFF)
-    val NeutralFillAlpha = 0.42f
-    val NeutralFillStrongAlpha = 0.58f
+    // The white calibration surface is mostly milky body with a little
+    // background showing through, rather than a faint white outline.
+    val NeutralFillAlpha = 0.68f
+    val NeutralFillStrongAlpha = 0.78f
 
     /** Active glass keeps transparency: accent is a tint over blur. */
     val AccentFillAlpha = 0.92f
@@ -115,9 +119,9 @@ data class GlassDepth(
 object GlassDepths {
     /** Floating pill / small buttons hovering just above the backdrop. */
     val Low = GlassDepth(
-        elevation = 10.dp,
-        ambient = Color(0x0F2E3446),
-        spot = Color(0x1F2E3446),
+        elevation = 16.dp,
+        ambient = Color(0x142E3446),
+        spot = Color(0x292E3446),
     )
 
     /** Cards and panels. */

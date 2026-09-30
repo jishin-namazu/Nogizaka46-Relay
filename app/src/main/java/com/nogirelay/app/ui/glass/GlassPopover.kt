@@ -3,6 +3,8 @@ package com.nogirelay.app.ui.glass
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -201,6 +203,8 @@ fun GlassPopover(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(6.dp)
                         .graphicsLayer {
                             val contentP = ((p - 0.35f) / 0.65f).coerceIn(0f, 1f)
