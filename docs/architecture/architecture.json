@@ -8,7 +8,7 @@
     "repository": {
       "url": "https://github.com/jishin-namazu/Nogizaka46-Relay",
       "provider": "github",
-      "revision": "f0817c8c8a89cc4b07957d1817c28c7aa7914481"
+      "revision": "b6d82c364b7e4bcaf4557cb47e17c2c1c3709191"
     },
     "viewBox": [
       1150,
@@ -233,7 +233,7 @@
       "id": "androidStorage",
       "type": "database",
       "label": "本地存储",
-      "sublabel": "SQLite v11 · 设置 · 媒体缓存",
+      "sublabel": "SQLite v13 · 设置 · 媒体缓存",
       "pos": [
         630,
         420
@@ -245,7 +245,7 @@
       "sources": [
         {
           "path": "app/src/main/java/com/nogirelay/app/data/MessageDatabase.kt",
-          "label": "SQLite v11"
+          "label": "SQLite v13"
         }
       ]
     },
@@ -476,7 +476,7 @@
       "title": "客户端",
       "items": [
         "双通道:服务端同步消息,官网直连博客正文/图片",
-        "本地优先:SQLite v11 + 私有媒体缓存;FCM 超载时回源补拉"
+        "本地优先:SQLite v13 + 私有媒体缓存;FCM 超载时回源补拉"
       ]
     },
     {

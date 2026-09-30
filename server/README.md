@@ -31,7 +31,7 @@
 服务端支持两种权限：`ADMIN_TOKEN` 可访问所有受保护的 API 与 8081 媒体流；`CLIENT_TOKEN` 可注册设备（`POST /v1/devices`），读取消息列表、详情、统计及媒体（含 8081 媒体流）。设备列表、修改、删除、服务端消息“标记已播放”接口、推送测试及管理员接口仍需管理员 token。Android 客户端的播放状态保存在本地数据库，不调用服务端“标记已播放”接口。两种 token 必须使用不同的值。旧 `ACCESS_TOKEN`/`API_KEY` 不再用于服务端鉴权。
 
 ### 通用认证头
-除 `/health` 探针外，所有请求均须携带 Bearer 鉴权头：
+以下受保护业务 API 的示例统一使用 Bearer 鉴权头，`/health` 探针无需认证：
 ```bash
 -H "Authorization: Bearer <ADMIN_TOKEN>"
 ```
@@ -297,34 +297,34 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 }
 ```
 
-### 4.6 将消息标记为已读/已播放
+### 4.6 将服务端消息标记为已播放
 ```bash
 curl -X PATCH "$SERVER/v1/messages/<MESSAGE_ID>/played" \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+此管理员接口只更新服务端 `is_played`；不会设置 Android 的本地已读、已播放或收藏状态。App 播放语音时不调用该接口，因此服务端 `unplayed_audio` 统计不能作为手机的未读或未播放数量。
 
 ---
 
 ## 5. 订阅成员查询与分析
 
 ### 5.1 从服务端获取所有已同步的成员列表
-服务端消息库中存储了已订阅成员的历史与增量消息。使用 `jq` 管道可以快速聚合去重出成员列表：
+使用管理员成员接口查询消息表中出现过的成员 ID 与姓名，不受消息列表单页条数限制。这是已存消息的成员集合，不代表官网当前的有效订阅列表，也不包含头像字段：
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/messages?limit=1000" \
-  | jq '[.messages[] | {member_id, member_name, member_avatar_url}] | unique_by(.member_id)'
+curl -s -H "Authorization: Bearer $TOKEN" "$SERVER/v1/admin/members" \
+  | jq '.members'
 ```
 **输出示例**：
 ```json
 [
   {
-    "member_id": "2",
-    "member_name": "池田 瑛紗",
-    "member_avatar_url": "https://..."
+    "id": "2",
+    "name": "池田 瑛紗"
   },
   {
-    "member_id": "5",
-    "member_name": "一ノ瀬 美空",
-    "member_avatar_url": "https://..."
+    "id": "5",
+    "name": "一ノ瀬 美空"
   }
 ]
 ```
@@ -439,7 +439,7 @@ curl -X POST "$SERVER/v1/devices" \
 ```
 
 ### 7.3 模拟发送测试消息推送
-用于排查手机是否能正常收到系统通知。测试消息不会写入真实消息数据库：
+用于排查手机是否能正常收到系统通知。测试消息不会写入服务端消息表；Android 接收后会暂存本地并显示通知，后续启动主 Activity 时清理测试记录：
 ```bash
 curl -X POST "$SERVER/v1/push/test-message" \
   -H "Authorization: Bearer $TOKEN" \
@@ -451,7 +451,7 @@ curl -X POST "$SERVER/v1/push/test-message" \
 ```
 
 ### 7.4 模拟发送测试全屏来电
-唤醒手机锁屏全屏语音呼入界面与铃声：
+发送附带合成短音频的测试来电，客户端先下载音频，再显示来电：
 ```bash
 curl -X POST "$SERVER/v1/push/test-call" \
   -H "Authorization: Bearer $TOKEN" \
@@ -460,6 +460,8 @@ curl -X POST "$SERVER/v1/push/test-call" \
     "member_name": "池田 瑛紗"
   }'
 ```
+
+当前 `/v1/push` 路由整体要求 `ADMIN_TOKEN`，包括 `GET /v1/push/test-call-audio.wav`。普通手机使用 `CLIENT_TOKEN` 时会在下载此测试音频时收到 HTTP 401，不能据此判定真实语音推送失败。常规客户端应通过真实订阅语音验收来电链路；标准版 App 设置中的「测试全屏来电」仅验证本机界面与播放，不经过 FCM。
 
 ### 7.5 重新推送已存在的特定消息
 ```bash
@@ -471,8 +473,10 @@ curl -X POST "$SERVER/v1/push/send" \
   }'
 ```
 
+Android 按消息 ID 去重；如果该消息已在手机本地库中，重复推送不会再次显示通知或来电。验收应选用目标手机尚未接收或同步的消息。
+
 ### 7.6 查询近期推送投递日志
-排查 FCM 推送状态、成功率与客户端接收历史：
+查询服务端提交到 FCM 的推送结果；日志不包含手机实际接收或已读回执，实际投递需在设备上确认。合成测试来电不写入推送日志：
 ```bash
 # 查询最新 20 条推送记录
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -508,7 +512,7 @@ curl -i "$MEDIA/health"
 响应：`HTTP/1.1 200 OK`，`{"status":"ok"}`
 
 ### 8.3 初始化/升级生产数据库表结构
-通过 API 自动执行 `database/schema.sql` 中的 DDL：
+通过管理员 API 执行服务端内置的初始化 DDL，创建或补齐运行所需表与索引：
 ```bash
 curl -X POST "$SERVER/init-db" \
   -H "Authorization: Bearer $TOKEN"
@@ -526,7 +530,7 @@ curl -X POST "$SERVER/init-db" \
 | `npm run bootstrap:browser` | 交互式唤起本地浏览器登录官网并提取会话文件 |
 | `node upload-session.js <path> <url> <token>` | 将会话文件热上传到云端并等待激活 |
 | `npm run audit:blogs` | 审计官方博客 API 完整性与可用性（执行 `scripts/audit-blog-api.js`） |
-| `npm test` | 运行 Node.js 内置测试运行器 |
+| `npm test` | 运行 Node.js 内置测试运行器；测试目录仅保留在本地，干净克隆不包含这些测试用例 |
 | `sh start-all.sh` | 按生产启动顺序拉起 API、Monitor 与媒体服务（需要可用的 POSIX shell） |
 | `npm start` / `npm run monitor` | 分别在两个终端启动 API，以及 Monitor/媒体服务 |
 

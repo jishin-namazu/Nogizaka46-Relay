@@ -35,14 +35,24 @@ package; device test runners can uninstall their target package after tests.
 The main package contains user data and must never be a test runner target.
 
 ```powershell
-./gradlew.bat :app:assembleDebug :app:assembleDebugAndroidTest -PrelayRenderVerification=true
+./gradlew.bat :app:assembleDebug -PrelayRenderVerification=true
 adb install -r app/build/outputs/apk/debug/app-rendercheck-debug.apk
+```
+
+This builds an isolated app for manual inspection. Instrumented regression
+tests are local-only: `test/`, `tests/`, `androidTest/` and `app/src/test/`
+are ignored by Git, so a fresh clone does not include `GlassRenderingTest`.
+Only run the following commands when that local test suite is present:
+
+```powershell
+./gradlew.bat :app:assembleDebugAndroidTest -PrelayRenderVerification=true
 adb install -r app/build/outputs/apk/androidTest/debug/app-rendercheck-debug-androidTest.apk
 adb shell am instrument -w -r -e class com.nogirelay.app.ui.glass.GlassRenderingTest com.nogirelay.app.rendercheck.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 The isolated package has no Firebase configuration. It never registers as a
-push device. The tests compare GPU pixel output for a light uniform backdrop,
+push device. When available, the local tests compare GPU pixel output for a
+light uniform backdrop,
 striped source blur, displaced refraction and a moving source. They preserve
 PNG captures in the isolated package's external `files/glass-verification`
 directory for inspection. The regression rejects channel-clipped highlight
