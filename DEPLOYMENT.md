@@ -1,6 +1,6 @@
 # Nogi Relay 生产部署指南 (DEPLOYMENT.md)
 
-本文档提供在云端（以 **[Fly.io](https://fly.io)** 为例）快速部署与运维 Nogi Relay 生产服务器的极简实操步骤。开发与架构细节请查看 [DEVELOPMENT.md](DEVELOPMENT.md)。
+本文档提供在云端（以 **[Fly.io](https://fly.io)** 为例）快速部署与运维 Nogi Relay 生产服务器的极简实操步骤。项目概览与本地运行步骤请查看 [README.md](README.md)，服务端命令与 API 操作请查看 [server/README.md](server/README.md)。
 
 ---
 
