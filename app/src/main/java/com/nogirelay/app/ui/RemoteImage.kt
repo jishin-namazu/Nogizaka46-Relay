@@ -11,6 +11,7 @@ import android.util.LruCache
 import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -163,6 +164,8 @@ fun RemoteImage(
     placeholderColor: Color = Color(0xFFE7E2EA),
     onAspectRatio: ((Float) -> Unit)? = null,
     previewUrl: String? = null,
+    crossfadeDurationMillis: Int = 0,
+    placeholderAspectRatio: Float? = null,
 ) {
     val context = LocalContext.current
     val active = LocalRelayPageActive.current && isRelayUiStarted() &&
@@ -276,18 +279,22 @@ fun RemoteImage(
     val contentAlpha = remember(cacheKey) {
         Animatable(if (hasContent) 1f else 0f)
     }
-    LaunchedEffect(cacheKey, hasContent) {
-        contentAlpha.animateTo(
-            targetValue = if (hasContent) 1f else 0f,
-            animationSpec = tween(if (hasContent) 140 else 0),
-        )
+    LaunchedEffect(cacheKey, hasContent, crossfadeDurationMillis) {
+        if (crossfadeDurationMillis <= 0) {
+            contentAlpha.animateTo(
+                targetValue = if (hasContent) 1f else 0f,
+                animationSpec = tween(if (hasContent) 140 else 0),
+            )
+        }
     }
     val latestOnAspectRatio by rememberUpdatedState(onAspectRatio)
     LaunchedEffect(currentRatio) {
         currentRatio?.takeIf { it > 0f }?.let { latestOnAspectRatio?.invoke(it) }
     }
-    val boxModifier = if (preserveAspectRatio && currentRatio != null && currentRatio > 0f) {
-        modifier.fillMaxWidth().aspectRatio(currentRatio)
+    val layoutRatio = currentRatio?.takeIf { it > 0f }
+        ?: placeholderAspectRatio?.takeIf { it > 0f && !isNotFound }
+    val boxModifier = if (preserveAspectRatio && layoutRatio != null) {
+        modifier.fillMaxWidth().aspectRatio(layoutRatio)
     } else {
         modifier
     }
@@ -304,40 +311,75 @@ fun RemoteImage(
         finalModifier.onSizeChanged { measuredSize = it },
         contentAlignment = Alignment.Center,
     ) {
-        val animatedImage = animated
-        val image = bitmap
-        if (animatedImage != null) {
-            AnimatedRemoteImage(
-                drawable = animatedImage.drawable,
+        val frame: ImageLoadResult? = animated ?: bitmap?.let { ImageLoadResult.Static(it) }
+            ?: when {
+                isNotFound -> ImageLoadResult.NotFound
+                isError -> ImageLoadResult.Error
+                else -> null
+            }
+        if (crossfadeDurationMillis > 0) {
+            // Retain the outgoing image/placeholder through its fade. Keying
+            // the transition by content also survives decode-size changes.
+            Crossfade(
+                targetState = frame,
+                animationSpec = tween(crossfadeDurationMillis),
+                modifier = Modifier.fillMaxSize(),
+                label = "remote-image-crossfade",
+            ) { visibleFrame ->
+                RemoteImageFrame(visibleFrame, contentDescription, contentScale, active, placeholderResId)
+            }
+        } else {
+            RemoteImageFrame(
+                frame = frame,
                 contentDescription = contentDescription,
                 contentScale = contentScale,
                 active = active,
-                modifier = Modifier
+                placeholderResId = placeholderResId,
+                imageModifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = contentAlpha.value },
             )
-        } else if (image != null) {
-            Image(
-                bitmap = image.asImageBitmap(),
+        }
+    }
+}
+
+@Composable
+private fun RemoteImageFrame(
+    frame: ImageLoadResult?,
+    contentDescription: String?,
+    contentScale: ContentScale,
+    active: Boolean,
+    placeholderResId: Int?,
+    imageModifier: Modifier = Modifier.fillMaxSize(),
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        when (frame) {
+            is ImageLoadResult.Animated -> AnimatedRemoteImage(
+                drawable = frame.drawable,
                 contentDescription = contentDescription,
                 contentScale = contentScale,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = contentAlpha.value },
+                active = active,
+                modifier = imageModifier,
             )
-        } else if (placeholderResId != null) {
-            Image(
-                painter = painterResource(placeholderResId),
+            is ImageLoadResult.Static -> Image(
+                bitmap = frame.bitmap.asImageBitmap(),
                 contentDescription = contentDescription,
                 contentScale = contentScale,
-                modifier = Modifier.fillMaxSize(),
+                modifier = imageModifier,
             )
-        } else if (isError && !isNotFound) {
-            Icon(
-                imageVector = Icons.Rounded.Refresh,
-                contentDescription = "加载失败，点击重试",
-                tint = Color(0xFF888888),
-            )
+            else -> when {
+                placeholderResId != null -> Image(
+                    painter = painterResource(placeholderResId),
+                    contentDescription = contentDescription,
+                    contentScale = contentScale,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                frame == ImageLoadResult.Error -> Icon(
+                    imageVector = Icons.Rounded.Refresh,
+                    contentDescription = "加载失败，点击重试",
+                    tint = Color(0xFF888888),
+                )
+            }
         }
     }
 }

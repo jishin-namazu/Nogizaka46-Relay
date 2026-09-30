@@ -3,9 +3,8 @@ package com.nogirelay.app.blog
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -49,7 +48,6 @@ import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FilterList
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -106,7 +104,6 @@ import com.nogirelay.app.ui.SearchHighlightText
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterSection
 import com.nogirelay.app.ui.highlightMatches
-import com.nogirelay.app.ui.relaySheetBackdrop
 import com.nogirelay.app.ui.rememberRelaySheetBackdropState
 import com.nogirelay.app.ui.clearSelectionOnTap
 import com.nogirelay.app.ui.MediaViewerActivity
@@ -240,9 +237,7 @@ fun BlogScreen(
     var pageData by remember { mutableStateOf(BlogPrewarmer.cachedInitialData ?: BlogPageData()) }
     val pageRequest = BlogListRequest(selectedMemberIds, effectiveQuery, oldestFirst, timeFilter, currentPage)
     var appliedRequest by remember { mutableStateOf<BlogListRequest?>(null) }
-    val pageProgress = remember { Animatable(1f) }
-    var pageTransitioning by remember { mutableStateOf(false) }
-    var pageRequesting by remember { mutableStateOf(false) }
+    var pageGeneration by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(versions.blogs, listActive, translationEnabled, pageRequest) {
         if (!listActive) return@LaunchedEffect
@@ -307,31 +302,25 @@ fun BlogScreen(
             result
         }
         val resolvedRequest = pageRequest.copy(page = loadedPage.page)
-        val animatePage = appliedRequest != null && appliedRequest != resolvedRequest
-        try {
-            pageTransitioning = animatePage
-            if (animatePage) {
-                // One progress value keeps opacity, scale and lift in sync;
-                // no shorter animation can cut off the motion's final frames.
-                pageProgress.animateTo(0f, tween(90, easing = FastOutLinearInEasing))
-            }
-            // Replace rows and reset scrolling together while fully transparent.
-            // animateTo resumes on the frame clock, so no extra frame waits are needed.
-            if (appliedRequest != resolvedRequest) blogListState.requestScrollToItem(0)
-            appliedRequest = resolvedRequest
-            currentPage = loadedPage.page
-            pageInput = (loadedPage.page + 1).toString()
-            pageData = loadedPage
-            if (animatePage) {
-                pageProgress.animateTo(1f, tween(260, easing = LinearOutSlowInEasing))
-            }
-        } finally {
-            // Cancellation (filter changes, leaving the tab) must restore the list.
-            withContext(NonCancellable) {
-                pageProgress.snapTo(1f)
-                pageTransitioning = false
+        if (appliedRequest != resolvedRequest) {
+            // Treat a reordered page as new content even when it contains the
+            // same IDs, so cards crossfade instead of racing across the list.
+            if (appliedRequest != null) pageGeneration++
+            // Keep visible list controls at the same position during sorting.
+            // Pagination from further down the list still returns to the top.
+            val firstIndex = blogListState.firstVisibleItemIndex
+            if (firstIndex < 3) {
+                blogListState.requestScrollToItem(firstIndex, blogListState.firstVisibleItemScrollOffset)
+            } else {
+                blogListState.requestScrollToItem(0)
             }
         }
+        // Commit once. Lazy item animations retain outgoing cards while their
+        // replacements fade in; the header/search/selector never fade to blank.
+        appliedRequest = resolvedRequest
+        currentPage = loadedPage.page
+        pageInput = (loadedPage.page + 1).toString()
+        pageData = loadedPage
     }
     val matchingCount = pageData.matchingCount
     val totalCount = pageData.totalCount
@@ -339,6 +328,7 @@ fun BlogScreen(
     val page = pageData.page
     val blogs = pageData.posts
     val bodyPreviews = pageData.previews
+    val displayedGeneration = pageGeneration
 
     LaunchedEffect(selectedBlogId, pageData.loaded, blogs) {
         if (selectedBlogId == null) {
@@ -359,35 +349,14 @@ fun BlogScreen(
 
     fun goToPage(targetPage: Int) {
         val safePage = targetPage.coerceIn(0, totalPages - 1)
-        if (safePage == currentPage || pageRequesting) return
-        pageRequesting = true
-        retranslateScope.launch {
-            try {
-                val urls = withContext(AppGraph.dispatchers.databaseRead) {
-                    AppGraph.database.blogSummaries(
-                        memberIds = selectedMemberIds,
-                        searchQuery = effectiveQuery,
-                        oldestFirst = oldestFirst,
-                        startMillis = timeFilter.startMillis,
-                        endMillisExclusive = timeFilter.endMillisExclusive,
-                        limit = BLOG_PAGE_SIZE,
-                        offset = safePage * BLOG_PAGE_SIZE,
-                    ).mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) }
-                }
-                BlogMediaDownloader.preloadImages(context, urls)
-                pendingScrollBlogId = null
-                currentPage = safePage
-                pageInput = (safePage + 1).toString()
-            } finally {
-                pageRequesting = false
-            }
-        }
+        if (safePage == currentPage || currentPage != page) return
+        // Only the local rows gate navigation. Images load independently after
+        // the page is visible, including when downloads are slow or unavailable.
+        pendingScrollBlogId = null
+        currentPage = safePage
+        pageInput = (safePage + 1).toString()
     }
 
-    LaunchedEffect(selectedMemberIds, oldestFirst, effectiveQuery, timeFilter) {
-        currentPage = 0
-        pageInput = "1"
-    }
     LaunchedEffect(isActive) {
         if (!isActive) {
             selectedBlogId = null
@@ -421,8 +390,7 @@ fun BlogScreen(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .relaySheetBackdrop(sheetBackdrop),
+                .fillMaxSize(),
         ) {
             if (showMemberDialog) {
                 BlogFilterDialog(
@@ -496,14 +464,7 @@ fun BlogScreen(
                 LazyColumn(
                     state = blogListState,
                     verticalArrangement = Arrangement.spacedBy(0.dp),
-                    userScrollEnabled = !pageTransitioning,
-                    modifier = Modifier.fillMaxSize().graphicsLayer {
-                        val progress = pageProgress.value
-                        alpha = progress
-                        scaleX = 0.985f + 0.015f * progress
-                        scaleY = scaleX
-                        translationY = (5f * (1f - progress)).dp.toPx()
-                    },
+                    modifier = Modifier.fillMaxSize(),
                 ) {
                     item(key = "blog-header") {
                         GlassHeader(
@@ -523,13 +484,19 @@ fun BlogScreen(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                                .padding(bottom = 4.dp),
+                                .padding(horizontal = 16.dp),
                         ) {
                             GlassSegmentedTabs(
                                 labels = listOf("最新", "最早"),
                                 selectedIndex = if (oldestFirst) 1 else 0,
-                                onSelected = { oldestFirst = it == 1 },
+                                onSelected = {
+                                    // Reset the page together with the sort order so
+                                    // there is no intermediate request for the old page.
+                                    oldestFirst = it == 1
+                                    currentPage = 0
+                                    pageInput = "1"
+                                    pendingScrollBlogId = null
+                                },
                                 modifier = Modifier.weight(1f),
                             )
                             val isMemberFilterActive = selectedMemberIds != null &&
@@ -555,8 +522,7 @@ fun BlogScreen(
                             placeholder = "搜索博客标题、正文或日期",
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                                .padding(top = 2.dp, bottom = 8.dp),
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
                         )
                     }
 
@@ -565,6 +531,11 @@ fun BlogScreen(
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
+                                    .animateItem(
+                                        fadeInSpec = tween(300, easing = FastOutSlowInEasing),
+                                        placementSpec = tween(300, easing = FastOutSlowInEasing),
+                                        fadeOutSpec = tween(220, easing = FastOutSlowInEasing),
+                                    )
                                     .fillMaxWidth()
                                     .padding(vertical = 64.dp),
                             ) {
@@ -593,9 +564,14 @@ fun BlogScreen(
                             }
                         }
                     } else if (blogs.isNotEmpty()) {
-                        items(blogs, key = BlogSummary::id) { blog ->
+                        items(blogs, key = { "$displayedGeneration:${it.id}" }) { blog ->
                             BlogSummaryCard(
                                 modifier = Modifier
+                                    .animateItem(
+                                        fadeInSpec = tween(300, easing = FastOutSlowInEasing),
+                                        placementSpec = tween(300, easing = FastOutSlowInEasing),
+                                        fadeOutSpec = tween(220, easing = FastOutSlowInEasing),
+                                    )
                                     .padding(bottom = 10.dp),
                                 blog = blog,
                                 searchQuery = effectiveQuery,
@@ -640,7 +616,7 @@ fun BlogScreen(
                                 ) {
                                     GlassCapsuleButton(
                                         onClick = { goToPage(page - 1) },
-                                        enabled = !pageTransitioning && !pageRequesting && currentPage == page && page > 0,
+                                        enabled = currentPage == page && page > 0,
                                         modifier = Modifier.weight(1f),
                                     ) { Text("上一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
 
@@ -649,12 +625,12 @@ fun BlogScreen(
                                             pageInput = (page + 1).toString()
                                             showPageDialog = true
                                         },
-                                        enabled = !pageTransitioning && !pageRequesting && currentPage == page && matchingCount > 0,
+                                        enabled = currentPage == page && matchingCount > 0,
                                         tone = GlassTone.Accent,
                                         modifier = Modifier.weight(1.15f),
                                     ) {
                                         Text(
-                                            if (pageRequesting) "加载中…" else "${page + 1} / $totalPages",
+                                            "${page + 1} / $totalPages",
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -665,7 +641,7 @@ fun BlogScreen(
 
                                     GlassCapsuleButton(
                                         onClick = { goToPage(page + 1) },
-                                        enabled = !pageTransitioning && !pageRequesting && currentPage == page && page < totalPages - 1,
+                                        enabled = currentPage == page && page < totalPages - 1,
                                         modifier = Modifier.weight(1f),
                                     ) { Text("下一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
                                 }
@@ -768,20 +744,7 @@ private fun BlogFilterDialog(
                         )
                     }
                 }
-                if (members.isEmpty()) {
-                    item(key = "members-loading") {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(120.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "正在加载成员...",
-                                color = GlassColors.InkSecondary,
-                                fontSize = 13.sp,
-                            )
-                        }
-                    }
-                } else {
+                if (members.isNotEmpty()) {
                     groups.forEach { (category, groupMembers) ->
                         item(key = "member-category-$category") {
                             Text(
@@ -1097,8 +1060,10 @@ private fun BlogSummaryCard(
                         contentScale = ContentScale.Fit,
                         preserveAspectRatio = true,
                         loadCachedImmediately = false,
+                        crossfadeDurationMillis = 220,
+                        placeholderAspectRatio = 1f,
                         placeholderColor = Color(0x228E93A6),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().animateContentSize(tween(220)),
                     )
                 }
             }
@@ -1189,9 +1154,7 @@ private fun BlogDetail(
 
     val detail = detailState
     if (detail == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("正在同步博客…", color = GlassColors.InkSecondary)
-        }
+        Box(Modifier.fillMaxSize())
         return
     }
     val blog = detail.blog
@@ -1364,10 +1327,13 @@ private fun BlogDetail(
                         contentScale = ContentScale.Fit,
                         preserveAspectRatio = true,
                         loadCachedImmediately = true,
+                        crossfadeDurationMillis = 220,
+                        placeholderAspectRatio = 1f,
                         placeholderColor = Color(0x228E93A6),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)
+                            .animateContentSize(tween(220))
                             .clip(GlassShapes.CardSmall)
                             .glassMediaSource(
                                 key = "blogimg:${block.url}",

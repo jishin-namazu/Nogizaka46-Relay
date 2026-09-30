@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.Icon
@@ -41,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import dev.chrisbanes.haze.HazeSourceSelection
 
 /**
  * Floating capsule tab bar — the app's primary navigation.
@@ -65,6 +67,7 @@ fun GlassNavBar(
     modifier: Modifier = Modifier,
 ) {
     val shape = GlassShapes.Capsule
+    val pageSources = remember { HazeSourceSelection.All.where { it.zIndex == 0f } }
     val pulse = remember { Animatable(1f) }
     var pulseToken by remember { mutableIntStateOf(0) }
     LaunchedEffect(pulseToken) {
@@ -81,14 +84,26 @@ fun GlassNavBar(
                 scaleX = pulse.value
                 scaleY = pulse.value
             }
-            .glassShadow(shape, GlassDepths.High)
-            .clip(shape)
-            .glass(shape = shape, blur = GlassOpticsPresets.BlurOverlay.dp)
-            .glassEdgeLight(shape)
-            .padding(5.dp),
+            .glassControlShadow(shape, depth = GlassDepths.High),
     ) {
+        // Clip only the material. Badges are overlays and must survive both
+        // the capsule's corner and the individual tab's rounded hit area.
+        Box(
+            Modifier.matchParentSize()
+                .clip(shape)
+                .frostedGlass(
+                    shape = shape,
+                    fillAlpha = 0.42f,
+                    blur = 24.dp,
+                    sourceSelection = pageSources,
+                ),
+        )
         Row(
-            modifier = Modifier.fillMaxWidth().height(56.dp).selectableGroup(),
+            // 48dp content + 4dp above and below gives the reference's 56dp capsule.
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .height(48.dp)
+                .selectableGroup(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             items.forEachIndexed { index, item ->
@@ -123,7 +138,6 @@ private fun RowScope.GlassNavBarItem(
         modifier = Modifier
             .weight(1f)
             .fillMaxHeight()
-            .clip(GlassShapes.Capsule)
             .selectable(
                 selected = selected,
                 interactionSource = interactionSource,
@@ -134,31 +148,34 @@ private fun RowScope.GlassNavBarItem(
             .padding(horizontal = 4.dp),
     ) {
         val tint = lerp(GlassColors.InkSecondary, GlassColors.Accent, selectedProgress)
-        Box(contentAlignment = Alignment.TopEnd) {
+        Box(Modifier.size(25.dp), contentAlignment = Alignment.TopEnd) {
             Icon(
                 imageVector = item.icon,
                 contentDescription = null,
                 tint = lerp(GlassColors.Accent, GlassColors.InkSecondary, selectedProgress),
-                modifier = Modifier.size(23.dp).graphicsLayer { alpha = 1f - selectedProgress },
+                modifier = Modifier.size(25.dp).graphicsLayer { alpha = 1f - selectedProgress },
             )
             Icon(
                 imageVector = item.selectedIcon,
                 contentDescription = null,
                 tint = GlassColors.Accent,
-                modifier = Modifier.size(23.dp).graphicsLayer { alpha = selectedProgress },
+                modifier = Modifier.size(25.dp).graphicsLayer { alpha = selectedProgress },
             )
             if (item.badgeCount > 0) {
                 GlassBadge(
                     count = item.badgeCount,
-                    modifier = Modifier.offset(x = 12.dp, y = (-3).dp),
+                    compact = true,
+                    // Compensate for the 2dp smaller badge to keep its center in place.
+                    modifier = Modifier.offset(x = 11.dp, y = (-2).dp)
+                        .wrapContentSize(align = Alignment.TopEnd, unbounded = true),
                 )
             }
         }
         Spacer(Modifier.height(2.dp))
         Text(
             text = item.label,
-            fontSize = 11.sp,
-            lineHeight = 13.sp,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             color = tint,
             maxLines = 1,
@@ -169,20 +186,20 @@ private fun RowScope.GlassNavBarItem(
 
 /** Small unread badge. */
 @Composable
-fun GlassBadge(count: Int, modifier: Modifier = Modifier) {
+fun GlassBadge(count: Int, modifier: Modifier = Modifier, compact: Boolean = false) {
     Box(
         modifier = modifier
-            .height(16.dp)
-            .widthIn(min = 16.dp)
+            .height(if (compact) 14.dp else 16.dp)
+            .widthIn(min = if (compact) 14.dp else 16.dp)
             .background(GlassColors.Danger, GlassShapes.Capsule)
-            .padding(horizontal = 4.5.dp),
+            .padding(horizontal = if (compact) 3.5.dp else 4.5.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = if (count > 99) "99+" else count.toString(),
             color = Color.White,
-            fontSize = 9.5.sp,
-            lineHeight = 11.sp,
+            fontSize = if (compact) 8.5.sp else 9.5.sp,
+            lineHeight = if (compact) 10.sp else 11.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
         )

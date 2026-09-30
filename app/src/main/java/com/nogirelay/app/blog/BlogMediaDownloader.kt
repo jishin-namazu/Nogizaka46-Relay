@@ -8,6 +8,7 @@ import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.ui.preloadRemoteImage
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -45,9 +46,8 @@ object BlogMediaDownloader {
     }
 
     /**
-     * Warms a small set of images and waits for the downloads to finish.
-     * Pagination uses this for the first two cards so the new page does not
-     * reveal itself while its leading previews are still cold.
+     * Warms images in the page's background effect. Navigation must never
+     * await this work; visible image controls reveal results independently.
      */
     suspend fun preloadImages(context: Context, urls: List<String>, limit: Int = 2) {
         val appContext = context.applicationContext
@@ -61,6 +61,8 @@ object BlogMediaDownloader {
                             slots.withPermit {
                                 preloadRemoteImage(context, url, targetWidth = 720)
                             }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
                         } catch (error: Throwable) {
                             Log.w(TAG, "BLOG image preload failed", error)
                         }

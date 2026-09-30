@@ -128,9 +128,7 @@ fun SettingsSection(
         if (modelPopover.expanded) AppGraph.settings.sortedModels(modelOptions) else emptyList()
     }
 
-    fun currentSettings() = AppGraph.settings.read().copy(
-        relayUrl = relayUrl,
-        accessToken = token,
+    fun translationSettingsDraft() = AppGraph.settings.read().copy(
         aiProvider = aiProvider,
         aiApiKey = aiApiKey,
         aiModel = aiModel,
@@ -155,14 +153,18 @@ fun SettingsSection(
         onSettingsChanged()
     }
 
-    fun saveTranslationSettings(showSavedLabel: Boolean = true) {
-        AppGraph.settings.save(currentSettings())
+    fun refreshTranslationWorkers() {
         TranslationManager.resetRetries()
         BlogTranslationManager.resetRetries()
         TranslationManager.enqueue(context)
         BlogTranslationManager.enqueuePending(context)
-        if (showSavedLabel) translationSavedLabel = "翻译设置已保存"
         onSettingsChanged()
+    }
+
+    fun saveTranslationSettings() {
+        AppGraph.settings.save(translationSettingsDraft())
+        translationSavedLabel = "翻译设置已保存"
+        refreshTranslationWorkers()
     }
 
     fun validateApiKey() {
@@ -171,17 +173,20 @@ fun SettingsSection(
             modelStatus = "请先填写 API Key"
             return
         }
+        val provider = aiProvider
         scope.launch {
             validatingApiKey = true
             modelStatus = "正在验证并加载模型..."
-            val result = TranslationManager.fetchAvailableModels(aiProvider, key)
+            val result = TranslationManager.fetchAvailableModels(provider, key)
             validatingApiKey = false
+            // A response for a previous draft must not replace the current picker.
+            if (aiProvider != provider || aiApiKey.trim() != key) return@launch
             result.onSuccess { models ->
                 modelOptions = models
                 if (aiModel.isNotBlank() && models.none { it.id == aiModel }) {
                     aiModel = ""
                 }
-                AppGraph.settings.save(currentSettings().copy(cachedAiModels = models))
+                translationSavedLabel = ""
                 modelStatus = "API Key 有效，已加载 ${models.size} 个可用模型"
             }.onFailure { error ->
                 modelStatus = error.message ?: "API Key 无效或模型加载失败"
@@ -233,7 +238,10 @@ fun SettingsSection(
                     )
                     GlassCapsuleButton(
                         onClick = {
-                            AppGraph.settings.save(currentSettings())
+                            AppGraph.settings.save(AppGraph.settings.read().copy(
+                                relayUrl = relayUrl,
+                                accessToken = token,
+                            ))
                             pushStatusLabel = "正在注册 FCM 设备..."
 
                             PushRegistrar.registerCurrentToken(context) { result ->
@@ -327,7 +335,7 @@ fun SettingsSection(
                             label = "AI翻译",
                             onCheckedChange = {
                                 translationEnabled = it
-                                AppGraph.settings.save(currentSettings())
+                                AppGraph.settings.save(AppGraph.settings.read().copy(translationEnabled = it))
                                 TranslationManager.resetRetries()
                                 BlogTranslationManager.resetRetries()
                                 if (it) {
@@ -398,7 +406,7 @@ fun SettingsSection(
                                                 aiApiKey = AppGraph.settings.apiKeyFor(provider)
                                                 aiModel = AppGraph.settings.modelFor(provider)
                                                 modelOptions = AppGraph.settings.cachedModelsFor(provider)
-                                                AppGraph.settings.save(currentSettings())
+                                                translationSavedLabel = ""
                                                 modelStatus = ""
                                                 providerPopover.dismiss(scope)
                                             },
@@ -408,7 +416,11 @@ fun SettingsSection(
                             }
                             GlassTextField(
                                 value = aiApiKey,
-                                onValueChange = { aiApiKey = it },
+                                onValueChange = {
+                                    aiApiKey = it
+                                    translationSavedLabel = ""
+                                    modelStatus = ""
+                                },
                                 label = "${aiProvider.displayName} API Key",
                                 placeholder = "sk-... 或对应 API Key",
                                 visualTransformation = PasswordVisualTransformation(),
@@ -493,16 +505,23 @@ fun SettingsSection(
                                     sortedModelOptions.forEach { model ->
                                         val support = selectedProvider.jsonOutputSupport(model.id)
                                         GlassPopoverItem(
-                                            label = model.displayName +
-                                                if (support.isSupported) "  · ${support.label}" else "",
+                                            label = model.displayName,
+                                            // Match the field's 16dp start and 8dp end insets;
+                                            // the popup itself already contributes 6dp.
+                                            contentPadding = PaddingValues(start = 10.dp, end = 2.dp, top = 8.dp, bottom = 8.dp),
+                                            trailingContent = {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                ) {
+                                                    if (support.isSupported) SupportBadge(support.label)
+                                                    // Reserve the same space as the field's arrow.
+                                                    Spacer(Modifier.size(24.dp))
+                                                }
+                                            },
                                             onClick = {
                                                 aiModel = model.id
-                                                AppGraph.settings.save(currentSettings().copy(aiModel = model.id))
-                                                TranslationManager.resetRetries()
-                                                BlogTranslationManager.resetRetries()
-                                                TranslationManager.enqueue(context)
-                                                BlogTranslationManager.enqueuePending(context)
-                                                translationSavedLabel = "翻译模型已保存"
+                                                translationSavedLabel = ""
                                                 modelPopover.dismiss(scope)
                                             },
                                         )
@@ -523,7 +542,8 @@ fun SettingsSection(
                                 checked = messageFullTranslation,
                                 onCheckedChange = {
                                     messageFullTranslation = it
-                                    saveTranslationSettings(showSavedLabel = false)
+                                    AppGraph.settings.save(AppGraph.settings.read().copy(messageFullTranslation = it))
+                                    refreshTranslationWorkers()
                                 },
                             )
                             FullTranslationToggle(
@@ -532,7 +552,8 @@ fun SettingsSection(
                                 checked = blogFullTranslation,
                                 onCheckedChange = {
                                     blogFullTranslation = it
-                                    saveTranslationSettings(showSavedLabel = false)
+                                    AppGraph.settings.save(AppGraph.settings.read().copy(blogFullTranslation = it))
+                                    refreshTranslationWorkers()
                                 },
                             )
                             GlassCapsuleButton(
@@ -700,6 +721,8 @@ fun SupportBadge(label: String) {
         color = GlassColors.Success,
         fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
+        maxLines = 1,
+        softWrap = false,
     )
 }
 

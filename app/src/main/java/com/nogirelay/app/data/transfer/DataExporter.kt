@@ -54,8 +54,6 @@ data class ExportEstimate(
 object DataExporter {
     private const val BUFFER = 64 * 1024
 
-    private const val PROGRESS_STEP = 128
-
     private class ResolvedMedia(
         val path: String,
         val file: File,
@@ -91,15 +89,9 @@ object DataExporter {
             ExportKind.MESSAGES -> database.countMessagesForMembers(memberKeys)
             ExportKind.BLOGS -> database.countBlogsForMembers(memberKeys)
         }
-        publishProgress(0, total)
-
         if (!includeMedia) {
             publishProgress(total, total)
             return ExportEstimate(records = total, mediaReferenced = 0, mediaCached = 0, mediaBytes = 0)
-        }
-
-        fun reportProgress() {
-            publishProgress(records, total)
         }
 
         fun checkActive() {
@@ -108,6 +100,7 @@ object DataExporter {
 
         fun inspect(candidates: List<MediaCandidate>) {
             candidates.forEach { candidate ->
+                checkActive()
                 val key = candidate.role + "|" + candidate.url
                 if (!referenced.add(key)) return@forEach
                 referencedByRole[candidate.role] = (referencedByRole[candidate.role] ?: 0) + 1
@@ -134,22 +127,24 @@ object DataExporter {
             refRows.forEachIndexed { index, row ->
                 checkActive()
                 inspect(listOf(MediaCandidate(row.role, row.url, row.type)))
-                if (index % PROGRESS_STEP == 0) publishProgress(index, refRows.size)
+                // Time-based throttling keeps updates regular even when individual file checks are slow.
+                publishProgress(index + 1, refRows.size)
             }
             publishProgress(refRows.size, refRows.size)
         } else {
+            publishProgress(0, total)
             when (kind) {
                 ExportKind.MESSAGES -> database.forEachMessageForMembers(memberKeys) { message ->
                     checkActive()
-                    records += 1
-                    reportProgress()
                     inspect(ExportFormat.mediaCandidates(message))
+                    records += 1
+                    publishProgress(records, total)
                 }
                 ExportKind.BLOGS -> database.forEachBlogForMembers(memberKeys) { post ->
                     checkActive()
-                    records += 1
-                    reportProgress()
                     inspect(ExportFormat.mediaCandidates(post))
+                    records += 1
+                    publishProgress(records, total)
                 }
             }
             publishProgress(records, total)

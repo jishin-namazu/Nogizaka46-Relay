@@ -310,8 +310,10 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         limit: Int = 500,
         offset: Int = 0,
         cancellationSignal: CancellationSignal? = null,
+        searchQuery: String = "",
+        nickname: String = "",
     ): List<RelayMessage> = queryFilteredMessages(
-        memberFilter(memberKey, "", null, null, favoritesOnly = true),
+        memberFilter(memberKey, searchQuery, null, null, nickname, favoritesOnly = true),
         limit,
         offset,
         cancellationSignal,
@@ -883,8 +885,11 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
     }
 
     fun refreshImportedBlogLinks(id: String, links: Map<String, String>): Boolean {
-        val updated = updateLinksIfDifferent("blog_posts", id, links)
-        if (updated) refreshBlogMediaRefs(id)
+        val canonical = canonicalBlogId(id)
+        val existing = findBlog(canonical) ?: return false
+        val safeLinks = BlogImportMerge.linkUpdates(existing, links)
+        val updated = updateLinksIfDifferent("blog_posts", canonical, safeLinks)
+        if (updated) refreshBlogMediaRefs(canonical)
         return updated
     }
 
@@ -1606,7 +1611,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             if (nickname.isNotBlank() && query.contains(nickname)) {
                 patterns += escapeLike(query.replace(nickname, "%%%"))
             }
-            clauses += patterns.joinToString(" OR ") {
+            clauses += patterns.joinToString(separator = " OR ", prefix = "(", postfix = ")") {
                 """
                 (
                     COALESCE(text_content, '') LIKE ? ESCAPE '\'

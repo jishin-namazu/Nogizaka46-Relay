@@ -6,6 +6,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -33,7 +35,6 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -79,6 +80,7 @@ import com.nogirelay.app.ui.glass.GlassDialog
 import com.nogirelay.app.ui.glass.GlassDialogText
 import com.nogirelay.app.ui.glass.GlassDialogTitle
 import com.nogirelay.app.ui.glass.GlassIconButton
+import com.nogirelay.app.ui.glass.GlassLinearProgressIndicator
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassSegmentedTabs
 import com.nogirelay.app.ui.glass.GlassShapes
@@ -121,7 +123,6 @@ fun DataTransferDrawer(
     var estimateResult by remember(kind) { mutableStateOf<Pair<ExportEstimateKey, ExportEstimate>?>(null) }
     var estimateFailure by remember(kind) { mutableStateOf<String?>(null) }
 
-    val estimateProgress = remember(kind) { MutableStateFlow<Pair<Int, Int>?>(null) }
     var preview by remember(kind) { mutableStateOf<ImportPreview?>(null) }
     var pendingImportUri by remember(kind) { mutableStateOf<Uri?>(null) }
 
@@ -181,6 +182,7 @@ fun DataTransferDrawer(
     val estimateRequest = remember(kind, effectiveSelection, includeMedia, contentRevision, mediaRevision) {
         ExportEstimateKey(kind, effectiveSelection.toSet(), includeMedia, contentRevision, mediaRevision)
     }
+    val estimateProgress = remember(estimateRequest) { MutableStateFlow<Pair<Int, Int>?>(null) }
     val estimate = estimateResult?.takeIf { it.first == estimateRequest }?.second
     val estimateActive = backdropState.isSettled && uiStarted && tabIndex == 0 &&
         !transfer.running && !showPicker && !showImportPicker
@@ -189,10 +191,12 @@ fun DataTransferDrawer(
         if (!estimateActive || effectiveSelection.isEmpty()) return@LaunchedEffect
         estimateFailure = null
         exportEstimateCache.get(estimateRequest)?.let {
+            estimateProgress.value = it.records to it.records
             estimateResult = estimateRequest to it
             return@LaunchedEffect
         }
-        estimateProgress.value = 0 to 0
+        estimateProgress.value = null
+        var completed = false
         try {
             val result = withContext(Dispatchers.IO) {
                 DataExporter.estimate(context, kind, effectiveSelection, includeMedia) { done, total ->
@@ -206,13 +210,16 @@ fun DataTransferDrawer(
                 (!includeMedia || MediaCacheRevision.changes.value == estimateRequest.mediaRevision)) {
                 exportEstimateCache.put(estimateRequest, result)
                 estimateResult = estimateRequest to result
+                completed = true
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             estimateFailure = error.message ?: "统计失败"
         } finally {
-            estimateProgress.value = null
+            // Keep the last real report until the UI has presented it. Clearing
+            // it here could conflate a fast scan's 100% report away entirely.
+            if (!completed) estimateProgress.value = null
         }
     }
 
@@ -336,29 +343,26 @@ fun DataTransferDrawer(
                                 enabled = paneActive && !transfer.running,
                                 onClick = { showPicker = true },
                             )
-                            ExportEstimateStatus(
-                                estimate, estimateProgress, includeMedia, backfilling,
-                                estimateActive && paneActive, estimateFailure,
-                            )
-
-                            val missingMedia = estimate?.missing?.size ?: 0
-                            if (missingMedia > 0 && !transfer.running) {
-                                GlassCapsuleButton(
-                                    enabled = paneActive && !transfer.running,
-                                    onClick = {
-                                        estimate?.let { DataTransferManager.backfillMedia(context, kind, it.missing) }
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                ExportEstimateStatus(
+                                    estimate, estimateProgress, includeMedia, backfilling,
+                                    estimateActive && paneActive, estimateFailure,
+                                    estimateRequest,
+                                    backfillEnabled = paneActive && !transfer.running,
+                                    onBackfill = { displayedEstimate ->
+                                        DataTransferManager.backfillMedia(context, kind, displayedEstimate.missing)
                                     },
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                ) {
-                                    Text("补齐缺失媒体（$missingMedia）", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
+                                )
+                                SwitchRow(
+                                    label = "包含媒体（图片 / 视频 / 语音）",
+                                    checked = includeMedia,
+                                    enabled = paneActive && !transfer.running,
+                                    onCheckedChange = { includeMedia = it },
+                                )
                             }
-                            SwitchRow(
-                                label = "包含媒体（图片 / 视频 / 语音）",
-                                checked = includeMedia,
-                                enabled = paneActive && !transfer.running,
-                                onCheckedChange = { includeMedia = it },
-                            )
                             SwitchRow(
                                 label = "包含译文",
                                 checked = includeTranslations,
@@ -527,13 +531,78 @@ private fun ExportEstimateStatus(
     backfilling: Boolean,
     active: Boolean,
     failure: String?,
+    requestKey: ExportEstimateKey,
+    backfillEnabled: Boolean,
+    onBackfill: (ExportEstimate) -> Unit,
 ) {
     val progress by progressFlow.collectAsStateWithLifecycle()
-
-    Column(Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-        val current = estimate
-        if (current == null) {
-            if (backfilling) {
+    val completed = estimate?.let { current ->
+        current to (current.records.toString() + " 条记录" +
+            if (includeMedia) mediaBreakdown(current) else " · 不含媒体")
+    }
+    // Keep the scan's own progress visible through its minimum presentation
+    // time, then reveal the result without a separate completion fill.
+    var resultVisible by remember(requestKey) { mutableStateOf(estimate != null) }
+    AnimatedContent(
+        targetState = completed.takeIf { resultVisible && !backfilling },
+        contentKey = { it != null },
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.TopStart,
+        transitionSpec = {
+            fadeIn(tween(220, delayMillis = 40)).togetherWith(fadeOut(tween(160)))
+                .using(SizeTransform(clip = false, sizeAnimationSpec = { _, _ ->
+                    tween(280, easing = FastOutSlowInEasing)
+                }))
+        },
+        label = "estimate_completion",
+    ) { result ->
+        Column(
+            Modifier.fillMaxWidth()
+                .then(if (result == null) Modifier.heightIn(min = 40.dp) else Modifier),
+        ) {
+            if (result != null) {
+                val displayedEstimate = result.first
+                Text(
+                    text = result.second,
+                    fontSize = 12.sp,
+                    color = GlassColors.InkSecondary,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                if (displayedEstimate.missing.isNotEmpty()) {
+                    // The text, gap and button share one size/fade transition.
+                    Spacer(Modifier.height(8.dp))
+                    GlassCapsuleButton(
+                        enabled = backfillEnabled && resultVisible && displayedEstimate === estimate,
+                        onClick = { onBackfill(displayedEstimate) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) {
+                        Text("补齐缺失媒体（${displayedEstimate.missing.size}）", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            } else if (!backfilling && failure == null && (completed != null || active)) {
+                val scanned = progress?.first ?: 0
+                val count = progress?.second ?: 0
+                GlassLinearProgressIndicator(
+                    progress = when {
+                        count > 0 -> scanned.toFloat() / count
+                        progress != null -> 1f // An empty scan has no work remaining.
+                        else -> null
+                    },
+                    animationKey = requestKey,
+                    minimumDurationMillis = 600,
+                    onCompleted = if (completed != null) ({ resultVisible = true }) else null,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                )
+                Text(
+                    text = when {
+                        count > 0 -> "正在统计 $scanned / $count"
+                        else -> "正在统计…"
+                    },
+                    fontSize = 12.sp,
+                    color = GlassColors.InkSecondary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            } else if (backfilling) {
                 Text(
                     text = "补齐媒体中，完成后重新统计",
                     fontSize = 12.sp,
@@ -542,47 +611,9 @@ private fun ExportEstimateStatus(
                 )
             } else if (failure != null) {
                 Text(failure, color = GlassColors.Danger, fontSize = 12.sp)
-            } else if (!active) {
-                Text("正在准备统计…", fontSize = 12.sp, color = GlassColors.InkSecondary)
             } else {
-                val scanned = progress?.first ?: 0
-                val count = progress?.second ?: 0
-                if (count > 0) {
-                    LinearProgressIndicator(
-                        progress = {
-                            (scanned.toFloat() / count.toFloat()).coerceIn(0f, 1f)
-                        },
-                        color = GlassColors.Accent,
-                        trackColor = GlassColors.Accent.copy(alpha = 0.14f),
-                        drawStopIndicator = {},
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    )
-                } else {
-                    LinearProgressIndicator(
-                        color = GlassColors.Accent,
-                        trackColor = GlassColors.Accent.copy(alpha = 0.14f),
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    )
-                }
-                Text(
-                    text = if (count > 0) {
-                        "正在统计 $scanned / $count"
-                    } else {
-                        "正在统计..."
-                    },
-                    fontSize = 12.sp,
-                    color = GlassColors.InkSecondary,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+                Text("正在准备统计…", fontSize = 12.sp, color = GlassColors.InkSecondary)
             }
-        } else {
-            Text(
-                text = current.records.toString() + " 条记录" +
-                    if (includeMedia) mediaBreakdown(current) else " · 不含媒体",
-                fontSize = 12.sp,
-                color = GlassColors.InkSecondary,
-                modifier = Modifier.padding(top = 2.dp),
-            )
         }
     }
 }
@@ -686,21 +717,11 @@ private fun TransferStatusCard(
                 transfer.running -> {
                     Text(transfer.phase.ifBlank { "处理中" }, fontWeight = FontWeight.Medium, color = GlassColors.Ink)
                     Spacer(Modifier.height(10.dp))
-                    if (transfer.total > 0) {
-                        LinearProgressIndicator(
-                            progress = { transfer.done.toFloat() / transfer.total.toFloat() },
-                            color = GlassColors.Accent,
-                            trackColor = GlassColors.Accent.copy(alpha = 0.14f),
-                            drawStopIndicator = {},
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        LinearProgressIndicator(
-                            color = GlassColors.Accent,
-                            trackColor = GlassColors.Accent.copy(alpha = 0.14f),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
+                    GlassLinearProgressIndicator(
+                        progress = if (transfer.total > 0) transfer.done.toFloat() / transfer.total else null,
+                        animationKey = transfer.operation to transfer.phase,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = if (transfer.total > 0) {
