@@ -110,7 +110,15 @@ private fun glassStyle(
             // The glass body never becomes a flat solid color: even the active
             // state keeps visible blur + refraction underneath the tint.
             backgroundColor(Color.Transparent)
-            tint(tintOverride ?: body.copy(alpha = fillAlpha))
+            tint(
+                tintOverride ?: body.copy(
+                    alpha = if (tone == GlassTone.Accent) {
+                        // Leave a little optical depth for the highlight and
+                        // refraction layers instead of making a flat swatch.
+                        (fillAlpha * 0.88f).coerceIn(0f, 1f)
+                    } else fillAlpha,
+                ),
+            )
             shape(shape)
             surfaceProfile(SurfaceProfile.Squircle)
             specularIntensity(specular)
@@ -174,7 +182,7 @@ fun Modifier.glass(
         }
     val finalStyle = if (pressStyle != null) style.then(pressStyle) else style
 
-    return this.then(
+    val surface = this.then(
         if (hazeState != null && blurEnabled) {
             Modifier.hazeGlass(
                 input = HazeInput.Sources(hazeState),
@@ -198,6 +206,36 @@ fun Modifier.glass(
             }
         },
     )
+    // Colored controls keep the app accent hue, but gain the same dimensional
+    // surface as the reference: a soft upper highlight and a slightly deeper
+    // lower body. This is an optical layer only; icons and layout are untouched.
+    return if (tone == GlassTone.Accent) {
+        surface.then(Modifier.accentSurfaceLight(shape))
+    } else {
+        surface
+    }
+}
+
+private fun Modifier.accentSurfaceLight(shape: RoundedCornerShape): Modifier = drawWithCache {
+    val outline = shape.createOutline(size, layoutDirection, this)
+    val top = lerp(GlassColors.Accent, Color.White, 0.25f)
+    val bottom = lerp(GlassColors.AccentDeep, Color.Black, 0.10f)
+    val body = Brush.verticalGradient(
+        0f to top.copy(alpha = 0.24f),
+        0.26f to Color.Transparent,
+        0.68f to Color.Transparent,
+        1f to bottom.copy(alpha = 0.24f),
+    )
+    val highlight = Brush.radialGradient(
+        colors = listOf(Color.White.copy(alpha = 0.25f), Color.Transparent),
+        center = Offset(size.width * 0.26f, size.height * 0.12f),
+        radius = size.maxDimension * 0.72f,
+    )
+    onDrawWithContent {
+        drawContent()
+        drawOutline(outline, brush = body)
+        drawOutline(outline, brush = highlight, blendMode = BlendMode.Screen)
+    }
 }
 
 /**
@@ -231,8 +269,10 @@ fun Modifier.glassEdgeLight(
         0.88f to Color.Transparent,
         1f to GlassColors.EdgeShade.copy(alpha = 0.10f * edgeStrength),
     )
-    val stroke = Stroke(width = 1.2f.dp.toPx())
-    val glowStroke = Stroke(width = 2.6f.dp.toPx())
+    // A broad, low-alpha rim reads as a rounded surface; a thin bright outline
+    // makes the control look like it has been drawn around the edge.
+    val stroke = Stroke(width = 1.0f.dp.toPx())
+    val glowStroke = Stroke(width = 2.2f.dp.toPx())
     onDrawWithContent {
         drawContent()
         drawOutline(outline, brush = innerGlow, style = glowStroke, blendMode = BlendMode.SrcOver)

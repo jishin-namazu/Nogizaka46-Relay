@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "NogiRelay"
 include(":app")
+include(":calibration")

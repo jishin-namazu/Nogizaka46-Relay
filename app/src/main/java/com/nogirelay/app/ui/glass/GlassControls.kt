@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -318,68 +319,48 @@ fun GlassSegmentedTabs(
             .glassEdgeLight(shape, strength = 0.6f)
             .padding(3.dp),
     ) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val density = LocalDensity.current
-            val count = labels.size.coerceAtLeast(1)
-            val itemWidthPx = constraints.maxWidth.toFloat() / count
-
-            val leftEdge = remember { Animatable(selectedIndex.toFloat()) }
-            val rightEdge = remember { Animatable(selectedIndex + 1f) }
-            LaunchedEffect(selectedIndex) {
-                val t = selectedIndex.toFloat()
-                if (t + 1f > rightEdge.value) {
-                    launch { rightEdge.animateTo(t + 1f, GlassMotion.IndicatorLeadingSpec) }
-                    launch { leftEdge.animateTo(t, GlassMotion.IndicatorTrailingSpec) }
-                } else {
-                    launch { leftEdge.animateTo(t, GlassMotion.IndicatorLeadingSpec) }
-                    launch { rightEdge.animateTo(t + 1f, GlassMotion.IndicatorTrailingSpec) }
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset((leftEdge.value * itemWidthPx).toInt(), 0) }
-                    .width(with(density) { ((rightEdge.value - leftEdge.value) * itemWidthPx).coerceAtLeast(1f).toDp() })
-                    .fillMaxHeight()
-                    .clip(shape)
-                    .glass(
-                        shape = shape,
-                        tone = GlassTone.Accent,
-                        fillAlpha = GlassColors.AccentFillAlpha,
-                        blur = GlassOpticsPresets.BlurControl.dp,
-                    )
-                    .glassEdgeLight(shape, GlassTone.Accent, strength = 0.85f),
-            )
-            Row(Modifier.fillMaxSize().selectableGroup()) {
-                labels.forEachIndexed { index, label ->
-                    val selected = index == selectedIndex
-                    val interactionSource = remember { MutableInteractionSource() }
-                    val press = rememberGlassPress(interactionSource, enabled)
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .glassPress(press)
-                            .clip(shape)
-                            .selectable(
-                                selected = selected,
-                                role = Role.Tab,
-                                interactionSource = interactionSource,
-                                indication = null,
-                                enabled = enabled,
-                                onClick = { if (!selected) onSelected(index) },
-                            ),
-                    ) {
-                        Text(
-                            text = label,
-                            color = if (selected) GlassColors.OnAccent else GlassColors.InkSecondary,
-                            fontSize = 13.5.sp,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 8.dp),
+        // Each tab owns a quiet fill crossfade. The old liquid slider moved a
+        // separate accent object across the track, which made this control
+        // feel disconnected from the app's other transitions.
+        Row(Modifier.fillMaxSize().selectableGroup()) {
+            labels.forEachIndexed { index, label ->
+                val selected = index == selectedIndex
+                val interactionSource = remember { MutableInteractionSource() }
+                val press = rememberGlassPress(interactionSource, enabled)
+                val selectedProgress by animateFloatAsState(
+                    targetValue = if (selected) 1f else 0f,
+                    animationSpec = GlassMotion.GentleSpec,
+                    label = "segmented_selection",
+                )
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .glassPress(press)
+                        .clip(shape)
+                        .background(
+                            GlassColors.Accent.copy(alpha = 0.16f * selectedProgress),
+                            shape,
                         )
-                    }
+                        .selectable(
+                            selected = selected,
+                            role = Role.Tab,
+                            interactionSource = interactionSource,
+                            indication = null,
+                            enabled = enabled,
+                            onClick = { if (!selected) onSelected(index) },
+                        ),
+                ) {
+                    Text(
+                        text = label,
+                        color = lerp(GlassColors.InkSecondary, GlassColors.Accent, selectedProgress),
+                        fontSize = 13.5.sp,
+                        fontWeight = if (selectedProgress > 0.5f) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
                 }
             }
         }

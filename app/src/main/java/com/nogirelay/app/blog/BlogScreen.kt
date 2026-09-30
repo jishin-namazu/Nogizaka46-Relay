@@ -4,8 +4,8 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.runtime.withFrameNanos
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -240,8 +240,9 @@ fun BlogScreen(
     var pageData by remember { mutableStateOf(BlogPrewarmer.cachedInitialData ?: BlogPageData()) }
     val pageRequest = BlogListRequest(selectedMemberIds, effectiveQuery, oldestFirst, timeFilter, currentPage)
     var appliedRequest by remember { mutableStateOf<BlogListRequest?>(null) }
-    val pageOpacity = remember { Animatable(1f) }
+    val pageProgress = remember { Animatable(1f) }
     var pageTransitioning by remember { mutableStateOf(false) }
+    var pageRequesting by remember { mutableStateOf(false) }
 
     LaunchedEffect(versions.blogs, listActive, translationEnabled, pageRequest) {
         if (!listActive) return@LaunchedEffect
@@ -305,28 +306,31 @@ fun BlogScreen(
             }
             result
         }
-        // Apply the next page and its scroll position in the same frame. Keeping
-        // this non-suspending avoids displaying new rows at the old page offset.
         val resolvedRequest = pageRequest.copy(page = loadedPage.page)
         val animatePage = appliedRequest != null && appliedRequest != resolvedRequest
         try {
-            pageOpacity.snapTo(1f)
             pageTransitioning = animatePage
-            if (animatePage) pageOpacity.animateTo(0f, tween(110))
+            if (animatePage) {
+                // One progress value keeps opacity, scale and lift in sync;
+                // no shorter animation can cut off the motion's final frames.
+                pageProgress.animateTo(0f, tween(90, easing = FastOutLinearInEasing))
+            }
+            // Replace rows and reset scrolling together while fully transparent.
+            // animateTo resumes on the frame clock, so no extra frame waits are needed.
             if (appliedRequest != resolvedRequest) blogListState.requestScrollToItem(0)
             appliedRequest = resolvedRequest
             currentPage = loadedPage.page
             pageInput = (loadedPage.page + 1).toString()
             pageData = loadedPage
             if (animatePage) {
-                // Allow new rows and the requested scroll offset to be measured while hidden.
-                withFrameNanos { }
-                withFrameNanos { }
-                pageOpacity.animateTo(1f, tween(200, easing = FastOutSlowInEasing))
+                pageProgress.animateTo(1f, tween(260, easing = LinearOutSlowInEasing))
             }
         } finally {
-            // Cancellation (filter changes, leaving the tab) must never leave a hidden list.
-            pageTransitioning = false
+            // Cancellation (filter changes, leaving the tab) must restore the list.
+            withContext(NonCancellable) {
+                pageProgress.snapTo(1f)
+                pageTransitioning = false
+            }
         }
     }
     val matchingCount = pageData.matchingCount
@@ -347,19 +351,31 @@ fun BlogScreen(
         }
     }
 
-    LaunchedEffect(blogs, listActive) {
-        if (!listActive) return@LaunchedEffect
-        BlogMediaDownloader.prefetchImages(
-            context,
-            blogs.mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) },
-        )
-    }
-
     fun goToPage(targetPage: Int) {
         val safePage = targetPage.coerceIn(0, totalPages - 1)
-        pendingScrollBlogId = null
-        currentPage = safePage
-        pageInput = (safePage + 1).toString()
+        if (safePage == currentPage || pageRequesting) return
+        pageRequesting = true
+        retranslateScope.launch {
+            try {
+                val urls = withContext(AppGraph.dispatchers.databaseRead) {
+                    AppGraph.database.blogSummaries(
+                        memberIds = selectedMemberIds,
+                        searchQuery = effectiveQuery,
+                        oldestFirst = oldestFirst,
+                        startMillis = timeFilter.startMillis,
+                        endMillisExclusive = timeFilter.endMillisExclusive,
+                        limit = BLOG_PAGE_SIZE,
+                        offset = safePage * BLOG_PAGE_SIZE,
+                    ).mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) }
+                }
+                BlogMediaDownloader.preloadImages(context, urls)
+                pendingScrollBlogId = null
+                currentPage = safePage
+                pageInput = (safePage + 1).toString()
+            } finally {
+                pageRequesting = false
+            }
+        }
     }
 
     LaunchedEffect(selectedMemberIds, oldestFirst, effectiveQuery, timeFilter) {
@@ -476,7 +492,11 @@ fun BlogScreen(
                     verticalArrangement = Arrangement.spacedBy(0.dp),
                     userScrollEnabled = !pageTransitioning,
                     modifier = Modifier.fillMaxSize().graphicsLayer {
-                        alpha = if (pageTransitioning) pageOpacity.value else 1f
+                        val progress = pageProgress.value
+                        alpha = progress
+                        scaleX = 0.985f + 0.015f * progress
+                        scaleY = scaleX
+                        translationY = (5f * (1f - progress)).dp.toPx()
                     },
                 ) {
                     item(key = "blog-header") {
@@ -614,7 +634,7 @@ fun BlogScreen(
                                 ) {
                                     GlassCapsuleButton(
                                         onClick = { goToPage(page - 1) },
-                                        enabled = !pageTransitioning && currentPage == page && page > 0,
+                                        enabled = !pageTransitioning && !pageRequesting && currentPage == page && page > 0,
                                         modifier = Modifier.weight(1f),
                                     ) { Text("上一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
 
@@ -623,12 +643,12 @@ fun BlogScreen(
                                             pageInput = (page + 1).toString()
                                             showPageDialog = true
                                         },
-                                        enabled = !pageTransitioning && currentPage == page && matchingCount > 0,
+                                        enabled = !pageTransitioning && !pageRequesting && currentPage == page && matchingCount > 0,
                                         tone = GlassTone.Accent,
                                         modifier = Modifier.weight(1.15f),
                                     ) {
                                         Text(
-                                            "${page + 1} / $totalPages",
+                                            if (pageRequesting) "加载中…" else "${page + 1} / $totalPages",
                                             fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -639,7 +659,7 @@ fun BlogScreen(
 
                                     GlassCapsuleButton(
                                         onClick = { goToPage(page + 1) },
-                                        enabled = !pageTransitioning && currentPage == page && page < totalPages - 1,
+                                        enabled = !pageTransitioning && !pageRequesting && currentPage == page && page < totalPages - 1,
                                         modifier = Modifier.weight(1f),
                                     ) { Text("下一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
                                 }
@@ -960,22 +980,30 @@ private fun BlogSummaryCard(
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
-            blog.translatedTitle?.takeIf { translationEnabled }?.let {
-                SearchHighlightText(
-                    text = it,
-                    query = searchQuery,
-                    highlightBackground = highlightBackground,
-                    highlightTextColor = highlightText,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        color = GlassColors.AccentInk,
-                        fontSize = 14.5.sp,
-                        lineHeight = 21.sp,
-                        fontWeight = FontWeight.Bold,
-                    ),
-                    modifier = Modifier.padding(top = 4.dp),
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            AnimatedContent(
+                targetState = blog.translatedTitle?.takeIf { translationEnabled },
+                transitionSpec = {
+                    fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+                },
+                label = "blog-summary-translation",
+            ) { translatedTitle ->
+                translatedTitle?.let {
+                    SearchHighlightText(
+                        text = it,
+                        query = searchQuery,
+                        highlightBackground = highlightBackground,
+                        highlightTextColor = highlightText,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            color = GlassColors.AccentInk,
+                            fontSize = 14.5.sp,
+                            lineHeight = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                        modifier = Modifier.padding(top = 4.dp),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
             val visiblePreviews = if (isPreviewsExpanded || bodyPreviews.size <= 3) {
@@ -1300,15 +1328,23 @@ private fun BlogDetail(
                         fontWeight = FontWeight.Bold,
                         color = GlassColors.Ink,
                     )
-                    titleTranslation?.takeIf(String::isNotBlank)?.let {
-                        Text(
-                            it,
-                            color = GlassColors.AccentInk,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            lineHeight = 22.sp,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
+                    AnimatedContent(
+                        targetState = titleTranslation?.takeIf(String::isNotBlank),
+                        transitionSpec = {
+                            fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+                        },
+                        label = "blog-title-translation",
+                    ) { translatedTitle ->
+                        translatedTitle?.let {
+                            Text(
+                                it,
+                                color = GlassColors.AccentInk,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                lineHeight = 22.sp,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -1353,13 +1389,21 @@ private fun BlogDetail(
                                         style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
                                         color = GlassColors.Ink,
                                     )
-                                    paragraph.translation?.takeIf(String::isNotBlank)?.let {
-                                        Text(
-                                            it,
-                                            color = GlassColors.AccentInk,
-                                            fontSize = 14.5.sp,
-                                            lineHeight = 21.sp,
-                                        )
+                                    AnimatedContent(
+                                        targetState = paragraph.translation?.takeIf(String::isNotBlank),
+                                        transitionSpec = {
+                                            fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+                                        },
+                                        label = "blog-paragraph-translation",
+                                    ) { translatedParagraph ->
+                                        translatedParagraph?.let {
+                                            Text(
+                                                it,
+                                                color = GlassColors.AccentInk,
+                                                fontSize = 14.5.sp,
+                                                lineHeight = 21.sp,
+                                            )
+                                        }
                                     }
                                 }
                             }
