@@ -34,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,12 +109,19 @@ fun Modifier.glassPopoverAnchor(state: GlassPopoverState): Modifier = onGlobally
     )
 }
 
+internal class GlassPopoverViewport {
+    var bounds by mutableStateOf<IntRect?>(null)
+}
+
+internal val LocalGlassPopoverViewport = staticCompositionLocalOf<GlassPopoverViewport?> { null }
+
 internal class GlassPopoverPositionProvider(
     private val density: androidx.compose.ui.unit.Density,
     private val marginPx: Int,
     private val effectPaddingPx: Int,
     private val topInsetPx: Int = 0,
     private val bottomInsetPx: Int = 0,
+    private val viewportBounds: IntRect? = null,
 ) : PopupPositionProvider {
     var originX by mutableFloatStateOf(1f)
     var opensUpward by mutableStateOf(false)
@@ -134,8 +142,9 @@ internal class GlassPopoverPositionProvider(
         // Position the visible card, excluding the transparent blur/spring gutter.
         val cardWidth = (popupContentSize.width - effectPaddingPx * 2).coerceAtLeast(1)
         val cardHeight = (popupContentSize.height - effectPaddingPx * 2).coerceAtLeast(1)
-        val safeTop = topInsetPx + marginPx
-        val safeBottom = (windowSize.height - bottomInsetPx - marginPx).coerceAtLeast(safeTop)
+        val safeTop = maxOf(topInsetPx, viewportBounds?.top ?: 0) + marginPx
+        val safeBottom = (minOf(windowSize.height - bottomInsetPx, viewportBounds?.bottom ?: windowSize.height) - marginPx)
+            .coerceAtLeast(safeTop)
         val aboveEdge = minOf(anchorBounds.top - gap, safeBottom)
         val belowEdge = maxOf(anchorBounds.bottom + gap, safeTop)
         val above = (aboveEdge - safeTop).coerceAtLeast(0)
@@ -151,8 +160,9 @@ internal class GlassPopoverPositionProvider(
             previousAnchor = anchorBounds
             previousWindow = windowSize
         }
-        maxHeightPx = (if (opensUpward) above else below).coerceAtLeast(1)
-        fitsAvailableSpace = cardHeight <= maxHeightPx
+        val availableHeight = if (opensUpward) above else below
+        maxHeightPx = availableHeight.coerceAtLeast(1)
+        fitsAvailableSpace = availableHeight > 0 && cardHeight <= availableHeight
         val y = (if (opensUpward) aboveEdge - cardHeight else belowEdge)
             .coerceIn(safeTop, (safeBottom - cardHeight).coerceAtLeast(safeTop))
         val alignEnd = anchorBounds.center.x > windowSize.width / 2
@@ -178,11 +188,12 @@ fun GlassPopover(
     val safeInsets = WindowInsets.safeDrawing
     val topInsetPx = safeInsets.getTop(density)
     val bottomInsetPx = safeInsets.getBottom(density)
+    val viewportBounds = LocalGlassPopoverViewport.current?.bounds
     // Includes blur sampling, the complete soft shadow and spring overshoot.
     val effectPadding = 32.dp
     val effectPaddingPx = with(density) { effectPadding.roundToPx() }
-    val provider = remember(density, marginPx, effectPaddingPx, topInsetPx, bottomInsetPx) {
-        GlassPopoverPositionProvider(density, marginPx, effectPaddingPx, topInsetPx, bottomInsetPx)
+    val provider = remember(density, marginPx, effectPaddingPx, topInsetPx, bottomInsetPx, viewportBounds) {
+        GlassPopoverPositionProvider(density, marginPx, effectPaddingPx, topInsetPx, bottomInsetPx, viewportBounds)
     }
     val shape = GlassShapes.Popover
     val progress = remember { Animatable(0f) }
@@ -235,8 +246,8 @@ fun GlassPopover(
                             // Scale from the anchor bounds toward full size.
                             val naturalW = size.width.coerceAtLeast(1f)
                             val naturalH = size.height.coerceAtLeast(1f)
-                            val fromSx = if (anchorW > 0) anchorW / naturalW else 0.35f
-                            val fromSy = if (anchorH > 0) anchorH / naturalH else 0.35f
+                            val fromSx = if (anchorW > 0) (anchorW / naturalW).coerceAtMost(1f) else 0.35f
+                            val fromSy = if (anchorH > 0) (anchorH / naturalH).coerceAtMost(1f) else 0.35f
                             val sx = fromSx + (1f - fromSx) * p
                             val sy = fromSy + (1f - fromSy) * p
                             scaleX = sx

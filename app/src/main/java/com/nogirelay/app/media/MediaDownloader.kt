@@ -254,12 +254,12 @@ object MediaDownloader {
                             markNotFound(appContext, url)
                             target.delete()
                             metadataFile(target).delete()
-                            MediaCacheRevision.changed()
+                            notifyCacheChanged(appContext, url)
                             changed = true
                         }
                         in 200..299 -> {
                             if (metadata == null || !metadata.matches(connection)) {
-                                copyResponseToTarget(connection, target)
+                                copyResponseToTarget(appContext, url, connection, target)
                                 writeRemoteMetadata(target, connection)
                                 changed = true
                             }
@@ -304,7 +304,7 @@ object MediaDownloader {
                 throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $uri", originalUrl)
             }
             if (status !in 200..299) error("媒体服务返回 HTTP $status")
-            copyResponseToTarget(connection, target)
+            copyResponseToTarget(context, originalUrl, connection, target)
             writeRemoteMetadata(target, connection)
             remoteRevalidatedAt[originalUrl] = System.currentTimeMillis()
             target
@@ -313,7 +313,7 @@ object MediaDownloader {
         }
     }
 
-    private fun copyResponseToTarget(connection: HttpURLConnection, target: File) {
+    private fun copyResponseToTarget(context: Context, url: String, connection: HttpURLConnection, target: File) {
         val parent = target.parentFile ?: error("无法创建媒体目录")
         if (!parent.exists() && !parent.mkdirs()) error("无法创建媒体目录")
         val temp = File(parent, "${target.name}.part-${System.nanoTime()}")
@@ -335,6 +335,7 @@ object MediaDownloader {
                 }
             }
             replaceAtomically(temp, target)
+            notifyCacheChanged(context, url)
         } finally {
             if (temp.exists()) temp.delete()
         }
@@ -403,6 +404,7 @@ object MediaDownloader {
                 FileOutputStream(temp).use { output -> input.copyTo(output) }
             } ?: error("无法读取本地媒体")
             replaceAtomically(temp, target)
+            notifyCacheChanged(context, uri.toString())
             target
         } finally {
             if (temp.exists()) temp.delete()
@@ -501,7 +503,13 @@ object MediaDownloader {
             temp.copyTo(target, overwrite = true)
             temp.delete()
         }
-        MediaCacheRevision.changed()
+    }
+
+    internal fun notifyCacheChanged(context: Context, url: String) {
+        AppGraph.initialize(context)
+        val kinds = runCatching { AppGraph.database.mediaRefKindsForUrl(url) }
+            .getOrDefault(com.nogirelay.app.data.MediaRefKind.entries.toSet())
+        MediaCacheRevision.changed(kinds)
     }
 
     private fun authorizationFor(context: Context, host: String?): String? {
@@ -543,7 +551,7 @@ object MediaDownloader {
             return false
         }
         clearNotFound(appContext, toUrl)
-        MediaCacheRevision.changed()
+        notifyCacheChanged(appContext, toUrl)
         return true
     }
 

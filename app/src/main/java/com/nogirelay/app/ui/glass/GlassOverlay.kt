@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -46,6 +48,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -147,6 +150,7 @@ fun GlassBottomSheet(
 ) {
     val overlayLayer = rememberGlassOverlayLayer(minimumLevel = 1f)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val popoverViewport = remember { GlassPopoverViewport() }
     val scope = rememberCoroutineScope()
     val latestOnDismiss by rememberUpdatedState(onDismissRequest)
     var closing by remember { mutableStateOf(false) }
@@ -227,6 +231,7 @@ fun GlassBottomSheet(
         CompositionLocalProvider(
             LocalRelayPageWorkPaused provides false,
             LocalGlassOverlayLevel provides overlayLayer.level,
+            LocalGlassPopoverViewport provides popoverViewport,
         ) {
             val topSafeInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
             Column(
@@ -243,6 +248,12 @@ fun GlassBottomSheet(
                             ),
                         )
                         layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                    }
+                    .onGloballyPositioned { coordinates ->
+                        val bounds = coordinates.boundsInWindow()
+                        popoverViewport.bounds = IntRect(
+                            bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt(),
+                        )
                     }
                     .glassOverlaySource(overlayLayer)
                     .background(GlassColors.SheetSurface),

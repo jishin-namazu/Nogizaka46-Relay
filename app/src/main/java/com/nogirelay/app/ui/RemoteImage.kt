@@ -143,6 +143,23 @@ internal suspend fun preloadRemoteImage(
     }
 }
 
+/** Read only local image headers before publishing a blog page, never await the network. */
+internal suspend fun primeCachedImageAspectRatios(context: Context, urls: List<String>) {
+    withContext(AppGraph.dispatchers.imageDecode) {
+        urls.distinct().forEach { url ->
+            if (ImageAspectRatioCache.get(url) == null) {
+                MediaDownloader.cachedFileForUrl(context, url, MessageType.IMAGE)?.let { file ->
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, bounds)
+                    if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                        ImageAspectRatioCache.put(url, bounds.outWidth.toFloat() / bounds.outHeight)
+                    }
+                }
+            }
+        }
+    }
+}
+
 internal fun isGifSignature(header: ByteArray): Boolean {
     if (header.size < GIF_HEADER_BYTES) return false
     val signature = String(header, 0, GIF_HEADER_BYTES, Charsets.US_ASCII)
@@ -166,6 +183,7 @@ fun RemoteImage(
     previewUrl: String? = null,
     crossfadeDurationMillis: Int = 0,
     placeholderAspectRatio: Float? = null,
+    animateAspectRatioChanges: Boolean = false,
 ) {
     val context = LocalContext.current
     val active = LocalRelayPageActive.current && isRelayUiStarted() &&
@@ -275,7 +293,30 @@ fun RemoteImage(
     val currentRatio = bitmap?.let { it.width.toFloat() / it.height.toFloat() }
         ?: animated?.aspectRatio()
         ?: knownAspectRatio
-    val hasContent = bitmap != null || animated != null
+    val layoutRatio = currentRatio?.takeIf { it.isFinite() && it > 0f }
+        ?: placeholderAspectRatio?.takeIf { it.isFinite() && it > 0f && !isNotFound }
+    val targetHeightFraction = imageHeightFraction(layoutRatio)
+    // Animate height/width rather than width/height so portrait and landscape
+    // placeholders resize at the same pace. Reveal pixels only after settling.
+    val heightFraction = if (preserveAspectRatio && animateAspectRatioChanges) {
+        remember(url) { Animatable(targetHeightFraction ?: 0f) }
+    } else {
+        null
+    }
+    if (heightFraction != null) {
+        LaunchedEffect(targetHeightFraction) {
+            targetHeightFraction?.let { target ->
+                if (heightFraction.value > 0f && !imageHeightSettled(heightFraction.value, target)) {
+                    heightFraction.animateTo(target, tween(260))
+                } else {
+                    heightFraction.snapTo(target)
+                }
+            }
+        }
+    }
+    val ratioSettled = heightFraction == null || targetHeightFraction == null ||
+        (!heightFraction.isRunning && imageHeightSettled(heightFraction.value, targetHeightFraction))
+    val hasContent = (bitmap != null || animated != null) && ratioSettled
     val contentAlpha = remember(cacheKey) {
         Animatable(if (hasContent) 1f else 0f)
     }
@@ -291,10 +332,13 @@ fun RemoteImage(
     LaunchedEffect(currentRatio) {
         currentRatio?.takeIf { it > 0f }?.let { latestOnAspectRatio?.invoke(it) }
     }
-    val layoutRatio = currentRatio?.takeIf { it > 0f }
-        ?: placeholderAspectRatio?.takeIf { it > 0f && !isNotFound }
-    val boxModifier = if (preserveAspectRatio && layoutRatio != null) {
-        modifier.fillMaxWidth().aspectRatio(layoutRatio)
+    val displayedRatio = if (heightFraction != null && targetHeightFraction != null && heightFraction.value > 0f) {
+        1f / heightFraction.value
+    } else {
+        layoutRatio
+    }
+    val boxModifier = if (preserveAspectRatio && displayedRatio != null) {
+        modifier.fillMaxWidth().aspectRatio(displayedRatio)
     } else {
         modifier
     }
@@ -311,7 +355,7 @@ fun RemoteImage(
         finalModifier.onSizeChanged { measuredSize = it },
         contentAlignment = Alignment.Center,
     ) {
-        val frame: ImageLoadResult? = animated ?: bitmap?.let { ImageLoadResult.Static(it) }
+        val frame: ImageLoadResult? = (if (ratioSettled) animated ?: bitmap?.let { ImageLoadResult.Static(it) } else null)
             ?: when {
                 isNotFound -> ImageLoadResult.NotFound
                 isError -> ImageLoadResult.Error

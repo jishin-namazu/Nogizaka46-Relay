@@ -2,7 +2,9 @@ package com.nogirelay.app.data.transfer
 
 import android.content.Context
 import com.nogirelay.app.media.HttpNotFoundException
+import com.nogirelay.app.media.MediaCacheRevision
 import com.nogirelay.app.media.MediaDownloader
+import com.nogirelay.app.performance.ProgressThrottle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
@@ -25,15 +27,21 @@ object MediaBackfill {
         context: Context,
         candidates: List<MediaCandidate>,
         onProgress: (phase: String, done: Int, total: Int) -> Unit,
-    ): MediaBackfillReport {
+    ): MediaBackfillReport = MediaCacheRevision.batch {
         var downloaded = 0
         var reused = 0
         var notFound = 0
         var failed = 0
         var bytes = 0L
         val errors = mutableListOf<String>()
+        val throttle = ProgressThrottle(android.os.SystemClock::elapsedRealtime)
+        fun publishProgress(done: Int) {
+            if (throttle.shouldPublish(done, candidates.size)) {
+                onProgress(PHASE, done, candidates.size)
+            }
+        }
 
-        onProgress(PHASE, 0, candidates.size)
+        publishProgress(0)
         candidates.forEachIndexed { index, candidate ->
             coroutineContext.ensureActive()
 
@@ -55,10 +63,10 @@ object MediaBackfill {
                     }
                 }
             }
-            onProgress(PHASE, index + 1, candidates.size)
+            publishProgress(index + 1)
         }
 
-        return MediaBackfillReport(
+        MediaBackfillReport(
             downloaded = downloaded,
             reused = reused,
             notFound = notFound,
