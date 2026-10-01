@@ -1,11 +1,36 @@
 package com.nogirelay.app.media
 
+import com.nogirelay.app.data.MediaRefKind
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 
 object MediaCacheRevision {
-    private val revision = MutableStateFlow(0L)
-    val changes = revision.asStateFlow()
-    fun changed() { revision.update { it + 1 } }
+    private val revisions = MediaRefKind.entries.associateWith { MutableStateFlow(0L) }
+    private val changes = revisions.mapValues { it.value.asStateFlow() }
+    private val pendingChanges = ThreadLocal<MutableSet<MediaRefKind>?>()
+
+    fun changesFor(kind: MediaRefKind): StateFlow<Long> = changes.getValue(kind)
+
+    fun changed(kinds: Set<MediaRefKind>) {
+        pendingChanges.get()?.let {
+            it.addAll(kinds)
+            return
+        }
+        kinds.forEach { kind -> revisions.getValue(kind).update { it + 1 } }
+    }
+
+    suspend fun <T> batch(block: suspend () -> T): T {
+        if (pendingChanges.get() != null) return block()
+        val pending = linkedSetOf<MediaRefKind>()
+        try {
+            return withContext(pendingChanges.asContextElement(pending)) { block() }
+        } finally {
+            // Files already committed still invalidate estimates on cancellation.
+            changed(pending)
+        }
+    }
 }

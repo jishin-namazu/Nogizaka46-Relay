@@ -109,6 +109,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
             db.execSQL("ALTER TABLE messages ADD COLUMN video_has_audio INTEGER")
         }
+        if (oldVersion < 14) createMediaRefUrlIndex(db)
     }
 
     private fun createBlogTables(db: SQLiteDatabase) {
@@ -179,6 +180,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_media_refs_member ON media_refs(kind, member_key)")
+        createMediaRefUrlIndex(db)
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS idx_messages_member_sent ON messages(" +
                 "CASE WHEN TRIM(member_id) <> '' THEN member_id ELSE member_name END, " +
@@ -188,6 +190,10 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
             "CREATE INDEX IF NOT EXISTS idx_blog_posts_member_date ON blog_posts(" +
                 "member_id, published_at DESC, id DESC)",
         )
+    }
+
+    private fun createMediaRefUrlIndex(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_media_refs_url_kind ON media_refs(url, kind)")
     }
 
     private fun createMessageFavoriteIndex(db: SQLiteDatabase) {
@@ -910,6 +916,20 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     fun markMediaRefsReady() =
         putSyncStateValue(MEDIA_REFS_VERSION_KEY, MediaRefs.PARSE_VERSION.toString())
+
+    fun mediaRefKindsForUrl(url: String): Set<MediaRefKind> {
+        // Before the reference index is complete, invalidate both estimates
+        // rather than miss a cache change belonging to an unindexed record.
+        if (!mediaRefsReady()) return MediaRefKind.entries.toSet()
+        return readableDatabase.rawQuery(
+            "SELECT DISTINCT kind FROM media_refs WHERE url = ?",
+            arrayOf(url),
+        ).use { cursor ->
+            buildSet {
+                while (cursor.moveToNext()) add(MediaRefKind.valueOf(cursor.getString(0)))
+            }
+        }
+    }
 
     fun mediaRefsFor(kind: MediaRefKind, memberKeys: Collection<String>): List<MediaRefRow> {
         if (memberKeys.isEmpty()) return emptyList()
@@ -1714,7 +1734,7 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
 
     companion object {
         private const val DB_NAME = "messages.db"
-        private const val DB_VERSION = 13
+        private const val DB_VERSION = 14
         private const val TEST_MESSAGE_GLOB = "test[-_]*"
 
         private const val MEDIA_REFS_VERSION_KEY = "media_refs_parse_version_v1"

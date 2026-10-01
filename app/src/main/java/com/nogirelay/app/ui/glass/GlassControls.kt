@@ -154,7 +154,7 @@ fun GlassSwitch(
                     ),
             )
             // Equal inset keeps the thumb concentric with either rounded end.
-            val thumbInset = 2.dp
+            val thumbInset = 3.dp
             val thumbSize = maxHeight - thumbInset * 2
             val travelPx = with(LocalDensity.current) { (maxWidth - thumbSize - thumbInset * 2).toPx() }
             Box(

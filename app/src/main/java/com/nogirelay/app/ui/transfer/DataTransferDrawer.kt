@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
@@ -13,6 +14,9 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -39,7 +43,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,12 +55,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
+import com.nogirelay.app.data.MediaRefKind
 import com.nogirelay.app.data.transfer.DataExporter
 import com.nogirelay.app.data.transfer.DataImporter
 import com.nogirelay.app.data.transfer.DataTransferManager
@@ -111,7 +114,20 @@ fun DataTransferDrawer(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val transfer by DataTransferManager.state.collectAsState()
+    val transferFlow = remember(kind) { DataTransferManager.stateFor(kind) }
+    // Progress belongs to the status card, not the entire sheet. In particular,
+    // reopening a running transfer must start with its real state on frame one.
+    val transferPresentation = remember(transferFlow) {
+        transferFlow.map { it.copy(done = 0, total = 0) }.distinctUntilChanged()
+    }
+    val transfer by transferPresentation.collectAsStateWithLifecycle(
+        initialValue = transferFlow.value.copy(done = 0, total = 0),
+    )
+    val anyTransferRunning by remember {
+        DataTransferManager.state
+            .map { it.running }
+            .distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = DataTransferManager.isRunning())
 
     var members by remember(kind) { mutableStateOf<List<BlogMember>>(emptyList()) }
     var selectedIds by remember(kind) { mutableStateOf<Set<String>?>(null) }
@@ -139,8 +155,17 @@ fun DataTransferDrawer(
         AppGraph.dataVersions.value.let { if (kind == ExportKind.MESSAGES) it.messageStructure else it.blogContent }
     }
     val contentRevision by contentFlow.collectAsStateWithLifecycle(initialValue = initialContentRevision)
-    val mediaFlow = remember(includeMedia) { if (includeMedia) MediaCacheRevision.changes else flowOf(0L) }
-    val initialMediaRevision = remember(includeMedia) { if (includeMedia) MediaCacheRevision.changes.value else 0L }
+    val scopedMediaRevision = remember(kind) {
+        MediaCacheRevision.changesFor(
+            if (kind == ExportKind.MESSAGES) MediaRefKind.MESSAGES else MediaRefKind.BLOGS,
+        )
+    }
+    val mediaFlow = remember(includeMedia, scopedMediaRevision) {
+        if (includeMedia) scopedMediaRevision else flowOf(0L)
+    }
+    val initialMediaRevision = remember(includeMedia, scopedMediaRevision) {
+        if (includeMedia) scopedMediaRevision.value else 0L
+    }
     val mediaRevision by mediaFlow.collectAsStateWithLifecycle(initialValue = initialMediaRevision)
 
     LaunchedEffect(kind, contentRevision, backdropState.isSettled, uiStarted) {
@@ -185,8 +210,9 @@ fun DataTransferDrawer(
     }
     val estimateProgress = remember(estimateRequest) { MutableStateFlow<Pair<Int, Int>?>(null) }
     val estimate = estimateResult?.takeIf { it.first == estimateRequest }?.second
+    val transferBusy = transfer.running
     val estimateActive = backdropState.isSettled && uiStarted && tabIndex == 0 &&
-        !transfer.running && !showPicker && !showImportPicker
+        !transferBusy && !showPicker && !showImportPicker
 
     LaunchedEffect(estimateRequest, estimateActive) {
         if (!estimateActive || effectiveSelection.isEmpty()) return@LaunchedEffect
@@ -208,7 +234,7 @@ fun DataTransferDrawer(
             val latest = AppGraph.dataVersions.value
             val currentContent = if (kind == ExportKind.MESSAGES) latest.messageStructure else latest.blogContent
             if (currentContent == estimateRequest.contentRevision &&
-                (!includeMedia || MediaCacheRevision.changes.value == estimateRequest.mediaRevision)) {
+                (!includeMedia || scopedMediaRevision.value == estimateRequest.mediaRevision)) {
                 exportEstimateCache.put(estimateRequest, result)
                 estimateResult = estimateRequest to result
                 completed = true
@@ -253,7 +279,7 @@ fun DataTransferDrawer(
         }
     }
 
-    LaunchedEffect(Unit) { DataTransferManager.clearResult() }
+    LaunchedEffect(kind) { DataTransferManager.clearResult(kind) }
 
     fun startExport() {
         if (effectiveSelection.isEmpty()) {
@@ -328,7 +354,9 @@ fun DataTransferDrawer(
                             ).togetherWith(
                             fadeOut(tween(durationMillis = 120)) +
                                 slideOutHorizontally(spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMedium)) { width -> (-width / 16) * direction },
-                        )
+                        ).using(SizeTransform(clip = true, sizeAnimationSpec = { _, _ ->
+                            tween(280, easing = FastOutSlowInEasing)
+                        }))
                     },
                     label = "transfer_tab_content",
                 ) { contentTab ->
@@ -343,7 +371,7 @@ fun DataTransferDrawer(
                             MemberSelectionField(
                                 title = "导出成员",
                                 summary = "${effectiveSelection.size} / ${members.size}",
-                                enabled = paneActive && !transfer.running,
+                                enabled = paneActive && !transferBusy,
                                 onClick = { showPicker = true },
                             )
                             Column(
@@ -354,7 +382,7 @@ fun DataTransferDrawer(
                                     estimate, estimateProgress, includeMedia, backfilling,
                                     estimateActive && paneActive, estimateFailure,
                                     estimateRequest,
-                                    backfillEnabled = paneActive && !transfer.running,
+                                    backfillEnabled = paneActive && !anyTransferRunning,
                                     onBackfill = { displayedEstimate ->
                                         DataTransferManager.backfillMedia(context, kind, displayedEstimate.missing)
                                     },
@@ -362,26 +390,16 @@ fun DataTransferDrawer(
                                 SwitchRow(
                                     label = "包含媒体（图片 / 视频 / 语音）",
                                     checked = includeMedia,
-                                    enabled = paneActive && !transfer.running,
+                                    enabled = paneActive && !transferBusy,
                                     onCheckedChange = { includeMedia = it },
                                 )
                             }
                             SwitchRow(
                                 label = "包含译文",
                                 checked = includeTranslations,
-                                enabled = paneActive && !transfer.running,
+                                enabled = paneActive && !transferBusy,
                                 onCheckedChange = { includeTranslations = it },
                             )
-                            GlassCapsuleButton(
-                                onClick = { startExport() },
-                                enabled = paneActive && members.isNotEmpty() && effectiveSelection.isNotEmpty() && !transfer.running,
-                                tone = GlassTone.Accent,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) {
-                                Icon(Icons.Rounded.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.size(8.dp))
-                                Text("导出 .zip", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
                         } else {
                             Text(
                                 text = "增量合并：重复条目自动跳过。",
@@ -391,35 +409,61 @@ fun DataTransferDrawer(
                             SwitchRow(
                                 label = "导入媒体（图片 / 视频 / 语音）",
                                 checked = importMedia,
-                                enabled = paneActive && !transfer.running,
+                                enabled = paneActive && !transferBusy,
                                 onCheckedChange = { importMedia = it },
                             )
                             SwitchRow(
                                 label = "导入成员目录（期别 / 头像）",
                                 checked = importMembers,
-                                enabled = paneActive && !transfer.running,
+                                enabled = paneActive && !transferBusy,
                                 onCheckedChange = { importMembers = it },
                             )
-                            GlassCapsuleButton(
-                                onClick = { openDocument.launch(arrayOf("*/*")) },
-                                enabled = paneActive && !transfer.running,
-                                tone = GlassTone.Accent,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) {
-                                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.size(8.dp))
-                                Text("选择 .zip 文件导入", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
                         }
                     }
                 }
+                // Keep the action's shadow outside the resizing form viewport.
+                GlassCapsuleButton(
+                    onClick = {
+                        if (tabIndex == 0) startExport()
+                        else openDocument.launch(arrayOf("*/*"))
+                    },
+                    enabled = !anyTransferRunning &&
+                        (tabIndex != 0 || (members.isNotEmpty() && effectiveSelection.isNotEmpty())),
+                    tone = GlassTone.Accent,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Icon(
+                        if (tabIndex == 0) Icons.Rounded.Upload else Icons.Rounded.Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        if (tabIndex == 0) "导出 .zip" else "选择 .zip 文件导入",
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
-            if (transfer.running || transfer.error != null || transfer.outcome != null) {
-                Spacer(Modifier.height(12.dp))
+            AnimatedVisibility(
+                visible = transfer.running || transfer.error != null || transfer.outcome != null,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                enter = fadeIn(tween(180)) + expandVertically(
+                    expandFrom = Alignment.Top,
+                    animationSpec = spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMediumLow),
+                ) + slideInVertically(
+                    animationSpec = spring(Spring.DampingRatioNoBouncy, Spring.StiffnessMediumLow),
+                ) { it / 5 },
+                exit = fadeOut(tween(120)) + shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                    animationSpec = tween(180),
+                ),
+            ) {
                 TransferStatusCard(
-                    transfer = transfer,
-                    onCancel = { DataTransferManager.cancel() },
+                    transferFlow = transferFlow,
+                    onCancel = { DataTransferManager.cancel(kind) },
                 )
             }
         }
@@ -472,7 +516,7 @@ fun DataTransferDrawer(
                     MemberSelectionField(
                         title = "导入成员",
                         summary = "${effectiveImportSelection.size} / ${previewMembers.size}",
-                        enabled = !transfer.running,
+                        enabled = !transferBusy,
                         onClick = { showImportPicker = true },
                     )
                 } else {
@@ -510,6 +554,7 @@ fun DataTransferDrawer(
                                     previewMembers.isEmpty() || it == importAllIds
                                 },
                             ),
+                            kind = pendingPreview.kind,
                         )
                         preview = null
                         pendingImportUri = null
@@ -517,6 +562,7 @@ fun DataTransferDrawer(
                         showImportPicker = false
                     },
                     tone = GlassTone.Accent,
+                    enabled = !anyTransferRunning,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text("开始导入", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -708,9 +754,10 @@ private fun SwitchRow(
 
 @Composable
 private fun TransferStatusCard(
-    transfer: com.nogirelay.app.data.transfer.TransferState,
+    transferFlow: StateFlow<com.nogirelay.app.data.transfer.TransferState>,
     onCancel: () -> Unit,
 ) {
+    val transfer = transferFlow.collectAsStateWithLifecycle().value
     GlassPanel(
         shape = GlassShapes.Card,
         modifier = Modifier.fillMaxWidth(),

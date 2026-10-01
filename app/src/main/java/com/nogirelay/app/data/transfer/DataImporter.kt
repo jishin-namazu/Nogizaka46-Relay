@@ -267,7 +267,7 @@ object DataImporter {
 
                     var stored = 0
                     missing.forEach { (url, target) ->
-                        if (runCatching { copyInto(temp, target) }.isSuccess) {
+                        if (runCatching { copyInto(context, url, temp, target) }.isSuccess) {
                             MediaDownloader.clearNotFound(context, url)
                             stored += 1
                         } else {
@@ -390,7 +390,7 @@ object DataImporter {
                         val target = MediaDownloader.cacheFileForUrl(context, url, extension)
                         if (target.isFile && target.length() > 0L) {
                             mediaReused += 1
-                        } else if (runCatching { copyInto(staged, target) }.isSuccess) {
+                        } else if (runCatching { copyInto(context, url, staged, target) }.isSuccess) {
                             mediaStored += 1
                         } else {
                             mediaFailed += 1
@@ -421,7 +421,7 @@ object DataImporter {
         )
     }
 
-    private fun copyInto(source: File, target: File) {
+    private fun copyInto(context: Context, url: String, source: File, target: File) {
         val parent = target.parentFile
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             error("无法创建媒体缓存目录")
@@ -432,7 +432,7 @@ object DataImporter {
             temporary.copyTo(target, overwrite = true)
             temporary.delete()
         }
-        com.nogirelay.app.media.MediaCacheRevision.changed()
+        MediaDownloader.notifyCacheChanged(context, url)
     }
 
     private fun adoptBlogMediaCache(context: Context, before: BlogPost, after: BlogPost): Int {

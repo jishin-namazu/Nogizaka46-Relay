@@ -3,6 +3,7 @@ package com.nogirelay.app.data.transfer
 import android.content.Context
 import android.net.Uri
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.media.MediaCacheRevision
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,68 +33,104 @@ data class TransferState(
     val error: String? = null,
 )
 
+internal class TransferStateStore {
+    private val current = MutableStateFlow(TransferState())
+    val state: StateFlow<TransferState> = current.asStateFlow()
+    private val scoped = ExportKind.entries.associateWith { MutableStateFlow(TransferState(kind = it)) }
+    private val scopedStates = scoped.mapValues { it.value.asStateFlow() }
+
+    fun stateFor(kind: ExportKind): StateFlow<TransferState> = scopedStates.getValue(kind)
+
+    @Synchronized
+    fun publish(snapshot: TransferState) {
+        val kind = requireNotNull(snapshot.kind)
+        scoped.getValue(kind).value = snapshot
+        current.value = snapshot
+    }
+
+    @Synchronized
+    fun progress(kind: ExportKind, phase: String, done: Int, total: Int) {
+        val snapshot = current.value
+        if (snapshot.kind != kind || !snapshot.running) return
+        publish(snapshot.copy(phase = phase, done = done, total = total))
+    }
+
+    @Synchronized
+    fun clearResult(kind: ExportKind) {
+        if (scoped.getValue(kind).value.running) return
+        scoped.getValue(kind).value = TransferState(kind = kind)
+        if (current.value.kind == kind) current.value = TransferState()
+    }
+}
+
 object DataTransferManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val _state = MutableStateFlow(TransferState())
-    val state: StateFlow<TransferState> = _state.asStateFlow()
+    private val states = TransferStateStore()
+    val state: StateFlow<TransferState> = states.state
     private var job: Job? = null
 
-    fun isRunning(): Boolean = _state.value.running
+    fun isRunning(): Boolean = state.value.running
 
-    fun clearResult() {
-        if (_state.value.running) return
-        _state.value = TransferState()
-    }
+    fun stateFor(kind: ExportKind): StateFlow<TransferState> = states.stateFor(kind)
+
+    fun clearResult(kind: ExportKind) = states.clearResult(kind)
 
     fun export(context: Context, request: ExportRequest, outputUri: Uri) {
         if (isRunning()) return
         val appContext = context.applicationContext
-        _state.value = TransferState(
+        states.publish(TransferState(
             running = true,
             kind = request.kind,
             operation = TransferOperation.EXPORT,
             phase = "准备导出",
-        )
+        ))
         job = scope.launch {
             try {
                 val report = DataExporter.export(appContext, request, outputUri) { phase, done, total ->
-                    _state.value = _state.value.copy(phase = phase, done = done, total = total)
+                    states.progress(request.kind, phase, done, total)
                 }
-                _state.value = TransferState(
+                states.publish(TransferState(
                     kind = request.kind,
                     operation = TransferOperation.EXPORT,
                     outcome = TransferOutcome.Export(report),
-                )
+                ))
             } catch (cancelled: CancellationException) {
 
-                _state.value = TransferState(kind = request.kind)
+                states.publish(TransferState(kind = request.kind))
             } catch (error: Throwable) {
-                _state.value = TransferState(kind = request.kind, error = error.message ?: "导出失败")
+                states.publish(TransferState(kind = request.kind, error = error.message ?: "导出失败"))
             }
         }
     }
 
-    fun importArchive(context: Context, sourceUri: Uri, options: ImportOptions) {
+    fun importArchive(context: Context, sourceUri: Uri, options: ImportOptions, kind: ExportKind) {
         if (isRunning()) return
         val appContext = context.applicationContext
-        _state.value = TransferState(running = true, operation = TransferOperation.IMPORT, phase = "读取清单")
+        states.publish(TransferState(running = true, kind = kind, operation = TransferOperation.IMPORT, phase = "读取清单"))
         job = scope.launch {
             try {
-                val report = DataImporter.importArchive(appContext, sourceUri, options) { phase, done, total ->
-                    _state.value = _state.value.copy(phase = phase, done = done, total = total)
+                val report = MediaCacheRevision.batch {
+                    DataImporter.importArchive(appContext, sourceUri, options) { phase, done, total ->
+                        states.progress(kind, phase, done, total)
+                    }
                 }
-                _state.value = TransferState(
-                    kind = report.kind,
+                states.publish(TransferState(
+                    kind = kind,
                     operation = TransferOperation.IMPORT,
                     outcome = TransferOutcome.Import(report),
-                )
+                ))
             } catch (cancelled: CancellationException) {
-                _state.value = TransferState()
+                states.publish(TransferState(kind = kind))
             } catch (error: Throwable) {
-                _state.value = TransferState(error = error.message ?: "导入失败")
+                states.publish(TransferState(kind = kind, error = error.message ?: "导入失败"))
             } finally {
-
-                AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.CONTENT)
+                AppGraph.notifyDataChanged(
+                    if (kind == ExportKind.MESSAGES) {
+                        com.nogirelay.app.data.DataChange.MESSAGES
+                    } else {
+                        com.nogirelay.app.data.DataChange.BLOGS
+                    },
+                )
             }
         }
     }
@@ -101,38 +138,39 @@ object DataTransferManager {
     fun backfillMedia(context: Context, kind: ExportKind, candidates: List<MediaCandidate>) {
         if (isRunning() || candidates.isEmpty()) return
         val appContext = context.applicationContext
-        _state.value = TransferState(
+        states.publish(TransferState(
             running = true,
             kind = kind,
             operation = TransferOperation.BACKFILL,
             phase = "补齐媒体",
             total = candidates.size,
-        )
+        ))
 
         val foregroundStarted = runCatching { MediaBackfillService.start(appContext) }.isSuccess
         if (!foregroundStarted) {
-            _state.value = TransferState(kind = kind, error = "无法启动后台下载服务")
+            states.publish(TransferState(kind = kind, error = "无法启动后台下载服务"))
             return
         }
         job = scope.launch {
             try {
                 val report = MediaBackfill.download(appContext, candidates) { phase, done, total ->
-                    _state.value = _state.value.copy(running = true, phase = phase, done = done, total = total)
+                    states.progress(kind, phase, done, total)
                 }
-                _state.value = TransferState(
+                states.publish(TransferState(
                     kind = kind,
                     operation = TransferOperation.BACKFILL,
                     outcome = TransferOutcome.Backfill(report),
-                )
+                ))
             } catch (cancelled: CancellationException) {
-                _state.value = TransferState(kind = kind)
+                states.publish(TransferState(kind = kind))
             } catch (error: Throwable) {
-                _state.value = TransferState(kind = kind, error = error.message ?: "补齐媒体失败")
+                states.publish(TransferState(kind = kind, error = error.message ?: "补齐媒体失败"))
             }
         }
     }
 
-    fun cancel() {
+    fun cancel(kind: ExportKind? = null) {
+        if (kind != null && state.value.kind != kind) return
         job?.cancel()
     }
 }

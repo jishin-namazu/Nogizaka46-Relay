@@ -37,7 +37,9 @@ class MediaBackfillService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
 
         if (intent?.action == ACTION_CANCEL) {
-            DataTransferManager.cancel()
+            if (DataTransferManager.state.value.operation == TransferOperation.BACKFILL) {
+                DataTransferManager.cancel()
+            }
             return START_NOT_STICKY
         }
 
@@ -50,7 +52,9 @@ class MediaBackfillService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTimeout(startId: Int) {
-        DataTransferManager.cancel()
+        if (DataTransferManager.state.value.operation == TransferOperation.BACKFILL) {
+            DataTransferManager.cancel()
+        }
         finish()
     }
 
@@ -64,7 +68,7 @@ class MediaBackfillService : Service() {
         serviceScope.launch {
 
             DataTransferManager.state.collect { snapshot ->
-                if (!snapshot.running) {
+                if (!snapshot.running || snapshot.operation != TransferOperation.BACKFILL) {
                     finish()
                     return@collect
                 }

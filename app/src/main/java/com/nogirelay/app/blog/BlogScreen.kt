@@ -3,7 +3,6 @@ package com.nogirelay.app.blog
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -132,6 +131,7 @@ import com.nogirelay.app.ui.transfer.DataTransferDrawer
 import com.nogirelay.app.ui.transfer.MemberPickerCard
 import com.nogirelay.app.ui.transfer.memberGroups
 import com.nogirelay.app.ui.transfer.preloadMemberAvatars
+import com.nogirelay.app.ui.primeCachedImageAspectRatios
 import com.nogirelay.app.data.transfer.ExportKind
 import com.nogirelay.app.ui.withoutTextPresentationSelector
 import kotlinx.coroutines.Dispatchers
@@ -302,6 +302,7 @@ fun BlogScreen(
             }
             result
         }
+        primeCachedImageAspectRatios(context, loadedPage.posts.mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) })
         val resolvedRequest = pageRequest.copy(page = loadedPage.page)
         if (appliedRequest != resolvedRequest) {
             // Treat a reordered page as new content even when it contains the
@@ -1068,8 +1069,9 @@ private fun BlogSummaryCard(
                         loadCachedImmediately = false,
                         crossfadeDurationMillis = 220,
                         placeholderAspectRatio = 1f,
+                        animateAspectRatioChanges = true,
                         placeholderColor = Color(0x228E93A6),
-                        modifier = Modifier.fillMaxWidth().animateContentSize(tween(220)),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -1120,6 +1122,7 @@ private fun BlogDetail(
                 val titleTranslation = if (blog.title.isNotBlank()) translations.firstOrNull() else null
                 val bodyTranslations = if (blog.title.isNotBlank()) translations.drop(1) else translations
                 val displayList = displayBlocks(contentBlocks, bodyTranslations)
+                primeCachedImageAspectRatios(context, displayList.filterIsInstance<DisplayBlock.Image>().map { it.url })
                 ParsedBlogDetail(
                     blog = blog,
                     translationEnabled = settings.translationEnabled,
@@ -1335,11 +1338,11 @@ private fun BlogDetail(
                         loadCachedImmediately = true,
                         crossfadeDurationMillis = 220,
                         placeholderAspectRatio = 1f,
+                        animateAspectRatioChanges = true,
                         placeholderColor = Color(0x228E93A6),
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp)
-                            .animateContentSize(tween(220))
                             .clip(GlassShapes.CardSmall)
                             .glassMediaSource(
                                 key = "blogimg:${block.url}",
