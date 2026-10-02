@@ -177,7 +177,9 @@ fun RelayApp(
                     error.message ?: "历史消息同步失败"
                 },
             )
-            AppGraph.notifyDataChanged(DataChange.CONTENT)
+            result.getOrNull()?.takeIf { it.messages > 0 || it.blogs > 0 }?.let {
+                AppGraph.notifyDataChanged(DataChange.CONTENT)
+            }
         }
     }
 

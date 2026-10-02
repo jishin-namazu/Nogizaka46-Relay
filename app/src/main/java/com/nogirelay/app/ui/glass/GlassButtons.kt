@@ -156,6 +156,7 @@ fun GlassCapsuleButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     tone: GlassTone = GlassTone.Neutral,
+    depth: GlassDepth = GlassDepths.Low,
     height: Dp = 48.dp,
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp),
     contentDescription: String? = null,
@@ -169,7 +170,7 @@ fun GlassCapsuleButton(
         modifier = modifier
             .heightIn(min = height)
             .glassPress(press)
-            .glassControlShadow(shape, tone, tint, press = press)
+            .glassControlShadow(shape, tone, tint, depth = depth, press = press)
             .semantics {
                 if (contentDescription != null) this.contentDescription = contentDescription
             }

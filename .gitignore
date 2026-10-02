@@ -44,3 +44,14 @@ test/
 tests/
 androidTest/
 app/src/test/
+
+# Version the data-management regressions without including local scratch tests.
+!app/src/test/
+app/src/test/**
+!app/src/test/**/
+!app/src/test/**/ExportEstimatePresentationTest.kt
+!app/src/test/**/ExportEstimateCacheTest.kt
+!app/src/androidTest/
+app/src/androidTest/**
+!app/src/androidTest/**/
+!app/src/androidTest/**/DataManagementRegressionTest.kt

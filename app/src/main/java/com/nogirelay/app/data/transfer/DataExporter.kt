@@ -49,6 +49,7 @@ data class ExportEstimate(
     val byRole: List<MediaRoleStat> = emptyList(),
 
     val missing: List<MediaCandidate> = emptyList(),
+    val scanProgress: ExportEstimateProgress,
 )
 
 object DataExporter {
@@ -68,14 +69,16 @@ object DataExporter {
 
         includeMedia: Boolean = true,
 
-        onProgress: ((done: Int, total: Int) -> Unit)? = null,
+        onProgress: ((ExportEstimateProgress) -> Unit)? = null,
     ): ExportEstimate {
         val database = AppGraph.database
 
         val job = coroutineContext[Job]
         val throttle = com.nogirelay.app.performance.ProgressThrottle(android.os.SystemClock::elapsedRealtime)
-        fun publishProgress(done: Int, total: Int) {
-            if (throttle.shouldPublish(done, total)) onProgress?.invoke(done, total)
+        fun publishProgress(phase: ExportEstimatePhase, done: Int, total: Int) {
+            if (throttle.shouldPublish(done, total)) {
+                onProgress?.invoke(ExportEstimateProgress(phase, done, total))
+            }
         }
         var records = 0
         val referenced = HashSet<String>()
@@ -90,8 +93,11 @@ object DataExporter {
             ExportKind.BLOGS -> database.countBlogsForMembers(memberKeys)
         }
         if (!includeMedia) {
-            publishProgress(total, total)
-            return ExportEstimate(records = total, mediaReferenced = 0, mediaCached = 0, mediaBytes = 0)
+            publishProgress(ExportEstimatePhase.RECORDS, total, total)
+            return ExportEstimate(
+                records = total, mediaReferenced = 0, mediaCached = 0, mediaBytes = 0,
+                scanProgress = ExportEstimateProgress(ExportEstimatePhase.RECORDS, total, total),
+            )
         }
 
         fun checkActive() {
@@ -123,31 +129,31 @@ object DataExporter {
         }
         if (refRows != null) {
             records = total
-            publishProgress(0, refRows.size)
+            publishProgress(ExportEstimatePhase.MEDIA, 0, refRows.size)
             refRows.forEachIndexed { index, row ->
                 checkActive()
                 inspect(listOf(MediaCandidate(row.role, row.url, row.type)))
                 // Time-based throttling keeps updates regular even when individual file checks are slow.
-                publishProgress(index + 1, refRows.size)
+                publishProgress(ExportEstimatePhase.MEDIA, index + 1, refRows.size)
             }
-            publishProgress(refRows.size, refRows.size)
+            publishProgress(ExportEstimatePhase.MEDIA, refRows.size, refRows.size)
         } else {
-            publishProgress(0, total)
+            publishProgress(ExportEstimatePhase.RECORDS, 0, total)
             when (kind) {
                 ExportKind.MESSAGES -> database.forEachMessageForMembers(memberKeys) { message ->
                     checkActive()
                     inspect(ExportFormat.mediaCandidates(message))
                     records += 1
-                    publishProgress(records, total)
+                    publishProgress(ExportEstimatePhase.RECORDS, records, total)
                 }
                 ExportKind.BLOGS -> database.forEachBlogForMembers(memberKeys) { post ->
                     checkActive()
                     inspect(ExportFormat.mediaCandidates(post))
                     records += 1
-                    publishProgress(records, total)
+                    publishProgress(ExportEstimatePhase.RECORDS, records, total)
                 }
             }
-            publishProgress(records, total)
+            publishProgress(ExportEstimatePhase.RECORDS, total, total)
         }
 
         return ExportEstimate(
@@ -159,6 +165,11 @@ object DataExporter {
                 MediaRoleStat(role, count, cachedByRole[role] ?: 0)
             },
             missing = missing,
+            scanProgress = if (refRows != null) {
+                ExportEstimateProgress(ExportEstimatePhase.MEDIA, refRows.size, refRows.size)
+            } else {
+                ExportEstimateProgress(ExportEstimatePhase.RECORDS, total, total)
+            },
         )
     }
 
