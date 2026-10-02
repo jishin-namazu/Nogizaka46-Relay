@@ -233,7 +233,7 @@
       "id": "androidStorage",
       "type": "database",
       "label": "本地存储",
-      "sublabel": "SQLite v13 · 设置 · 媒体缓存",
+      "sublabel": "SQLite v14 · 设置 · 媒体缓存",
       "pos": [
         630,
         420
@@ -245,7 +245,7 @@
       "sources": [
         {
           "path": "app/src/main/java/com/nogirelay/app/data/MessageDatabase.kt",
-          "label": "SQLite v13"
+          "label": "SQLite v14"
         }
       ]
     },
@@ -476,7 +476,7 @@
       "title": "客户端",
       "items": [
         "双通道:服务端同步消息,官网直连博客正文/图片",
-        "本地优先:SQLite v13 + 私有媒体缓存;FCM 超载时回源补拉"
+        "本地优先:SQLite v14 + 私有媒体缓存;FCM 超载时回源补拉"
       ]
     },
     {
