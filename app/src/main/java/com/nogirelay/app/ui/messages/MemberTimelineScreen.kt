@@ -3,6 +3,7 @@ package com.nogirelay.app.ui.messages
 import android.os.CancellationSignal
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -13,9 +14,11 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,6 +28,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -47,7 +51,21 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import com.nogirelay.app.ui.glass.GlassMetrics
+import com.nogirelay.app.ui.glass.GlassMotion
+import com.nogirelay.app.ui.glass.GlassType
+import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
 import com.nogirelay.app.ui.glass.LocalMediaSourceScope
+import com.nogirelay.app.ui.glass.glassHazeSource
+import com.nogirelay.app.ui.glass.glassPress
 import com.nogirelay.app.ui.glass.mediaSourceKey
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -78,7 +96,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.DataChange
 import com.nogirelay.app.data.DataVersions
@@ -94,6 +111,7 @@ import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterDialog
 import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.clearSelectionOnTap
+import com.nogirelay.app.ui.glass.rememberGlassPress
 import com.nogirelay.app.ui.preloadRemoteImage
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassColors
@@ -110,7 +128,7 @@ import com.nogirelay.app.ui.glass.LocalGlassHazeState
 import com.nogirelay.app.ui.glass.progressiveGlassHeader
 import com.nogirelay.app.ui.glass.rememberGlassHazeState
 import com.nogirelay.app.ui.glass.glassMediaSource
-import dev.chrisbanes.haze.hazeSource
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -137,6 +155,8 @@ import java.time.ZoneId
 @Composable
 internal fun MemberTimelineScreen(
     entry: MemberMessageEntry,
+    memberName: String,
+    memberAvatarUrl: String?,
     active: Boolean,
     versions: DataVersions,
     playbackState: VoicePlaybackState,
@@ -156,6 +176,8 @@ internal fun MemberTimelineScreen(
     var timelineEntry by remember(entry) { mutableStateOf(entry) }
     val screenScope = rememberCoroutineScope()
     var query by remember(entry) { mutableStateOf("") }
+    // The header shows who this is; search expands from its icon on demand.
+    var searchOpen by remember(entry) { mutableStateOf(false) }
     val workActive = active && com.nogirelay.app.performance.isRelayUiStarted() && !backdropState.isAttached
     val effectiveQuery = rememberSearchQuery(query, workActive)
     var timeFilter by remember(entry) { mutableStateOf(TimeFilter()) }
@@ -193,6 +215,7 @@ internal fun MemberTimelineScreen(
                 // every playback update and pulling the user back while scrolling.
                 timelineEntry = MemberMessageEntry(entry.memberKey, latestPlayback)
                 query = ""
+                searchOpen = false
                 timeFilter = TimeFilter()
             }
             auxiliaryScreen = null
@@ -206,7 +229,12 @@ internal fun MemberTimelineScreen(
         }
         focusManager.clearFocus()
         textToolbar.hide()
-        if (query.isNotEmpty()) query = "" else onBack()
+        if (searchOpen || query.isNotEmpty()) {
+            query = ""
+            searchOpen = false
+        } else {
+            onBack()
+        }
     }
     BackHandler(enabled = active, onBack = ::back)
     LaunchedEffect(active) {
@@ -263,10 +291,20 @@ internal fun MemberTimelineScreen(
                 FloatingTimelineLayout(
                     header = {
                         MemberTimelineHeader(
+                            memberName = memberName,
+                            memberAvatarUrl = memberAvatarUrl,
                             query = query,
+                            searchOpen = searchOpen,
                             active = active,
                             filterActive = timeFilter.isActive,
                             onBack = ::back,
+                            onOpenSearch = { if (active) searchOpen = true },
+                            onCloseSearch = {
+                                focusManager.clearFocus()
+                                textToolbar.hide()
+                                query = ""
+                                searchOpen = false
+                            },
                             onQueryChange = { if (active) query = it },
                             onFilterClick = {
                                 focusManager.clearFocus()
@@ -358,7 +396,7 @@ private fun FilterDrawerEntry(
         depth = GlassDepths.None,
         fillAlpha = 0.34f,
         blur = 14.dp,
-        modifier = Modifier.fillMaxWidth().height(52.dp),
+        modifier = Modifier.fillMaxWidth().height(GlassMetrics.ControlHeight),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -370,7 +408,7 @@ private fun FilterDrawerEntry(
                 text = label,
                 color = GlassColors.Accent,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+                style = GlassType.Callout,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
@@ -650,7 +688,6 @@ private fun MemberTimelineAuxiliaryScreen(
                         onQueryChange = { query = it },
                         enabled = active,
                         placeholder = "搜索收藏的消息",
-                        height = 44.dp,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -848,7 +885,7 @@ private fun MemberMediaMonthHeader(label: String) {
     ) {
         Text(
             text = label,
-            fontSize = 12.sp,
+            style = GlassType.Footnote,
             fontWeight = FontWeight.SemiBold,
             color = GlassColors.InkTertiary,
             maxLines = 1,
@@ -956,7 +993,7 @@ private fun FloatingTimelineLayout(
         }.single().measure(constraints.copy(minHeight = 0))
         val contentTopInset = (headerPlaceable.height.toDp() - 10.dp).coerceAtLeast(0.dp)
         val contentPlaceable = subcompose("timeline") {
-            Box(Modifier.fillMaxSize().hazeSource(timelineHazeState)) {
+            Box(Modifier.fillMaxSize().glassHazeSource(timelineHazeState)) {
                 content(contentTopInset)
             }
         }.single().measure(constraints)
@@ -972,15 +1009,51 @@ private fun FloatingTimelineLayout(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun MemberTimelineHeader(
+    memberName: String,
+    memberAvatarUrl: String?,
     query: String,
+    searchOpen: Boolean,
     active: Boolean,
     filterActive: Boolean,
     onBack: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onCloseSearch: () -> Unit,
     onQueryChange: (String) -> Unit,
     onFilterClick: () -> Unit,
 ) {
+    val reducedMotion = LocalGlassReducedMotion.current
+    val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
+    val morph = remember { Animatable(if (searchOpen) 1f else 0f) }
+    LaunchedEffect(searchOpen) {
+        val target = if (searchOpen) 1f else 0f
+        // Focus first so the keyboard rises together with the expanding field.
+        if (searchOpen) runCatching { focusRequester.requestFocus() }
+        if (reducedMotion) morph.snapTo(target) else morph.animateTo(target, GlassMotion.MorphSpec)
+    }
+
+    // Dismissing the keyboard closes an empty search; with a query the results
+    // stay and the field only loses focus, so they remain explained.
+    val imeVisible = WindowInsets.isImeVisible
+    val currentQuery by rememberUpdatedState(query)
+    var imeShownWhileOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(searchOpen, imeVisible) {
+        when {
+            !searchOpen -> imeShownWhileOpen = false
+            imeVisible -> imeShownWhileOpen = true
+            imeShownWhileOpen -> {
+                imeShownWhileOpen = false
+                if (currentQuery.isEmpty()) onCloseSearch() else focusManager.clearFocus()
+            }
+        }
+    }
+
+    val openInteraction = remember { MutableInteractionSource() }
+    val openPress = rememberGlassPress(openInteraction, enabled = active)
+    val identityShown by remember { derivedStateOf { morph.value < 1f } }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -991,21 +1064,99 @@ private fun MemberTimelineHeader(
     ) {
         GlassBackButton(
             onClick = onBack,
-            contentDescription = if (query.isNotEmpty()) "清空搜索" else "返回成员列表",
+            contentDescription = if (searchOpen) "关闭搜索" else "返回成员列表",
         )
-        GlassSearchField(
-            query = query,
-            onQueryChange = onQueryChange,
-            enabled = active,
-            placeholder = "搜索消息",
-            modifier = Modifier.weight(1f),
-        )
+        Box(Modifier.weight(1f).height(48.dp)) {
+            if (identityShown) {
+                // The name slides aside and fades while the field covers it.
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(end = 58.dp)
+                        .graphicsLayer {
+                            val p = morph.value
+                            alpha = (1f - p / 0.6f).coerceIn(0f, 1f)
+                            translationX = -16.dp.toPx() * p.coerceIn(0f, 1f)
+                        },
+                ) {
+                    MemberTimelineIdentity(name = memberName, avatarUrl = memberAvatarUrl)
+                }
+            }
+            // One body: at rest a 48dp circle with the search glyph (the
+            // button), opened it stretches leftward into the full field.
+            GlassSearchField(
+                query = query,
+                onQueryChange = onQueryChange,
+                enabled = active,
+                placeholder = "搜索消息",
+                focusRequester = focusRequester,
+                height = 48.dp,
+                expansion = { morph.value },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .then(if (searchOpen) Modifier else Modifier.clearAndSetSemantics { })
+                    .layout { measurable, constraints ->
+                        val collapsed = 48.dp.roundToPx()
+                        val p = morph.value.coerceIn(0f, 1f)
+                        val width = (collapsed + (constraints.maxWidth - collapsed) * p).roundToInt()
+                            .coerceIn(collapsed, constraints.maxWidth)
+                        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+                        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                    }
+                    .glassPress(openPress),
+            )
+            if (!searchOpen) {
+                Box(
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .size(48.dp)
+                        .clickable(
+                            interactionSource = openInteraction,
+                            indication = null,
+                            enabled = active,
+                            role = Role.Button,
+                            onClickLabel = "搜索消息",
+                            onClick = onOpenSearch,
+                        )
+                        .semantics { contentDescription = "搜索消息" },
+                )
+            }
+        }
         GlassIconButton(
             onClick = onFilterClick,
             imageVector = Icons.Rounded.FilterList,
             contentDescription = "筛选与更多",
             enabled = active,
             tone = if (filterActive) GlassTone.Accent else GlassTone.Neutral,
+        )
+    }
+}
+
+/** Avatar and name of the open member, at the height of the header controls. */
+@Composable
+private fun MemberTimelineIdentity(name: String, avatarUrl: String?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .semantics(mergeDescendants = true) { heading() },
+    ) {
+        RemoteImage(
+            url = avatarUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            loadCachedImmediately = true,
+            modifier = Modifier.size(38.dp).clip(GlassShapes.Circle),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = name,
+            style = GlassType.Title3,
+            color = GlassColors.Ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }
@@ -1216,27 +1367,8 @@ private fun MemberTimelineContent(
                     onRetry = { retryKey++ },
                 )
             }
-            items(rows, key = { it.key }, contentType = { if (it is MessageTimelineRow.Day) "day" else "message" }) { row ->
+            items(rows, key = { it.key }, contentType = { "message" }) { row ->
                 when (row) {
-                    is MessageTimelineRow.Day -> Box(
-                        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        GlassPanel(
-                            shape = GlassShapes.Capsule,
-                            depth = GlassDepths.None,
-                            fillAlpha = 0.36f,
-                            blur = 12.dp,
-                            edgeStrength = 0.5f,
-                        ) {
-                            Text(
-                                row.label,
-                                fontSize = 11.sp,
-                                color = GlassColors.InkSecondary,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                            )
-                        }
-                    }
                     is MessageTimelineRow.Message -> MessageCard(
                         message = row.message,
                         modifier = Modifier.animateItem(
@@ -1290,7 +1422,7 @@ private fun TimelineBoundary(visible: Boolean, loading: Boolean, error: Boolean,
             when {
                 error -> TextButton(onClick = onRetry) { Text("加载失败，点击重试", color = GlassColors.Accent) }
                 loading -> GlassCircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = GlassColors.Accent)
-                else -> Text(label, fontSize = 11.sp, color = GlassColors.InkTertiary)
+                else -> Text(label, style = GlassType.Caption, color = GlassColors.InkTertiary)
             }
         }
     } else {

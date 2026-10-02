@@ -51,7 +51,6 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -89,7 +88,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -108,6 +106,7 @@ import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassMediaTransition
 import com.nogirelay.app.ui.glass.GlassSlider
 import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.GlassType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -126,7 +125,7 @@ import kotlin.math.abs
 class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
     private var viewerType: MessageType = MessageType.IMAGE
 
-    override fun refreshRatePolicy(): RefreshRatePolicy = RefreshRatePolicy.FollowSystem
+    override fun refreshRatePolicy(): RefreshRatePolicy = RefreshRatePolicy.Maximum
 
     companion object {
         private const val EXTRA_IMAGE_URL = "image_url"
@@ -506,7 +505,7 @@ private fun MediaViewerTopBar(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = title.ifBlank { "乃木坂46" },
-                fontSize = 16.sp,
+                style = GlassType.Title3,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White,
                 maxLines = 1,
@@ -515,7 +514,7 @@ private fun MediaViewerTopBar(
             if (pageIndicator != null) {
                 Text(
                     text = pageIndicator,
-                    fontSize = 12.sp,
+                    style = GlassType.Footnote,
                     color = Color.White.copy(alpha = 0.66f),
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1277,18 +1276,16 @@ private fun VideoBottomBar(
                 Text(
                     text = formatTimeMs(displayPosition),
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                    style = GlassType.Footnote.copy(fontFeatureSettings = "tnum"),
                     color = Color.White,
-                    fontSize = 12.sp,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
                 Text(
                     text = formatTimeMs(duration),
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                    style = GlassType.Footnote.copy(fontFeatureSettings = "tnum"),
                     color = Color.White.copy(alpha = 0.62f),
-                    fontSize = 12.sp,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,

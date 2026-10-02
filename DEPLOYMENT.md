@@ -135,7 +135,7 @@ node upload-session.js ./nogi-browser-state.json https://<YOUR_APP_NAME>.fly.dev
 
 1. **Android 端连接**：
    - 按 [Android 客户端构建与安装](README.md#3-android-客户端构建与安装) 配置与服务端相同 Firebase 项目的 `google-services.json` 并安装 App；
-   - 打开「主页」→「系统与翻译设置」→「FCM 推送服务」；
+   - 打开「主页」→「设置」→「连接」→「FCM 推送服务」；
    - **同步服务地址**：`https://<YOUR_APP_NAME>.fly.dev`，必须使用 HTTPS；
    - **访问令牌**：填写 `CLIENT_TOKEN`，用于注册设备、读取消息和媒体；下方管理端测试命令使用 `ADMIN_TOKEN`；
    - 点击「保存并注册推送」，等待「设备已注册，系统推送已就绪」。主页随后显示「推送已就绪」，表示当前配置的设备注册已成功；实际投递仍需执行下方测试确认；

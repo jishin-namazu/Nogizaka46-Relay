@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -21,12 +20,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.ui.glass.GlassSlider
 import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.abs
@@ -89,9 +88,8 @@ internal fun VoicePlaybackTimeline(
             Text(
                 formatAudioTime(displayedPosition.toInt()),
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
+                style = GlassType.Footnote.copy(fontFeatureSettings = "tnum"),
                 color = GlassColors.InkTertiary,
-                fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -99,8 +97,7 @@ internal fun VoicePlaybackTimeline(
                 formatAudioDuration(duration),
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.End,
-                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
-                fontSize = 12.sp,
+                style = GlassType.Footnote.copy(fontFeatureSettings = "tnum"),
                 color = GlassColors.InkTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -15,8 +15,8 @@ import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 
-/** A cool, translucent body leaves headroom for the white bevel highlights. */
-internal val GlassControlWhite = Color(0xFFF4F6F6)
+/** A cool, translucent body leaves headroom for the bevel highlights. */
+internal val GlassControlBody: Color get() = GlassColors.ControlBody
 
 internal fun controlFillAlpha(tone: GlassTone): Float = when (tone) {
     GlassTone.Neutral -> 0.82f
@@ -25,7 +25,7 @@ internal fun controlFillAlpha(tone: GlassTone): Float = when (tone) {
 }
 
 internal fun controlBodyColor(tone: GlassTone, tint: Color?): Color = tint ?: when (tone) {
-    GlassTone.Neutral -> GlassControlWhite
+    GlassTone.Neutral -> GlassControlBody
     GlassTone.Accent -> GlassColors.Accent
     GlassTone.OnDark -> Color.White
 }
@@ -49,7 +49,9 @@ internal fun glassControlCastShadow(
         radius = (14f * scale * compression).dp,
         spread = (-2f * scale).dp,
         offset = DpOffset(0.dp, (7f * scale * compression).dp),
-        color = Color(0xFF4C5360).copy(alpha = 0.14f * compression * opacity),
+        color = GlassColors.Shadow.copy(
+            alpha = (0.14f * compression * opacity * GlassColors.ShadowStrength).coerceIn(0f, 1f),
+        ),
     )
 }
 
@@ -108,10 +110,11 @@ internal class GlassControlLighting(
 ) {
     private val colored = tone == GlassTone.Accent
     private val base = controlBodyColor(tone, tint)
-    private val rim = if (colored) controlRimColor(base) else Color.White
-    private val lightStrength = strength.coerceIn(0f, 1f)
+    private val rim = if (colored) controlRimColor(base) else GlassColors.RimLight
+    // Dark glass keeps a much fainter bevel so controls don't read as outlines.
+    private val lightStrength = strength.coerceIn(0f, 1f) * if (colored) 1f else GlassColors.RimStrength
     private val surface = Brush.verticalGradient(
-        0f to (if (colored) lerp(base, rim, 0.4f) else Color.White).copy(alpha = 0.10f),
+        0f to (if (colored) lerp(base, rim, 0.4f) else rim).copy(alpha = 0.10f * if (colored) 1f else GlassColors.RimStrength),
         0.28f to Color.Transparent,
         0.70f to Color.Transparent,
         1f to rim.copy(alpha = if (colored) 0.16f else 0.10f),

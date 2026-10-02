@@ -59,7 +59,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
@@ -89,6 +88,7 @@ import com.nogirelay.app.ui.glass.GlassDialogText
 import com.nogirelay.app.ui.glass.GlassDialogTitle
 import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassLinearProgressIndicator
+import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.LocalGlassBlurEnabled
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassSegmentedTabs
@@ -360,7 +360,7 @@ fun DataTransferDrawer(
                 Column(Modifier.weight(1f).padding(end = 12.dp)) {
                     Text(
                         text = "数据管理 · " + kind.label,
-                        fontSize = 20.sp,
+                        style = GlassType.Title2,
                         fontWeight = FontWeight.Bold,
                         color = GlassColors.Ink,
                         maxLines = 1,
@@ -448,7 +448,7 @@ fun DataTransferDrawer(
                         } else {
                             Text(
                                 text = "增量合并：重复条目自动跳过。",
-                                fontSize = 12.sp,
+                                style = GlassType.Footnote,
                                 color = GlassColors.InkSecondary,
                             )
                             SwitchRow(
@@ -475,7 +475,7 @@ fun DataTransferDrawer(
                     enabled = !anyTransferRunning &&
                         (tabIndex != 0 || (members.isNotEmpty() && effectiveSelection.isNotEmpty())),
                     tone = GlassTone.Accent,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(
                         if (tabIndex == 0) Icons.Rounded.Upload else Icons.Rounded.Download,
@@ -676,7 +676,7 @@ internal fun ExportEstimateStatus(
                     )
                     Text(
                         text = if (fromCache) "正在载入统计结果…" else estimateProgressText(progress),
-                        fontSize = 12.sp,
+                        style = GlassType.Footnote,
                         color = GlassColors.InkSecondary,
                         modifier = Modifier.padding(top = 4.dp),
                     )
@@ -685,12 +685,12 @@ internal fun ExportEstimateStatus(
             if (backfilling) {
                 Text(
                     text = "补齐媒体中，完成后重新统计",
-                    fontSize = 12.sp,
+                    style = GlassType.Footnote,
                     color = GlassColors.InkSecondary,
                     modifier = Modifier.padding(top = 4.dp),
                 )
             } else if (failure != null) {
-                Text(failure, color = GlassColors.Danger, fontSize = 12.sp)
+                Text(failure, color = GlassColors.Danger, style = GlassType.Footnote)
             }
         }
     }
@@ -713,7 +713,7 @@ private fun ExportEstimateSummary(
     Text(
         text = estimate.records.toString() + " 条记录" +
             if (includeMedia) mediaBreakdown(estimate) else " · 不含媒体",
-        fontSize = 12.sp,
+        style = GlassType.Footnote,
         color = GlassColors.InkSecondary,
         modifier = Modifier.padding(top = 2.dp),
     )
@@ -736,7 +736,7 @@ private fun ExportEstimateSummary(
                     onClick = { onBackfill(estimate) },
                     tone = GlassTone.Accent,
                     depth = GlassDepths.None,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("补齐缺失媒体（$displayedMissingCount）", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -768,7 +768,7 @@ private fun MemberSelectionField(
         ) {
             Text(
                 title,
-                fontSize = 14.sp,
+                style = GlassType.Callout,
                 fontWeight = FontWeight.Medium,
                 color = GlassColors.Ink.copy(alpha = if (enabled) 1f else 0.45f),
                 maxLines = 1,
@@ -777,7 +777,7 @@ private fun MemberSelectionField(
             )
             Text(
                 summary,
-                fontSize = 13.sp,
+                style = GlassType.Subhead,
                 color = GlassColors.InkSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -819,7 +819,7 @@ private fun SwitchRow(
     ) {
         Text(
             label,
-            fontSize = 14.sp,
+            style = GlassType.Callout,
             color = GlassColors.Ink,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -860,13 +860,13 @@ private fun TransferStatusCard(
                             "已处理 " + transfer.done + " 条"
                         },
                         color = GlassColors.InkSecondary,
-                        fontSize = 12.sp,
+                        style = GlassType.Footnote,
                     )
                     Spacer(Modifier.height(12.dp))
 
                     GlassCapsuleButton(
                         onClick = onCancel,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        modifier = Modifier.fillMaxWidth(),
                     ) { Text("取消", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
                 transfer.error != null -> {
@@ -881,18 +881,18 @@ private fun TransferStatusCard(
                         is TransferOutcome.Export -> {
                             Text("导出完成", fontWeight = FontWeight.Bold, color = GlassColors.Accent)
                             Spacer(Modifier.height(6.dp))
-                            Text(outcome.report.outputName, fontSize = 12.sp, color = GlassColors.Ink)
+                            Text(outcome.report.outputName, style = GlassType.Footnote, color = GlassColors.Ink)
                             Text(
                                 text = outcome.report.recordCount.toString() + " 条记录 · " +
                                     outcome.report.mediaCount + " 个媒体（" +
                                     formatBytes(outcome.report.mediaBytes) + "）",
-                                fontSize = 12.sp,
+                                style = GlassType.Footnote,
                                 color = GlassColors.InkSecondary,
                             )
                             if (outcome.report.skippedCount > 0) {
                                 Text(
                                     text = outcome.report.skippedCount.toString() + " 个媒体未缓存，未写入归档",
-                                    fontSize = 12.sp,
+                                    style = GlassType.Footnote,
                                     color = GlassColors.InkSecondary,
                                 )
                             }
@@ -906,13 +906,13 @@ private fun TransferStatusCard(
                                     " · 已有 " + outcome.report.reused +
                                     " · 跳过 " + outcome.report.notFound +
                                     " · 失败 " + outcome.report.failed,
-                                fontSize = 12.sp,
+                                style = GlassType.Footnote,
                                 color = GlassColors.InkSecondary,
                             )
                             outcome.report.errors.forEach { message ->
                                 Text(
                                     text = message,
-                                    fontSize = 12.sp,
+                                    style = GlassType.Footnote,
                                     color = GlassColors.Danger,
                                 )
                             }
@@ -925,7 +925,7 @@ private fun TransferStatusCard(
                                     outcome.report.duplicates + " · 译文新增 " +
                                     outcome.report.translationsBackfilled + " · 链接刷新 " +
                                     outcome.report.linksRefreshed,
-                                fontSize = 12.sp,
+                                style = GlassType.Footnote,
                                 color = GlassColors.InkSecondary,
                             )
                             Text(
@@ -933,7 +933,7 @@ private fun TransferStatusCard(
                                     "（" + formatBytes(outcome.report.mediaBytes) + "）" +
                                     " · 媒体重复 " + outcome.report.mediaReused +
                                     " · 失败 " + outcome.report.mediaFailed,
-                                fontSize = 12.sp,
+                                style = GlassType.Footnote,
                                 color = GlassColors.InkSecondary,
                             )
                         }

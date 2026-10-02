@@ -30,7 +30,6 @@ import dev.chrisbanes.haze.glass.GlassStyle
 import dev.chrisbanes.haze.glass.OpticalSizeValue
 import dev.chrisbanes.haze.glass.SurfaceProfile
 import dev.chrisbanes.haze.glass.hazeGlass
-import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
 /**
@@ -60,7 +59,7 @@ fun GlassBackdrop(
         Box(
             Modifier
                 .matchParentSize()
-                .hazeSource(hazeState)
+                .glassHazeSource(hazeState)
                 .drawWithCache {
                     onDrawBehind { drawRect(background) }
                 },
@@ -95,12 +94,13 @@ private fun glassStyle(
     control: Boolean,
 ): GlassStyle {
     val accent = GlassColors.Accent
+    val palette = GlassColors.palette
     val body = when (tone) {
-        GlassTone.Neutral -> Color.White
+        GlassTone.Neutral -> palette.neutralBody
         GlassTone.Accent -> accent
         GlassTone.OnDark -> Color.White
     }
-    val style = remember(shape, tone, fillAlpha, blurDp, specular, tintOverride, control) {
+    val style = remember(shape, tone, fillAlpha, blurDp, specular, tintOverride, control, palette) {
         GlassStyle.regular.then {
             optics(
                 GlassDefaults.optics.copy(
@@ -124,8 +124,8 @@ private fun glassStyle(
             )
             shape(shape)
             surfaceProfile(SurfaceProfile.Squircle)
-            specularIntensity(specular)
-            ambientResponse(GlassOpticsPresets.Ambient)
+            specularIntensity(specular * palette.glassLight)
+            ambientResponse(GlassOpticsPresets.Ambient * palette.glassLight)
             edgeSoftness(GlassOpticsPresets.EdgeSoftness.dp)
             fresnelExponent(GlassOpticsPresets.FresnelExponent)
             specularExponent(GlassOpticsPresets.SpecularExponent)
@@ -228,7 +228,7 @@ fun Modifier.glass(
                     it.copy(alpha = (it.alpha * fillAlpha).coerceIn(0f, 1f))
                 }
             } else tint ?: when (tone) {
-                GlassTone.Neutral -> Color.White.copy(alpha = 0.94f)
+                GlassTone.Neutral -> GlassColors.NeutralFallback
                 GlassTone.Accent -> GlassColors.Accent.copy(alpha = 0.92f)
                 GlassTone.OnDark -> Color(0xFF26272E).copy(alpha = 0.88f)
             }
@@ -287,7 +287,11 @@ fun Modifier.glassEdgeLight(
         GlassTone.Accent -> lerp(GlassColors.Accent, Color.White, 0.72f)
         else -> GlassColors.EdgeLight
     }
-    val edgeStrength = if (tone == GlassTone.OnDark) strength * 0.55f else strength
+    val edgeStrength = when (tone) {
+        GlassTone.OnDark -> strength * 0.55f
+        GlassTone.Neutral -> strength * GlassColors.RimStrength
+        GlassTone.Accent -> strength
+    }
     val rimBrush = Brush.linearGradient(
         0f to bright.copy(alpha = 0.85f * edgeStrength),
         0.28f to bright.copy(alpha = 0.38f * edgeStrength),
@@ -297,7 +301,7 @@ fun Modifier.glassEdgeLight(
         end = Offset(size.width * 0.72f, size.height),
     )
     val innerGlow = Brush.verticalGradient(
-        0f to Color.White.copy(alpha = 0.30f * edgeStrength),
+        0f to GlassColors.RimLight.copy(alpha = 0.30f * edgeStrength),
         0.16f to Color.Transparent,
         0.88f to Color.Transparent,
         1f to GlassColors.EdgeShade.copy(alpha = 0.10f * edgeStrength),

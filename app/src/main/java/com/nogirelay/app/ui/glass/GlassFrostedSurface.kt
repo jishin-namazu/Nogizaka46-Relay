@@ -70,10 +70,11 @@ fun Modifier.frostedGlass(
 ): Modifier {
     val state = sourceState
     val enabled = LocalGlassBlurEnabled.current && Build.VERSION.SDK_INT >= 31 && state != null
-    val style = remember(blur) {
+    val controlBody = GlassControlBody
+    val style = remember(blur, controlBody) {
         HazeBlurStyle {
             blurRadius(blur)
-            backgroundColor(GlassControlWhite)
+            backgroundColor(controlBody)
             colorEffects(emptyList())
             noiseFactor(0.01f)
         }
@@ -95,10 +96,11 @@ fun Modifier.frostedGlass(
 @Composable
 fun Modifier.progressiveGlassHeader(state: HazeState): Modifier {
     val enabled = LocalGlassBlurEnabled.current && Build.VERSION.SDK_INT >= 31
-    val style = remember {
+    val controlBody = GlassControlBody
+    val style = remember(controlBody) {
         HazeBlurStyle {
             blurRadius(28.dp)
-            backgroundColor(GlassControlWhite)
+            backgroundColor(controlBody)
             colorEffects(emptyList())
             noiseFactor(0f)
             progressive(HazeProgressive.verticalGradient(startIntensity = 1f, endIntensity = 0f))
@@ -114,8 +116,8 @@ fun Modifier.progressiveGlassHeader(state: HazeState): Modifier {
     } else Modifier)
         .drawWithCache {
             val veil = Brush.verticalGradient(
-                0f to GlassControlWhite.copy(alpha = if (enabled) 0.46f else 0.94f),
-                0.5f to GlassControlWhite.copy(alpha = if (enabled) 0.22f else 0.66f),
+                0f to GlassControlBody.copy(alpha = if (enabled) 0.46f else 0.94f),
+                0.5f to GlassControlBody.copy(alpha = if (enabled) 0.22f else 0.66f),
                 1f to Color.Transparent,
             )
             onDrawBehind { drawRect(veil) }

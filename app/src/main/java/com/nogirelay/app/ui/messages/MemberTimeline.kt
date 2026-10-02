@@ -2,6 +2,7 @@ package com.nogirelay.app.ui.messages
 
 import com.nogirelay.app.data.RelayMessage
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -132,33 +133,45 @@ internal sealed interface MessageTimelineRow {
     data class Message(val message: RelayMessage) : MessageTimelineRow {
         override val key: String = "message:${message.id}"
     }
-
-    data class Day(override val key: String, val label: String) : MessageTimelineRow
 }
 
-internal fun messageTimelineRows(
-    messages: List<RelayMessage>,
-    zone: ZoneId = ZoneId.systemDefault(),
-): List<MessageTimelineRow> = buildList {
-    val days = messages.map { messageLocalDateTime(it.sentAt, zone)?.toLocalDate() }
-    val occurrences = mutableMapOf<String, Int>()
-    messages.forEachIndexed { index, message ->
-        add(MessageTimelineRow.Message(message))
-        if (index == messages.lastIndex || days[index] != days[index + 1]) {
-            val day = days[index]
-            val dayKey = day?.toString() ?: "unknown"
-            val occurrence = occurrences.getOrDefault(dayKey, 0)
-            occurrences[dayKey] = occurrence + 1
-            add(MessageTimelineRow.Day("day:$dayKey:$occurrence", day?.format(timelineDayFormatter) ?: "日期未知"))
-        }
-    }
-}
+/** One row per message; every card carries its own tiered date, so no day separators. */
+internal fun messageTimelineRows(messages: List<RelayMessage>): List<MessageTimelineRow> =
+    messages.map(MessageTimelineRow::Message)
 
 internal fun timelineListIndex(rows: List<MessageTimelineRow>, messageId: String): Int? =
     rows.indexOfFirst { it.key == "message:$messageId" }.takeIf { it >= 0 }?.plus(1)
 
-internal fun formatTimelineTime(value: String): String =
-    messageLocalDateTime(value)?.format(timelineTimeFormatter) ?: value
+/**
+ * Tiered list time: today shows the clock time, yesterday "昨天", this year
+ * MM-dd and earlier years yyyy-MM-dd.
+ */
+internal fun formatListTime(value: String, today: LocalDate = LocalDate.now()): String {
+    val time = messageLocalDateTime(value) ?: return value
+    val day = time.toLocalDate()
+    return when {
+        day == today -> time.format(clockFormatter)
+        day == today.minusDays(1) -> "昨天"
+        day.year == today.year -> time.format(monthDayFormatter)
+        else -> time.format(fullDateFormatter)
+    }
+}
+
+/**
+ * Message card time: the same tiers as [formatListTime], always followed by
+ * the clock time, e.g. "14:05", "昨天 14:05", "05-01 14:05", "2023-05-01 14:05".
+ */
+internal fun formatTimelineTime(value: String, today: LocalDate = LocalDate.now()): String {
+    val time = messageLocalDateTime(value) ?: return value
+    val day = time.toLocalDate()
+    val clock = time.format(clockFormatter)
+    return when {
+        day == today -> clock
+        day == today.minusDays(1) -> "昨天 $clock"
+        day.year == today.year -> "${time.format(monthDayFormatter)} $clock"
+        else -> "${time.format(fullDateFormatter)} $clock"
+    }
+}
 
 internal fun messageLocalDateTime(value: String, zone: ZoneId = ZoneId.systemDefault()): LocalDateTime? {
     val input = value.trim()
@@ -167,5 +180,6 @@ internal fun messageLocalDateTime(value: String, zone: ZoneId = ZoneId.systemDef
     return runCatching { LocalDateTime.parse(input.replace(' ', 'T')) }.getOrNull()
 }
 
-private val timelineDayFormatter = DateTimeFormatter.ofPattern("yyyy年M月d日")
-private val timelineTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val clockFormatter = DateTimeFormatter.ofPattern("HH:mm")
+private val monthDayFormatter = DateTimeFormatter.ofPattern("MM-dd")
+private val fullDateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")

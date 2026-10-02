@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -61,24 +60,26 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.RemoteImage
+import com.nogirelay.app.ui.SyncSystemBarsWithTheme
 import com.nogirelay.app.ui.glass.GlassBackdrop
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
 import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
 import com.nogirelay.app.ui.glass.GlassColors
-import com.nogirelay.app.ui.glass.GlassControlWhite
+import com.nogirelay.app.ui.glass.GlassControlBody
 import com.nogirelay.app.ui.glass.GlassDepths
 import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassMotion
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.GlassType
+import com.nogirelay.app.ui.isAppInDarkMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -98,9 +99,10 @@ class BlogImageDownloadActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val lightBars = !isAppInDarkMode()
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = true
-            isAppearanceLightNavigationBars = true
+            isAppearanceLightStatusBars = lightBars
+            isAppearanceLightNavigationBars = lightBars
         }
         AppGraph.initialize(this)
         val blog = intent.getStringExtra(EXTRA_BLOG_ID)?.let(AppGraph.database::findBlog)
@@ -110,6 +112,7 @@ class BlogImageDownloadActivity : ComponentActivity() {
         }
         setContent {
             NogiRelayTheme {
+                SyncSystemBarsWithTheme()
                 GlassBackdrop(modifier = Modifier.fillMaxSize()) {
                     BlogImageDownloadScreen(blog = blog, onBack = ::finish)
                 }
@@ -193,7 +196,7 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(
                     "选择要下载的图片",
-                    fontSize = 18.sp,
+                    style = GlassType.Title2,
                     fontWeight = FontWeight.Bold,
                     color = GlassColors.Ink,
                     maxLines = 2,
@@ -204,7 +207,7 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = GlassColors.InkSecondary,
-                    fontSize = 12.5.sp,
+                    style = GlassType.Subhead,
                 )
             }
         }
@@ -268,7 +271,7 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                     Text(
                         "已选 ${selectedUrls.size} / ${urls.size}",
                         color = GlassColors.InkSecondary,
-                        fontSize = 13.sp,
+                        style = GlassType.Subhead,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -287,7 +290,7 @@ private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
                     },
                     enabled = selectedUrls.isNotEmpty() && !downloading,
                     tone = GlassTone.Accent,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     AnimatedContent(
                         targetState = when {
@@ -371,7 +374,7 @@ private fun BlogImageCell(
         onClickLabel = "第 ${index + 1} 张博客图片",
         shape = GlassShapes.Card,
         tone = GlassTone.Accent,
-        tint = lerp(GlassControlWhite, GlassColors.Accent, selection),
+        tint = lerp(GlassControlBody, GlassColors.Accent, selection),
         fillAlpha = 0.24f + 0.28f * selection,
         depth = GlassDepths.Low,
         shadowAlpha = selection,

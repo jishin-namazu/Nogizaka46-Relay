@@ -57,7 +57,6 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -332,7 +331,7 @@ fun GlassPopoverItem(
         Text(
             text = label,
             color = tint.copy(alpha = if (enabled) 1f else 0.4f),
-            fontSize = 14.5.sp,
+            style = GlassType.Callout,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

@@ -8,6 +8,13 @@ enum class IncomingCallStyle {
     LIQUID_GLASS,
 }
 
+/** App appearance; [SYSTEM] follows the device's light/dark setting. */
+enum class ThemeMode(val label: String) {
+    SYSTEM("跟随系统"),
+    LIGHT("浅色"),
+    DARK("深色"),
+}
+
 data class AppSettings(
     val relayUrl: String = "",
     val accessToken: String = "",

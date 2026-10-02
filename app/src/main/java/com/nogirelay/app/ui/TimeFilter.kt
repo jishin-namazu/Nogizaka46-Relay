@@ -41,11 +41,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.nogirelay.app.ui.glass.GlassBottomSheet
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
 import com.nogirelay.app.ui.glass.GlassChip
 import com.nogirelay.app.ui.glass.GlassColors
+import com.nogirelay.app.ui.glass.GlassDepths
 import com.nogirelay.app.ui.glass.GlassDialog
 import com.nogirelay.app.ui.glass.GlassDialogTitle
 import com.nogirelay.app.ui.glass.GlassIconButton
@@ -54,6 +54,7 @@ import com.nogirelay.app.ui.glass.GlassPopover
 import com.nogirelay.app.ui.glass.GlassPopoverItem
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.glassPopoverAnchor
 import com.nogirelay.app.ui.glass.rememberGlassPopoverState
 import java.time.Instant
@@ -154,7 +155,7 @@ fun TimeFilterSection(
     val customRowMotion = tween<IntSize>(220, easing = FastOutSlowInEasing)
 
     Column(modifier) {
-        Text("时间", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = GlassColors.Ink)
+        Text("时间", style = GlassType.Callout, fontWeight = FontWeight.SemiBold, color = GlassColors.Ink)
         Spacer(Modifier.height(8.dp))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -218,18 +219,20 @@ fun TimeFilterSection(
                 ) {
                     RangeDateCapsule(
                         text = shownStartDay?.let(::formatDay) ?: "开始日期",
+                        chosen = shownStartDay != null,
                         onClick = { picking = PickTarget.START },
                         modifier = Modifier.weight(1f),
                     )
-                    Text("至", fontSize = 12.sp, color = GlassColors.InkSecondary)
+                    Text("至", style = GlassType.Footnote, color = GlassColors.InkSecondary)
                     RangeDateCapsule(
                         text = shownEndDay?.let(::formatDay) ?: "结束日期",
+                        chosen = shownEndDay != null,
                         onClick = { picking = PickTarget.END },
                         modifier = Modifier.weight(1f),
                     )
                 }
                 if (shownStartDay != null && shownEndDay != null && shownEndDay.isBefore(shownStartDay)) {
-                    Text("结束日期早于开始日期", color = GlassColors.Danger, fontSize = 12.sp)
+                    Text("结束日期早于开始日期", color = GlassColors.Danger, style = GlassType.Footnote)
                 }
             }
         }
@@ -262,18 +265,20 @@ fun TimeFilterSection(
     }
 }
 
+/** Start / end date button, styled as a sibling of the time chips above it. */
 @Composable
-private fun RangeDateCapsule(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun RangeDateCapsule(text: String, chosen: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     GlassCapsuleButton(
         onClick = onClick,
-        height = 44.dp,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
+        depth = GlassDepths.None,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp),
         modifier = modifier,
     ) {
         Text(
             text,
-            fontSize = 12.5.sp,
-            fontWeight = FontWeight.SemiBold,
+            style = GlassType.Callout,
+            fontWeight = FontWeight.Medium,
+            color = if (chosen) GlassColors.Ink else GlassColors.InkSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
@@ -306,7 +311,7 @@ fun TimeFilterDialog(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "消息筛选",
-                    fontSize = 20.sp,
+                    style = GlassType.Title2,
                     fontWeight = FontWeight.Bold,
                     color = GlassColors.Ink,
                     maxLines = 1,
@@ -338,7 +343,7 @@ fun TimeFilterDialog(
             ) {
                 GlassCapsuleButton(
                     onClick = { dismiss(onDismiss) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    modifier = Modifier.weight(1f),
                 ) {
                     Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                 }
@@ -346,7 +351,7 @@ fun TimeFilterDialog(
                     onClick = { dismiss { onConfirm(draft) } },
                     enabled = !draft.hasInvertedRange(),
                     tone = GlassTone.Accent,
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    modifier = Modifier.weight(1f),
                 ) {
                     Text("确定", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -456,7 +461,6 @@ private fun DayPartSelector(
     Box(modifier) {
         GlassCapsuleButton(
             onClick = { popover.open() },
-            height = 42.dp,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -464,7 +468,7 @@ private fun DayPartSelector(
         ) {
             Text(
                 value?.let { "$it$unit" } ?: unit,
-                fontSize = 13.sp,
+                style = GlassType.Callout,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

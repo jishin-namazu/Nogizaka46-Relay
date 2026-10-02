@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
@@ -54,13 +55,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
 /**
@@ -109,7 +108,7 @@ fun GlassSwitch(
         label = "glass_switch_tint",
     )
     val tintFraction = tintProgress.coerceIn(0f, 1f)
-    val trackTint = lerp(GlassControlWhite, GlassColors.Accent, tintFraction)
+    val trackTint = lerp(GlassControlBody, GlassColors.Accent, tintFraction)
     val trackAlpha = controlFillAlpha(GlassTone.Neutral) +
         (controlFillAlpha(GlassTone.Accent) - controlFillAlpha(GlassTone.Neutral)) * tintFraction
 
@@ -199,7 +198,7 @@ fun GlassSlider(
 
     BoxWithConstraints(
         modifier = modifier
-            .height(44.dp)
+            .height(GlassMetrics.ControlHeight)
             .semantics {
                 if (thumbContentDescription != null) contentDescription = thumbContentDescription
             },
@@ -295,7 +294,7 @@ fun GlassSegmentedTabs(
     val shape = GlassShapes.Capsule
     Box(
         modifier = modifier
-            .height(44.dp)
+            .height(GlassMetrics.ControlHeight)
             .glassControlShadow(shape)
             .clip(shape)
             .glass(
@@ -349,7 +348,7 @@ fun GlassSegmentedTabs(
                     Text(
                         text = label,
                         color = lerp(GlassColors.InkSecondary, GlassColors.OnAccent, selectedProgress.coerceIn(0f, 1f)),
-                        fontSize = 13.5.sp,
+                        style = GlassType.Callout,
                         fontWeight = if (selectedProgress > 0.5f) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -375,11 +374,17 @@ fun GlassSearchField(
     focusRequester: FocusRequester? = null,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
-    height: Dp = 46.dp,
+    height: Dp = GlassMetrics.ControlHeight,
+    expansion: (() -> Float)? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val focused by interactionSource.collectIsFocusedAsState()
     val shape = GlassShapes.Field
+    // While the field grows out of a circular search button, its text fades
+    // in late and the glyph starts in the button's ink color.
+    val textAlpha: GraphicsLayerScope.() -> Unit = {
+        alpha = expansion?.let { ((it() - 0.35f) / 0.65f).coerceIn(0f, 1f) } ?: 1f
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
@@ -387,23 +392,37 @@ fun GlassSearchField(
             .glassInputSurface(shape, focused, interactionSource)
             .padding(start = 14.dp, end = 4.dp),
     ) {
-        Icon(
-            imageVector = Icons.Rounded.Search,
-            contentDescription = null,
-            tint = (if (focused) GlassColors.Accent else GlassColors.InkTertiary).copy(
-                alpha = if (enabled) 1f else 0.4f,
-            ),
-            modifier = Modifier.size(20.dp),
-        )
+        Box(Modifier.size(20.dp)) {
+            Icon(
+                imageVector = Icons.Rounded.Search,
+                contentDescription = null,
+                tint = (if (focused) GlassColors.Accent else GlassColors.InkTertiary).copy(
+                    alpha = if (enabled) 1f else 0.4f,
+                ),
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer { alpha = expansion?.invoke()?.coerceIn(0f, 1f) ?: 1f },
+            )
+            if (expansion != null) {
+                Icon(
+                    imageVector = Icons.Rounded.Search,
+                    contentDescription = null,
+                    tint = GlassColors.Ink.copy(alpha = if (enabled) 1f else 0.42f),
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = 1f - expansion().coerceIn(0f, 1f) },
+                )
+            }
+        }
         Box(
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+            modifier = Modifier.weight(1f).padding(horizontal = 8.dp).graphicsLayer(textAlpha),
             contentAlignment = Alignment.CenterStart,
         ) {
             if (query.isEmpty()) {
                 Text(
                     text = placeholder,
                     color = GlassColors.InkTertiary.copy(alpha = if (enabled) 1f else 0.4f),
-                    fontSize = 14.5.sp,
+                    style = GlassType.Callout,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -416,9 +435,8 @@ fun GlassSearchField(
                 keyboardOptions = keyboardOptions,
                 keyboardActions = keyboardActions,
                 interactionSource = interactionSource,
-                textStyle = TextStyle(
+                textStyle = GlassType.Callout.copy(
                     color = GlassColors.Ink.copy(alpha = if (enabled) 1f else 0.4f),
-                    fontSize = 14.5.sp,
                 ),
                 cursorBrush = SolidColor(GlassColors.Accent),
                 modifier = Modifier
@@ -479,8 +497,7 @@ fun GlassTextField(
                 Text(
                     text = label,
                     color = if (focused) GlassColors.Accent else GlassColors.InkTertiary,
-                    fontSize = 10.5.sp,
-                    lineHeight = 13.sp,
+                    style = GlassType.Caption,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -493,7 +510,7 @@ fun GlassTextField(
                         Text(
                             text = placeholder,
                             color = GlassColors.InkTertiary.copy(alpha = if (enabled) 1f else 0.4f),
-                            fontSize = 14.sp,
+                            style = GlassType.Callout,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -507,7 +524,7 @@ fun GlassTextField(
                         visualTransformation = visualTransformation,
                         interactionSource = interactionSource,
                         cursorBrush = SolidColor(GlassColors.Accent),
-                        textStyle = TextStyle(fontSize = 14.sp, color = GlassColors.Ink.copy(alpha = if (enabled) 1f else 0.4f)),
+                        textStyle = GlassType.Callout.copy(color = GlassColors.Ink.copy(alpha = if (enabled) 1f else 0.4f)),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

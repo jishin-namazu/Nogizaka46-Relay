@@ -39,7 +39,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -54,11 +53,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.nogirelay.app.performance.LocalRelayPageWorkPaused
+import com.nogirelay.app.performance.MaximumRefreshRateForDialog
 import com.nogirelay.app.ui.RelaySheetBackdropState
 import kotlinx.coroutines.launch
 
@@ -82,6 +81,7 @@ fun GlassDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         val window = (LocalView.current.parent as DialogWindowProvider).window
+        MaximumRefreshRateForDialog()
         DisposableEffect(window) {
             // A tall lazy grid otherwise makes Dialog switch from WRAP_CONTENT
             // to MATCH_PARENT after measuring, recentering the card mid-entry.
@@ -142,7 +142,7 @@ fun GlassDialogTitle(text: String) {
     Text(
         text = text,
         color = GlassColors.Ink,
-        fontSize = 19.sp,
+        style = GlassType.Title2,
         fontWeight = FontWeight.Bold,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
@@ -154,8 +154,7 @@ fun GlassDialogText(text: String) {
     Text(
         text = text,
         color = GlassColors.InkSecondary,
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
+        style = GlassType.Callout,
     )
 }
 
@@ -253,7 +252,7 @@ fun GlassBottomSheet(
         containerColor = GlassColors.SheetSurface,
         contentColor = GlassColors.Ink,
         tonalElevation = 0.dp,
-        scrimColor = Color(0x33090A10),
+        scrimColor = GlassColors.Scrim,
         shape = GlassShapes.Sheet,
     ) {
         CompositionLocalProvider(
@@ -286,6 +285,7 @@ fun GlassBottomSheet(
                     .glassOverlaySource(overlayLayer)
                     .background(GlassColors.SheetSurface),
             ) {
+                MaximumRefreshRateForDialog()
                 content(::dismiss) {
                     Box(
                         Modifier.fillMaxWidth().height(40.dp)

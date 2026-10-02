@@ -55,6 +55,7 @@ import com.nogirelay.app.performance.LocalRelayPageWorkPaused
 import com.nogirelay.app.performance.imageSampleSize
 import com.nogirelay.app.performance.imageScaledDensities
 import com.nogirelay.app.performance.isRelayUiStarted
+import com.nogirelay.app.ui.glass.GlassColors
 import java.io.File
 import java.io.FileInputStream
 import kotlinx.coroutines.CancellationException
@@ -178,7 +179,7 @@ fun RemoteImage(
     messageType: MessageType = MessageType.IMAGE,
     message: RelayMessage? = null,
     placeholderResId: Int? = null,
-    placeholderColor: Color = Color(0xFFE7E2EA),
+    placeholderColor: Color = GlassColors.Placeholder,
     onAspectRatio: ((Float) -> Unit)? = null,
     previewUrl: String? = null,
     crossfadeDurationMillis: Int = 0,

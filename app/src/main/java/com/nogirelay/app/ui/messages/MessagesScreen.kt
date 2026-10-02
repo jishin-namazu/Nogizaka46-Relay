@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Forum
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,7 +41,6 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nogirelay.app.data.AppGraph
@@ -50,7 +48,6 @@ import com.nogirelay.app.data.DataChange
 import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.RelayMessage
-import com.nogirelay.app.data.transfer.ExportKind
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
@@ -58,11 +55,11 @@ import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.ui.AutoClearSelectionOnExit
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassHeader
-import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
+import com.nogirelay.app.ui.glass.GlassType
+import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
 import com.nogirelay.app.ui.rememberRelaySheetBackdropState
-import com.nogirelay.app.ui.transfer.DataTransferDrawer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -106,12 +103,12 @@ fun MessagesScreen(
     val selectedMemberId = selectedEntry?.memberKey
     var viewingLatest by remember(selectedEntry) { mutableStateOf(false) }
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
-    var showDataDrawer by remember { mutableStateOf(false) }
     val inboxListState = rememberLazyListState()
     var transitionContainerBounds by remember { mutableStateOf(Rect.Zero) }
     // The timeline stays composed while it collapses back into its card.
     var shownEntry by remember { mutableStateOf<MemberMessageEntry?>(null) }
     val containerProgress = remember { Animatable(0f, visibilityThreshold = 0.0002f) }
+    val reducedMotion = LocalGlassReducedMotion.current
 
     fun openMember(memberKey: String, notificationMessageId: String? = null, fromCard: Boolean = false) {
         openedCardThreadId = memberKey.takeIf { fromCard }
@@ -125,7 +122,6 @@ fun MessagesScreen(
     LaunchedEffect(isActive) {
         if (!isActive) {
             selectedEntry = null
-            showDataDrawer = false
             inboxListState.scrollToItem(0)
         }
     }
@@ -141,10 +137,10 @@ fun MessagesScreen(
                 withFrameNanos { }
                 withFrameNanos { }
             }
-            containerProgress.animateTo(1f, CardContainerSpring)
+            if (reducedMotion) containerProgress.snapTo(1f) else containerProgress.animateTo(1f, CardContainerSpring)
         } else if (shownEntry != null) {
             if (isActive) {
-                containerProgress.animateTo(0f, CardContainerSpring)
+                if (!reducedMotion) containerProgress.animateTo(0f, CardContainerSpring)
                 // Settle exactly on the card before it returns to its list state.
                 containerProgress.snapTo(0f)
                 withFrameNanos { }
@@ -252,14 +248,14 @@ fun MessagesScreen(
                         Text(
                             "还没有同步消息",
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp,
+                            style = GlassType.Title3,
                             color = GlassColors.Ink,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "保存同步设置后，新消息会出现在这里",
                             color = GlassColors.InkSecondary,
-                            fontSize = 13.sp,
+                            style = GlassType.Subhead,
                         )
                     }
                 }
@@ -277,8 +273,11 @@ fun MessagesScreen(
                     val timeline: @Composable () -> Unit = {
                         if (entry != null) {
                             key(entry) {
+                                val member = threads.firstOrNull { it.id == entry.memberKey }
                                 MemberTimelineScreen(
                                     entry = entry,
+                                    memberName = member?.name.orEmpty(),
+                                    memberAvatarUrl = member?.avatarUrl,
                                     active = isActive && selectedEntry === entry,
                                     versions = versions,
                                     playbackState = playbackState,
@@ -335,16 +334,7 @@ fun MessagesScreen(
                             )
                         },
                         header = {
-                            GlassHeader(
-                                title = "消息",
-                                actions = {
-                                    GlassIconButton(
-                                        onClick = { showDataDrawer = true },
-                                        imageVector = Icons.Rounded.Settings,
-                                        contentDescription = "数据管理",
-                                    )
-                                },
-                            )
+                            GlassHeader(title = "消息")
                         },
                         onSelect = { thread, fromCard -> openMember(thread.id, fromCard = fromCard) },
                     )
@@ -352,14 +342,6 @@ fun MessagesScreen(
                         MemberSlideContainer(progress) { timeline() }
                     }
                 }
-            }
-
-            if (showDataDrawer) {
-                DataTransferDrawer(
-                    kind = ExportKind.MESSAGES,
-                    backdropState = sheetBackdrop,
-                    onDismiss = { showDataDrawer = false },
-                )
             }
         }
     }
