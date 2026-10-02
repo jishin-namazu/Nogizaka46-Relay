@@ -4,15 +4,9 @@ import android.Manifest
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -32,15 +26,21 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -101,13 +101,20 @@ fun MessagesScreen(
     }
     val playbackState by playbackFlow.collectAsStateWithLifecycle(initialValue = VoicePlaybackState())
     var selectedEntry by remember { mutableStateOf<MemberMessageEntry?>(null) }
+    // Set when the member was opened from its inbox card, which then expands.
+    var openedCardThreadId by remember { mutableStateOf<String?>(null) }
     val selectedMemberId = selectedEntry?.memberKey
     var viewingLatest by remember(selectedEntry) { mutableStateOf(false) }
     var pendingDownload by remember { mutableStateOf<RelayMessage?>(null) }
     var showDataDrawer by remember { mutableStateOf(false) }
     val inboxListState = rememberLazyListState()
+    var transitionContainerBounds by remember { mutableStateOf(Rect.Zero) }
+    // The timeline stays composed while it collapses back into its card.
+    var shownEntry by remember { mutableStateOf<MemberMessageEntry?>(null) }
+    val containerProgress = remember { Animatable(0f, visibilityThreshold = 0.0002f) }
 
-    fun openMember(memberKey: String, notificationMessageId: String? = null) {
+    fun openMember(memberKey: String, notificationMessageId: String? = null, fromCard: Boolean = false) {
+        openedCardThreadId = memberKey.takeIf { fromCard }
         selectedEntry = MemberMessageEntry(
             memberKey = memberKey,
             playbackState = VoicePlaybackService.playbackState.value,
@@ -120,6 +127,32 @@ fun MessagesScreen(
             selectedEntry = null
             showDataDrawer = false
             inboxListState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(selectedEntry) {
+        val target = selectedEntry
+        if (target != null) {
+            val fromClosed = shownEntry == null
+            shownEntry = target
+            if (fromClosed) {
+                // Let the timeline compose its first frame at card size before
+                // the spring starts, so that heavy frame isn't skipped over.
+                withFrameNanos { }
+                withFrameNanos { }
+            }
+            containerProgress.animateTo(1f, CardContainerSpring)
+        } else if (shownEntry != null) {
+            if (isActive) {
+                containerProgress.animateTo(0f, CardContainerSpring)
+                // Settle exactly on the card before it returns to its list state.
+                containerProgress.snapTo(0f)
+                withFrameNanos { }
+            } else {
+                containerProgress.snapTo(0f)
+            }
+            shownEntry = null
+            openedCardThreadId = null
         }
     }
 
@@ -231,89 +264,92 @@ fun MessagesScreen(
                     }
                 }
             } else {
-                // Inbox -> member timeline keeps spatial continuity: the
-                // detail page slides in from the trailing edge on a spring
-                // while the inbox sinks back; never a bare crossfade.
-                AnimatedContent(
-                    targetState = selectedEntry,
-                    transitionSpec = {
-                        val slideSpring = spring<androidx.compose.ui.unit.IntOffset>(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMediumLow,
-                        )
-                        if (targetState != null) {
-                            (
-                                slideInHorizontally(slideSpring) { it / 4 } +
-                                    fadeIn(tween(160))
-                                ).togetherWith(
-                                slideOutHorizontally(slideSpring) { -it / 6 } +
-                                    fadeOut(tween(140)),
-                            )
-                        } else {
-                            (
-                                slideInHorizontally(slideSpring) { -it / 6 } +
-                                    fadeIn(tween(160))
-                                ).togetherWith(
-                                slideOutHorizontally(slideSpring) { it / 4 } +
-                                    fadeOut(tween(140)),
-                            )
-                        }
-                    },
-                    label = "member-message-transition",
-                    modifier = Modifier.fillMaxSize(),
-                ) { entry ->
-                    if (entry == null) {
-                        MemberInbox(
-                            threads = threads,
-                            userNickname = userNickname,
-                            state = inboxListState,
-                            header = {
-                                GlassHeader(
-                                    title = "消息",
-                                    actions = {
-                                        GlassIconButton(
-                                            onClick = { showDataDrawer = true },
-                                            imageVector = Icons.Rounded.Settings,
-                                            contentDescription = "数据管理",
-                                        )
+                // A member card opens as a container transform: the card itself
+                // grows into the page, hosting the timeline scaled to its width,
+                // while one veil settles over the rest of the inbox.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onGloballyPositioned { transitionContainerBounds = it.boundsInRoot() },
+                ) {
+                    val progress = containerProgress::value
+                    val entry = shownEntry
+                    val timeline: @Composable () -> Unit = {
+                        if (entry != null) {
+                            key(entry) {
+                                MemberTimelineScreen(
+                                    entry = entry,
+                                    active = isActive && selectedEntry === entry,
+                                    versions = versions,
+                                    playbackState = playbackState,
+                                    translationEnabled = translationEnabled,
+                                    userNickname = userNickname,
+                                    backdropState = sheetBackdrop,
+                                    onBack = {
+                                        if (selectedEntry === entry) {
+                                            if (initialMessageId != null && initialMessageId == entry.notificationMessageId) {
+                                                onInitialMessageHandled(initialMessageId)
+                                            }
+                                            selectedEntry = null
+                                        }
+                                    },
+                                    onInitialMessageHandled = { if (selectedEntry === entry) onInitialMessageHandled(it) },
+                                    onViewingLatest = { if (selectedEntry === entry) viewingLatest = it },
+                                    onUnreadChanged = onUnreadChanged,
+                                    onOpenMedia = onOpenMedia,
+                                    onPlayVoice = onPlayVoice,
+                                    onDownload = ::download,
+                                    onRetranslate = { message ->
+                                        retranslateScope.launch {
+                                            withContext(AppGraph.dispatchers.databaseWrite) {
+                                                AppGraph.database.markForRetranslation(message.id)
+                                            }
+                                            AppGraph.notifyDataChanged(DataChange.MESSAGE_ROWS, setOf(message.id))
+                                            TranslationManager.enqueueIds(context, listOf(message.id))
+                                        }
                                     },
                                 )
-                            },
-                            onSelect = { thread -> openMember(thread.id) },
-                        )
-                    } else {
-                        MemberTimelineScreen(
-                            entry = entry,
-                            active = isActive && selectedEntry === entry,
-                            versions = versions,
-                            playbackState = playbackState,
-                            translationEnabled = translationEnabled,
-                            userNickname = userNickname,
-                            backdropState = sheetBackdrop,
-                            onBack = {
-                                if (selectedEntry === entry) {
-                                    if (initialMessageId != null && initialMessageId == entry.notificationMessageId) {
-                                        onInitialMessageHandled(initialMessageId)
-                                    }
-                                    selectedEntry = null
-                                }
-                            },
-                            onInitialMessageHandled = { if (selectedEntry === entry) onInitialMessageHandled(it) },
-                            onViewingLatest = { if (selectedEntry === entry) viewingLatest = it },
-                            onUnreadChanged = onUnreadChanged,
-                            onOpenMedia = onOpenMedia,
-                            onPlayVoice = onPlayVoice,
-                            onDownload = ::download,
-                            onRetranslate = { message ->
-                                retranslateScope.launch {
-                                    withContext(AppGraph.dispatchers.databaseWrite) {
-                                        AppGraph.database.markForRetranslation(message.id)
-                                    }
-                                    AppGraph.notifyDataChanged(DataChange.MESSAGE_ROWS, setOf(message.id))
-                                    TranslationManager.enqueueIds(context, listOf(message.id))
-                                }
-                            },
-                        )
+                            }
+                        }
+                    }
+                    val cardThreadId = openedCardThreadId?.takeIf { entry != null }
+                    MemberInbox(
+                        threads = threads,
+                        userNickname = userNickname,
+                        state = inboxListState,
+                        recedeProgress = progress.takeIf { entry != null },
+                        expansion = cardThreadId?.let {
+                            MemberCardExpansion(
+                                threadId = it,
+                                progress = progress,
+                                viewportInRoot = { transitionContainerBounds },
+                                content = timeline,
+                                // Restoring the same entry retargets the running
+                                // spring, so the collapse turns into an expansion
+                                // with its current velocity and the page keeps its state.
+                                onReopen = if (selectedEntry == null) {
+                                    { selectedEntry = entry }
+                                } else {
+                                    null
+                                },
+                            )
+                        },
+                        header = {
+                            GlassHeader(
+                                title = "消息",
+                                actions = {
+                                    GlassIconButton(
+                                        onClick = { showDataDrawer = true },
+                                        imageVector = Icons.Rounded.Settings,
+                                        contentDescription = "数据管理",
+                                    )
+                                },
+                            )
+                        },
+                        onSelect = { thread, fromCard -> openMember(thread.id, fromCard = fromCard) },
+                    )
+                    if (entry != null && cardThreadId == null) {
+                        MemberSlideContainer(progress) { timeline() }
                     }
                 }
             }
@@ -329,5 +365,29 @@ fun MessagesScreen(
     }
 }
 
+// Critically damped, so the container settles without overshoot. The stop
+// threshold keeps the final snap under half a pixel even for a card ~2000px
+// from the top of the screen.
+private val CardContainerSpring = spring(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = 180f,
+    visibilityThreshold = 0.0002f,
+)
 
-
+/**
+ * Without a card to grow from (notification, recent contacts), the page
+ * slides in from the trailing edge over the receding inbox.
+ */
+@Composable
+private fun MemberSlideContainer(progress: () -> Float, content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val p = progress()
+                translationX = (1f - p) * size.width * 0.25f
+                alpha = p.coerceIn(0f, 1f)
+            }
+            .drawBehind { if (progress() < 1f) drawRect(GlassColors.Backdrop) },
+    ) { content() }
+}

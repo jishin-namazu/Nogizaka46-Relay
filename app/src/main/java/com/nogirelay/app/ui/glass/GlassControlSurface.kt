@@ -38,6 +38,21 @@ private fun controlRimColor(body: Color): Color = Color(
 )
 
 /** Broad cast shadow and a restrained colored bounce, outside the surface clip. */
+/** The ambient cast shadow [glassControlShadow] draws under a control. */
+internal fun glassControlCastShadow(
+    depth: GlassDepth,
+    compression: Float = 1f,
+    opacity: Float = 1f,
+): Shadow {
+    val scale = (depth.elevation.value / 16f).coerceIn(0.5f, 1.35f)
+    return Shadow(
+        radius = (14f * scale * compression).dp,
+        spread = (-2f * scale).dp,
+        offset = DpOffset(0.dp, (7f * scale * compression).dp),
+        color = Color(0xFF4C5360).copy(alpha = 0.14f * compression * opacity),
+    )
+}
+
 internal fun Modifier.glassControlShadow(
     shape: RoundedCornerShape,
     tone: GlassTone = GlassTone.Neutral,
@@ -50,15 +65,7 @@ internal fun Modifier.glassControlShadow(
     val scale = (depth.elevation.value / 16f).coerceIn(0.5f, 1.35f)
     val compression = press?.shadowFactor ?: 1f
     val opacity = alpha.coerceIn(0f, 1f)
-    val cast = dropShadow(
-        shape,
-        Shadow(
-            radius = (14f * scale * compression).dp,
-            spread = (-2f * scale).dp,
-            offset = DpOffset(0.dp, (7f * scale * compression).dp),
-            color = Color(0xFF4C5360).copy(alpha = 0.14f * compression * opacity),
-        ),
-    )
+    val cast = dropShadow(shape, glassControlCastShadow(depth, compression, opacity))
     return if (tone == GlassTone.Accent) {
         cast.dropShadow(
             shape,
