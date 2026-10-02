@@ -1,5 +1,7 @@
 package com.nogirelay.app.media
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.nogirelay.app.data.MediaRefKind
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,6 +14,17 @@ object MediaCacheRevision {
     private val revisions = MediaRefKind.entries.associateWith { MutableStateFlow(0L) }
     private val changes = revisions.mapValues { it.value.asStateFlow() }
     private val pendingChanges = ThreadLocal<MutableSet<MediaRefKind>?>()
+    private var prefs: SharedPreferences? = null
+
+    @Synchronized
+    fun initialize(context: Context) {
+        if (prefs != null) return
+        val stored = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        MediaRefKind.entries.forEach { kind ->
+            revisions.getValue(kind).value = stored.getLong(keyFor(kind), 0L)
+        }
+        prefs = stored
+    }
 
     fun changesFor(kind: MediaRefKind): StateFlow<Long> = changes.getValue(kind)
 
@@ -20,7 +33,13 @@ object MediaCacheRevision {
             it.addAll(kinds)
             return
         }
-        kinds.forEach { kind -> revisions.getValue(kind).update { it + 1 } }
+        kinds.forEach { kind ->
+            revisions.getValue(kind).update { current ->
+                (current + 1).also { next ->
+                    prefs?.edit()?.putLong(keyFor(kind), next)?.apply()
+                }
+            }
+        }
     }
 
     suspend fun <T> batch(block: suspend () -> T): T {
@@ -33,4 +52,8 @@ object MediaCacheRevision {
             changed(pending)
         }
     }
+
+    private fun keyFor(kind: MediaRefKind): String = "revision_${kind.name.lowercase()}"
+
+    private const val PREFS_NAME = "media_cache_revisions"
 }

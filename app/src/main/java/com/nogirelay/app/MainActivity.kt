@@ -120,7 +120,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.CONTENT)
+        AppGraph.notifyDataChanged(
+            com.nogirelay.app.data.DataChange.CONTENT,
+            invalidateExportEstimate = false,
+        )
 
         val now = android.os.SystemClock.elapsedRealtime()
         if (lastAutoSyncAt == 0L || now - lastAutoSyncAt >= AUTO_SYNC_MIN_INTERVAL_MS) {

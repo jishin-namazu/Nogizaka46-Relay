@@ -1,7 +1,9 @@
 package com.nogirelay.app.ui.glass
 
+import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -41,6 +44,8 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.dismiss as dismissSemantics
@@ -52,6 +57,7 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import com.nogirelay.app.performance.LocalRelayPageWorkPaused
 import com.nogirelay.app.ui.RelaySheetBackdropState
 import kotlinx.coroutines.launch
@@ -75,35 +81,57 @@ fun GlassDialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        val window = (LocalView.current.parent as DialogWindowProvider).window
+        DisposableEffect(window) {
+            // A tall lazy grid otherwise makes Dialog switch from WRAP_CONTENT
+            // to MATCH_PARENT after measuring, recentering the card mid-entry.
+            // Keep window/inset geometry fixed; animate only the inner card.
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            onDispose { }
+        }
         val appear = remember { androidx.compose.animation.core.Animatable(0f) }
         LaunchedEffect(Unit) { appear.animateTo(1f, GlassMotion.MorphSpec) }
-        // The backdrop shares the card's bounds and clip, leaving the area
-        // outside its rounded corners transparent in the dialog window.
-        Box(
-            modifier = modifier
-                .fillMaxWidth(0.92f)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(horizontal = 24.dp, vertical = 16.dp)
-                .graphicsLayer {
-                    val p = appear.value.coerceIn(0f, 1f)
-                    alpha = 0.3f + 0.7f * p
-                    scaleX = 0.92f + 0.08f * p
-                    scaleY = 0.92f + 0.08f * p
-                    translationY = (1f - p) * 18.dp.toPx()
+        Box(Modifier.fillMaxSize().semantics {
+            dismissSemantics { onDismissRequest(); true }
+        }) {
+            // Full-window dialogs need an explicit outside-tap target. Keep it
+            // behind the card so scrolling and member selection keep their gestures.
+            Box(Modifier.matchParentSize().pointerInput(onDismissRequest) {
+                detectTapGestures { onDismissRequest() }
+            })
+            Box(
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Only the card is transformed and recorded as a glass source.
+                Box(
+                    modifier = modifier
+                        .fillMaxWidth(0.92f)
+                        .padding(horizontal = 24.dp, vertical = 16.dp)
+                        .graphicsLayer {
+                            val p = appear.value.coerceIn(0f, 1f)
+                            alpha = 0.3f + 0.7f * p
+                            scaleX = 0.92f + 0.08f * p
+                            scaleY = 0.92f + 0.08f * p
+                            translationY = (1f - p) * 18.dp.toPx()
+                        }
+                        .glassControlShadow(GlassShapes.CardLarge, depth = GlassDepths.High)
+                        .then(
+                            if (frostedBackground) {
+                                Modifier.glassOverlaySurface(overlayLayer, GlassShapes.CardLarge, fillAlpha = 0.56f)
+                            } else {
+                                Modifier.glassOverlaySource(overlayLayer)
+                                    .clip(GlassShapes.CardLarge)
+                                    .background(GlassColors.SheetSurface)
+                            },
+                        )
+                        // Empty space inside the card must not dismiss the dialog.
+                        .pointerInput(Unit) { detectTapGestures { } },
+                ) {
+                    CompositionLocalProvider(LocalGlassOverlayLevel provides overlayLayer.level) {
+                        Column(Modifier.fillMaxWidth().padding(contentPadding), content = content)
+                    }
                 }
-                .glassControlShadow(GlassShapes.CardLarge, depth = GlassDepths.High)
-                .then(
-                    if (frostedBackground) {
-                        Modifier.glassOverlaySurface(overlayLayer, GlassShapes.CardLarge, fillAlpha = 0.56f)
-                    } else {
-                        Modifier.glassOverlaySource(overlayLayer)
-                            .clip(GlassShapes.CardLarge)
-                            .background(GlassColors.SheetSurface)
-                    },
-                ),
-        ) {
-            CompositionLocalProvider(LocalGlassOverlayLevel provides overlayLayer.level) {
-                Column(Modifier.fillMaxWidth().padding(contentPadding), content = content)
             }
         }
     }
