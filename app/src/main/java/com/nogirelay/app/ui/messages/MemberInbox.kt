@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,6 +90,13 @@ class MemberCardExpansion(
 )
 
 private val MemberCardSpacing = 10.dp
+private val CardCornerRadius = 28.dp
+
+/**
+ * Progress after which the opened page's backdrop (opaque from 0.25 on)
+ * hides the card body completely, so its glass can be skipped unseen.
+ */
+private const val GLASS_COVERED_PROGRESS = 0.32f
 
 /**
  * Member inbox, rebuilt as liquid glass: a horizontal constellation of
@@ -278,32 +286,42 @@ private fun ThreadCapsule(
     // One composition for both states, so opening never remounts the card face.
     var slotInRoot by remember { mutableStateOf(Rect.Zero) }
     val density = LocalDensity.current
-    val p = expansion?.progress?.invoke()?.coerceIn(0f, 1f) ?: 0f
-    val shape = if (expansion == null) {
-        GlassShapes.Card
-    } else {
-        // Corners stay round for most of the way, then square off.
-        val cardRadius = GlassShapes.Card.topStart.toPx(slotInRoot.size, density)
-        RoundedCornerShape(with(density) { (cardRadius * ((1f - p) / 0.3f).coerceIn(0f, 1f)).toDp() })
+    // The progress changes every frame; it is read only in layout and draw.
+    // Composition sees just one flip: once the page backdrop fully covers
+    // the card body, its refractive glass is invisible and is switched off.
+    val covered by remember(expansion) {
+        derivedStateOf { (expansion?.progress?.invoke() ?: 0f) >= GLASS_COVERED_PROGRESS }
     }
+    val cardRadiusPx = with(density) { CardCornerRadius.toPx() }
     GlassPanel(
         onClick = if (expansion == null) onClick else null,
         onClickLabel = thread.name,
-        shape = shape,
+        shape = GlassShapes.Card,
         // While opened, the shadow is drawn at the slot instead (see below).
         shadowAlpha = if (expansion == null) 1f else 0f,
-        edgeStrength = 1f - p,
+        blurEnabled = !covered,
+        clipShape = expansion?.let { opened ->
+            {
+                // Corners stay round for most of the way, then square off.
+                val p = opened.progress().coerceIn(0f, 1f)
+                RoundedCornerShape(cardRadiusPx * ((1f - p) / 0.3f).coerceIn(0f, 1f))
+            }
+        },
+        // The tap's release spring finishes while the card starts to grow.
+        keepPressFeedback = true,
         modifier = modifier
             .onGloballyPositioned { slotInRoot = it.boundsInRoot() }
             .then(
                 if (expansion != null) {
                     // The same shadow the panel casts at rest, pinned to the slot
                     // so it never grows or shrinks with the card; it only eases out.
-                    val fade = (p / 0.35f).coerceIn(0f, 1f)
                     Modifier
                         .memberInboxVeil(expansion, slot = { slotInRoot })
                         .pinnedSlotShadow(
-                            alpha = 1f - fade * fade * (3f - 2f * fade),
+                            alpha = {
+                                val fade = (expansion.progress() / 0.35f).coerceIn(0f, 1f)
+                                1f - fade * fade * (3f - 2f * fade)
+                            },
                             clipBelow = clipShadowBelow,
                         )
                         .expandFromSlot(expansion, slot = { slotInRoot })
@@ -387,12 +405,13 @@ private fun ThreadCapsule(
  * card and vanish the instant the card drops back into the list.
  */
 @Composable
-private fun Modifier.pinnedSlotShadow(alpha: Float, clipBelow: Boolean): Modifier {
+private fun Modifier.pinnedSlotShadow(alpha: () -> Float, clipBelow: Boolean): Modifier {
     val shadowContext = LocalGraphicsContext.current.shadowContext
     val painter = remember(shadowContext, GlassColors.palette) {
         shadowContext.createDropShadowPainter(GlassShapes.Card, glassControlCastShadow(GlassDepths.Medium))
     }
     return drawBehind {
+        val alpha = alpha()
         if (alpha <= 0f) return@drawBehind
         // Generous finite bounds; only the bottom edge actually clips.
         val reach = size.maxDimension

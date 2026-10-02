@@ -30,12 +30,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.platform.LocalContext
@@ -61,9 +67,11 @@ import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
 import com.nogirelay.app.ui.rememberRelaySheetBackdropState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun MessagesScreen(
@@ -108,6 +116,8 @@ fun MessagesScreen(
     // The timeline stays composed while it collapses back into its card.
     var shownEntry by remember { mutableStateOf<MemberMessageEntry?>(null) }
     val containerProgress = remember { Animatable(0f, visibilityThreshold = 0.0002f) }
+    // The entry whose first page of messages has loaded (see the open below).
+    var contentReadyFor by remember { mutableStateOf<MemberMessageEntry?>(null) }
     val reducedMotion = LocalGlassReducedMotion.current
 
     fun openMember(memberKey: String, notificationMessageId: String? = null, fromCard: Boolean = false) {
@@ -132,8 +142,13 @@ fun MessagesScreen(
             val fromClosed = shownEntry == null
             shownEntry = target
             if (fromClosed) {
-                // Let the timeline compose its first frame at card size before
-                // the spring starts, so that heavy frame isn't skipped over.
+                // The timeline is still invisible inside the card. Wait (briefly)
+                // for its first messages, then let them compose and lay out, so
+                // no content lands mid-flight and the heavy frames happen before
+                // anything moves.
+                withTimeoutOrNull(OPEN_CONTENT_WAIT_MILLIS) {
+                    snapshotFlow { contentReadyFor === target }.first { it }
+                }
                 withFrameNanos { }
                 withFrameNanos { }
             }
@@ -276,6 +291,7 @@ fun MessagesScreen(
                                 val member = threads.firstOrNull { it.id == entry.memberKey }
                                 MemberTimelineScreen(
                                     entry = entry,
+                                    onContentReady = { contentReadyFor = entry },
                                     memberName = member?.name.orEmpty(),
                                     memberAvatarUrl = member?.avatarUrl,
                                     active = isActive && selectedEntry === entry,
@@ -347,6 +363,9 @@ fun MessagesScreen(
     }
 }
 
+/** Longest the open waits for the first messages before moving anyway. */
+private const val OPEN_CONTENT_WAIT_MILLIS = 150L
+
 // Critically damped, so the container settles without overshoot. The stop
 // threshold keeps the final snap under half a pixel even for a card ~2000px
 // from the top of the screen.
@@ -358,18 +377,56 @@ private val CardContainerSpring = spring(
 
 /**
  * Without a card to grow from (notification, recent contacts), the page
- * slides in from the trailing edge over the receding inbox.
+ * slides in from the trailing edge over the dimming inbox.
+ *
+ * The page is always fully opaque and only moves; fading it would show the
+ * inbox and the timeline through each other as a double image. The inbox
+ * stays put under one veil, the same one the card transition uses, and a
+ * soft shadow marks the page's leading edge. At both ends every layer is
+ * exactly at rest (page off screen / page covering everything).
  */
 @Composable
 private fun MemberSlideContainer(progress: () -> Float, content: @Composable () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer {
-                val p = progress()
-                translationX = (1f - p) * size.width * 0.25f
-                alpha = p.coerceIn(0f, 1f)
+            // The dimmed inbox beside the moving page takes no taps; the
+            // events are only observed, so the page itself is unaffected.
+            .pointerInput(Unit) {
+                awaitPointerEventScope { while (true) awaitPointerEvent() }
             }
-            .drawBehind { if (progress() < 1f) drawRect(GlassColors.Backdrop) },
-    ) { content() }
+            .drawBehind {
+                val p = progress().coerceIn(0f, 1f)
+                if (p <= 0f) return@drawBehind
+                drawRect(GlassColors.BackdropMid, alpha = 0.55f * p)
+                drawRect(Color.Black, alpha = 0.08f * p)
+                val edge = (1f - p) * size.width
+                val reach = SlideEdgeShadowWidth.toPx()
+                drawRect(
+                    Brush.horizontalGradient(
+                        0f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.10f * p),
+                        startX = edge - reach,
+                        endX = edge,
+                    ),
+                    topLeft = Offset(edge - reach, 0f),
+                    size = Size(reach, size.height),
+                )
+            },
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    // A layer offset, not a layout one: it moves sub-pixel, so
+                    // the slow end of the spring glides.
+                    translationX = (1f - progress().coerceIn(0f, 1f)) * size.width
+                }
+                // Same brush and bounds as the screen backdrop, so the page's
+                // own copy is indistinguishable from it once it covers it.
+                .drawBehind { drawRect(GlassColors.Backdrop) },
+        ) { content() }
+    }
 }
+
+private val SlideEdgeShadowWidth = 20.dp
