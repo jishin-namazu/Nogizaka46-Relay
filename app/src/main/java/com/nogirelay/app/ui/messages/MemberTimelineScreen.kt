@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -157,6 +157,7 @@ internal fun MemberTimelineScreen(
     entry: MemberMessageEntry,
     memberName: String,
     memberAvatarUrl: String?,
+    onContentReady: () -> Unit = {},
     active: Boolean,
     versions: DataVersions,
     playbackState: VoicePlaybackState,
@@ -329,6 +330,7 @@ internal fun MemberTimelineScreen(
                             userNickname = userNickname,
                             sessionUnreadIds = sessionUnreadIds,
                             onInitialLoaded = {
+                                onContentReady()
                                 if (!initialTargetConsumed) {
                                     initialTargetConsumed = true
                                     timelineEntry.notificationMessageId?.let(onInitialMessageHandled)
@@ -1036,8 +1038,12 @@ private fun MemberTimelineHeader(
     }
 
     // Dismissing the keyboard closes an empty search; with a query the results
-    // stay and the field only loses focus, so they remain explained.
-    val imeVisible = WindowInsets.isImeVisible
+    // stay and the field only loses focus, so they remain explained. The
+    // animation target flips the moment the keyboard starts to slide away
+    // (isImeVisible only flips once it is gone), so the field collapses
+    // together with the keyboard instead of after it.
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.imeAnimationTarget.getBottom(density) > 0
     val currentQuery by rememberUpdatedState(query)
     var imeShownWhileOpen by remember { mutableStateOf(false) }
     LaunchedEffect(searchOpen, imeVisible) {

@@ -286,14 +286,24 @@ fun GlassPanel(
     onClickLabel: String? = null,
     tint: androidx.compose.ui.graphics.Color? = null,
     shadowAlpha: Float = 1f,
+    blurEnabled: Boolean = true,
+    /**
+     * Clips to a shape that changes every frame (a morphing container). It is
+     * read in the layer, so the change never recomposes the panel or rebuilds
+     * its glass; the material itself keeps [shape].
+     */
+    clipShape: (() -> androidx.compose.ui.graphics.Shape)? = null,
+    /** Keeps the press spring running after [onClick] is removed mid-release. */
+    keepPressFeedback: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val press = rememberGlassPress(interactionSource, enabled = onClick != null)
+    val pressed = onClick != null || keepPressFeedback
     Box(
         modifier = modifier
             .then(
-                if (onClick != null) {
+                if (pressed) {
                     Modifier.glassPress(press)
                 } else {
                     Modifier
@@ -301,10 +311,19 @@ fun GlassPanel(
             )
             .glassControlShadow(
                 shape, tone, tint, depth,
-                press = if (onClick != null) press else null,
+                press = if (pressed) press else null,
                 alpha = shadowAlpha,
             )
-            .clip(shape)
+            .then(
+                if (clipShape != null) {
+                    Modifier.graphicsLayer {
+                        this.shape = clipShape()
+                        clip = true
+                    }
+                } else {
+                    Modifier.clip(shape)
+                },
+            )
             .then(
                 if (onClick != null) {
                     Modifier.clickable(
@@ -327,6 +346,7 @@ fun GlassPanel(
                 control = true,
                 edgeStrength = edgeStrength,
                 tint = tint,
+                blurEnabled = blurEnabled && LocalGlassBlurEnabled.current,
             )
             .then(if (tone == GlassTone.OnDark) Modifier.glassEdgeLight(shape, tone, edgeStrength) else Modifier),
         content = content,

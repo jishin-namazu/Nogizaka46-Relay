@@ -172,9 +172,9 @@ fun Modifier.glass(
     pressedLighting: Boolean = true,
     control: Boolean = false,
     edgeStrength: Float = 1f,
+    blurEnabled: Boolean = LocalGlassBlurEnabled.current,
 ): Modifier {
     val hazeState = LocalGlassHazeState.current
-    val blurEnabled = LocalGlassBlurEnabled.current
     val styledControl = control && tone != GlassTone.OnDark
     if (styledControl && LocalGlassFrostedControls.current) {
         return frostedGlass(

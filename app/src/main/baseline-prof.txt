@@ -6,3 +6,9 @@ Lcom/nogirelay/app/data/BlogRepository;
 Lcom/nogirelay/app/data/MessageDatabase;
 Lcom/nogirelay/app/performance/**;
 Lcom/nogirelay/app/ui/RemoteImageKt;
+HSPLcom/nogirelay/app/ui/messages/**;->**(**)**
+HSPLcom/nogirelay/app/ui/glass/**;->**(**)**
+HSPLcom/nogirelay/app/ui/navigation/**;->**(**)**
+HSPLcom/nogirelay/app/ui/RemoteImageKt;->**(**)**
+HSPLcom/nogirelay/app/ui/DisplayTextKt;->**(**)**
+HSPLdev/chrisbanes/haze/**;->**(**)**

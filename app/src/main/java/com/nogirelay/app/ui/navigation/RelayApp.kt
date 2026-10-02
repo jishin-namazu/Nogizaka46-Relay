@@ -27,7 +27,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -35,8 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -62,7 +59,6 @@ import com.nogirelay.app.performance.LocalRelayPageActive
 import com.nogirelay.app.performance.isRelayUiStarted
 import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
-import com.nogirelay.app.ui.glass.LocalGlassHazeDrawTick
 import com.nogirelay.app.ui.glass.LocalGlassHazeState
 import com.nogirelay.app.ui.glass.LocalGlassOverlayHazeState
 import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
@@ -75,7 +71,6 @@ import com.nogirelay.app.ui.glass.GlassNavItem
 import com.nogirelay.app.ui.home.HomeScreen
 import com.nogirelay.app.ui.home.hasNotificationPermission
 import com.nogirelay.app.ui.messages.MessagesScreen
-import com.nogirelay.app.ui.glass.glassHazeSourceTick
 import com.nogirelay.app.ui.settings.SettingsPage
 import com.nogirelay.app.ui.settings.SettingsScreen
 import kotlinx.coroutines.Dispatchers
@@ -225,26 +220,14 @@ fun RelayApp(
         if (initialMessageId != null || initialBlogId != null) settingsOpen = false
     }
 
-    val hazeDrawTick = remember { mutableLongStateOf(0L) }
     // Capture pages separately from their own glass materials and the nav overlay.
     val navigationHazeState = rememberGlassHazeState()
-    val hazeScrollDriver = remember {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
-                hazeDrawTick.longValue++
-                return androidx.compose.ui.geometry.Offset.Zero
-            }
-        }
-    }
 
     androidx.compose.runtime.CompositionLocalProvider(
-        LocalGlassHazeDrawTick provides hazeDrawTick,
         LocalGlassOverlayHazeState provides navigationHazeState,
     ) {
         GlassBackdrop(
-            modifier = Modifier
-                .fillMaxSize()
-                .nestedScroll(hazeScrollDriver),
+            modifier = Modifier.fillMaxSize(),
         ) {
             Box(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxSize().glassHazeSource(navigationHazeState)) {
@@ -298,8 +281,7 @@ fun RelayApp(
                                     } else {
                                         Modifier
                                     },
-                                )
-                                .glassHazeSourceTick(hazeDrawTick),
+                                ),
                         ) {
                             androidx.compose.runtime.CompositionLocalProvider(LocalRelayPageActive provides pageActive) {
                                 when (item) {
