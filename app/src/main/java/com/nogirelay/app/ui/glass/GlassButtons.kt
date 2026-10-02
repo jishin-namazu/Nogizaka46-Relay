@@ -157,7 +157,7 @@ fun GlassCapsuleButton(
     enabled: Boolean = true,
     tone: GlassTone = GlassTone.Neutral,
     depth: GlassDepth = GlassDepths.Low,
-    height: Dp = 48.dp,
+    height: Dp = GlassMetrics.ControlHeight,
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp),
     contentDescription: String? = null,
     shape: androidx.compose.foundation.shape.RoundedCornerShape = GlassShapes.Capsule,
@@ -217,7 +217,7 @@ fun GlassChip(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     leadingIcon: (@Composable () -> Unit)? = null,
-    height: Dp = 40.dp,
+    height: Dp = GlassMetrics.ControlHeight,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val press = rememberGlassPress(interactionSource, enabled)
@@ -263,7 +263,8 @@ fun GlassChip(
             leadingIcon?.invoke()
             androidx.compose.material3.Text(
                 text = label,
-                style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                style = GlassType.Callout,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )

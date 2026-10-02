@@ -46,8 +46,7 @@ fun GlassHeader(
             Text(
                 text = title,
                 color = titleColor,
-                fontSize = 32.sp,
-                lineHeight = 38.sp,
+                style = GlassType.LargeTitle,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.5).sp,
                 maxLines = 1,
@@ -87,8 +86,7 @@ fun GlassDetailHeader(
             Text(
                 text = title,
                 color = titleColor,
-                fontSize = 22.sp,
-                lineHeight = 28.sp,
+                style = GlassType.Title1,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

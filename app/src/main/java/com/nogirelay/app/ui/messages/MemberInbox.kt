@@ -55,7 +55,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
@@ -65,6 +64,7 @@ import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassDepths
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
+import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.glassControlCastShadow
 import com.nogirelay.app.ui.glass.glassPress
 import com.nogirelay.app.ui.glass.rememberGlassPress
@@ -125,7 +125,7 @@ fun MemberInbox(
             item(key = "member-inbox-recent-title") {
                 Text(
                     text = "最近消息",
-                    fontSize = 15.sp,
+                    style = GlassType.Headline,
                     fontWeight = FontWeight.SemiBold,
                     color = GlassColors.Ink,
                     modifier = recede
@@ -161,13 +161,13 @@ fun MemberInbox(
             ) {
                 Text(
                     text = "全部成员",
-                    fontSize = 15.sp,
+                    style = GlassType.Headline,
                     fontWeight = FontWeight.SemiBold,
                     color = GlassColors.Ink,
                 )
                 Text(
                     text = "共 ${threads.size} 位",
-                    fontSize = 12.sp,
+                    style = GlassType.Footnote,
                     color = GlassColors.InkTertiary,
                 )
             }
@@ -257,7 +257,7 @@ private fun RecentContactDroplet(
             text = thread.name,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            fontSize = 11.5.sp,
+            style = GlassType.Footnote,
             fontWeight = FontWeight.Medium,
             color = GlassColors.Ink,
             textAlign = TextAlign.Center,
@@ -389,7 +389,7 @@ private fun ThreadCapsule(
 @Composable
 private fun Modifier.pinnedSlotShadow(alpha: Float, clipBelow: Boolean): Modifier {
     val shadowContext = LocalGraphicsContext.current.shadowContext
-    val painter = remember(shadowContext) {
+    val painter = remember(shadowContext, GlassColors.palette) {
         shadowContext.createDropShadowPainter(GlassShapes.Card, glassControlCastShadow(GlassDepths.Medium))
     }
     return drawBehind {
@@ -469,7 +469,7 @@ private fun ThreadCapsuleContent(
             Text(
                 text = thread.name,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
+                style = GlassType.Headline,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 color = GlassColors.Ink,
@@ -517,7 +517,7 @@ private fun ThreadCapsuleContent(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = GlassColors.InkSecondary,
-                    fontSize = 13.sp,
+                    style = GlassType.Subhead,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -528,11 +528,11 @@ private fun ThreadCapsuleContent(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(start = 8.dp),
         ) {
-            val time = formatThreadTime(thread.latest.sentAt)
+            val time = formatListTime(thread.latest.sentAt)
             if (time.isNotBlank()) {
                 Text(
                     text = time,
-                    fontSize = 11.sp,
+                    style = GlassType.Caption,
                     color = GlassColors.InkTertiary,
                 )
                 if (thread.unreadCount > 0) {
@@ -555,15 +555,4 @@ fun threadPreview(message: RelayMessage, userNickname: String): String = when (m
     MessageType.VIDEO -> "视频消息"
 }.let { fallback -> substituteNickname(message.text?.trim()?.takeIf { it.isNotEmpty() }, userNickname) ?: fallback }
     .withoutTextPresentationSelector()
-
-private fun formatThreadTime(sentAt: String): String {
-    return runCatching {
-        val trimmed = sentAt.trim()
-        if (trimmed.length >= 16) {
-            trimmed.substring(11, 16)
-        } else {
-            trimmed
-        }
-    }.getOrDefault("")
-}
 

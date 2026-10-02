@@ -30,6 +30,8 @@ import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.NogiRelayTheme
+import com.nogirelay.app.ui.SyncSystemBarsWithTheme
+import com.nogirelay.app.ui.isAppInDarkMode
 import com.nogirelay.app.ui.navigation.RelayApp
 import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,15 +85,17 @@ class MainActivity : ComponentActivity() {
 
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         setTransparentSystemBarColors()
+        val lightBars = !isAppInDarkMode()
         androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = true
-            isAppearanceLightNavigationBars = true
+            isAppearanceLightStatusBars = lightBars
+            isAppearanceLightNavigationBars = lightBars
         }
         notificationMessageIds.value = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)
         notificationBlogIds.value = intent.getStringExtra(BlogNotifier.EXTRA_BLOG_ID)
 
         setContent {
             NogiRelayTheme {
+                SyncSystemBarsWithTheme()
                 RelayApp(
                     notificationMessageIds = notificationMessageIds,
                     notificationBlogIds = notificationBlogIds,

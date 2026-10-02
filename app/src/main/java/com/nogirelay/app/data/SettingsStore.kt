@@ -5,6 +5,8 @@ import androidx.core.content.edit
 import com.nogirelay.app.data.api.ApiConfig
 import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProviderType
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -16,6 +18,21 @@ class SettingsStore(context: Context) {
 
     init {
         migrateLegacyProviderSlots()
+    }
+
+    private val _themeMode = MutableStateFlow(readThemeMode())
+
+    /** Observed by every activity's theme, so a change applies immediately. */
+    val themeMode: StateFlow<ThemeMode> = _themeMode
+
+    fun saveThemeMode(mode: ThemeMode) {
+        prefs.edit { putString(KEY_THEME_MODE, mode.name) }
+        _themeMode.value = mode
+    }
+
+    private fun readThemeMode(): ThemeMode {
+        val stored = prefs.getString(KEY_THEME_MODE, null) ?: return ThemeMode.SYSTEM
+        return runCatching { ThemeMode.valueOf(stored) }.getOrDefault(ThemeMode.SYSTEM)
     }
 
     fun read(): AppSettings {
@@ -197,6 +214,7 @@ class SettingsStore(context: Context) {
         const val KEY_BLOG_FULL_TRANSLATION = "blog_full_translation"
         const val KEY_USER_NICKNAME = "user_nickname"
         const val KEY_INCOMING_CALL_STYLE = "incoming_call_style"
+        const val KEY_THEME_MODE = "theme_mode"
         const val KEY_PUSH_TOKEN = "push_token"
         const val KEY_PUSH_REGISTRATION_FINGERPRINT = "push_registration_fingerprint"
         const val KEY_LEGACY_AI_API_KEY = "ai_api_key"

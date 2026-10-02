@@ -38,7 +38,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
@@ -176,8 +175,7 @@ private fun RowScope.GlassNavBarItem(
         Spacer(Modifier.height(2.dp))
         Text(
             text = item.label,
-            fontSize = 10.sp,
-            lineHeight = 12.sp,
+            style = GlassType.Caption2,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             color = tint,
             maxLines = 1,
@@ -200,8 +198,7 @@ fun GlassBadge(count: Int, modifier: Modifier = Modifier, compact: Boolean = fal
         Text(
             text = if (count > 99) "99+" else count.toString(),
             color = Color.White,
-            fontSize = if (compact) 8.5.sp else 9.5.sp,
-            lineHeight = if (compact) 10.sp else 11.sp,
+            style = if (compact) GlassType.Micro else GlassType.Badge,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
         )

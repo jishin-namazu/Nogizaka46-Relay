@@ -36,7 +36,6 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -58,7 +57,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.nogirelay.app.R
 import com.nogirelay.app.UnreadTag
 import com.nogirelay.app.data.MessageType
@@ -81,6 +79,7 @@ import com.nogirelay.app.ui.glass.GlassPopover
 import com.nogirelay.app.ui.glass.GlassPopoverItem
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.LocalMediaSourceScope
 import com.nogirelay.app.ui.glass.mediaSourceKey
 import com.nogirelay.app.ui.glass.glassMediaSource
@@ -216,7 +215,7 @@ fun MessageCard(
             SearchHighlightText(
                 text = sentAtLabel,
                 query = searchQuery,
-                style = MaterialTheme.typography.labelSmall,
+                style = GlassType.Caption,
                 color = GlassColors.InkTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -254,7 +253,7 @@ private fun MessageTextContent(body: String?, translation: String?, query: Strin
             SearchHighlightText(
                 text = it,
                 query = query,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 22.sp),
+                style = GlassType.Body,
                 color = GlassColors.Ink,
             )
         }
@@ -272,7 +271,7 @@ private fun MessageTextContent(body: String?, translation: String?, query: Strin
                 SearchHighlightText(
                     text = it,
                     query = query,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
+                    style = GlassType.Callout,
                     color = GlassColors.AccentInk,
                 )
             }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.update
 object AppGraph {
     @Volatile
     private var initialized = false
+    val isInitialized: Boolean get() = initialized
 
     lateinit var settings: SettingsStore
         private set

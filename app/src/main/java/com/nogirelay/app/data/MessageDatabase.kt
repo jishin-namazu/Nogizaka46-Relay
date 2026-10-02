@@ -1221,6 +1221,39 @@ class MessageDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, nul
         return result
     }
 
+    /**
+     * Matching posts per publishing month ("yyyy-MM" as published), in the
+     * same order as [blogSummaries]; drives the blog list's month scroller.
+     */
+    fun blogMonthCounts(
+        memberIds: Set<String>? = null,
+        searchQuery: String = "",
+        oldestFirst: Boolean = false,
+        startMillis: Long? = null,
+        endMillisExclusive: Long? = null,
+        cancellationSignal: CancellationSignal? = null,
+    ): List<Pair<String, Int>> {
+        val filter = blogFilter(memberIds, searchQuery, startMillis, endMillisExclusive)
+        val result = mutableListOf<Pair<String, Int>>()
+        readableDatabase.query(
+            false,
+            "blog_posts",
+            arrayOf("substr(published_at, 1, 7) AS month", "COUNT(*)"),
+            filter.selection,
+            filter.arguments,
+            "month",
+            null,
+            if (oldestFirst) "month ASC" else "month DESC",
+            null,
+            cancellationSignal,
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result += cursor.getString(0).orEmpty() to cursor.getInt(1)
+            }
+        }
+        return result
+    }
+
     private fun translatedTitleFromJson(serialized: String): String? = runCatching {
         org.json.JSONArray(serialized).optString(0).takeIf { it.isNotBlank() }
     }.getOrNull()

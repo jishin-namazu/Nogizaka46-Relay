@@ -6,7 +6,15 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +42,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
@@ -56,8 +65,9 @@ import com.nogirelay.app.translation.TranslationManager
 import com.nogirelay.app.ui.glass.LocalGlassHazeDrawTick
 import com.nogirelay.app.ui.glass.LocalGlassHazeState
 import com.nogirelay.app.ui.glass.LocalGlassOverlayHazeState
+import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
+import com.nogirelay.app.ui.glass.glassHazeSource
 import com.nogirelay.app.ui.glass.rememberGlassHazeState
-import dev.chrisbanes.haze.hazeSource
 import com.nogirelay.app.ui.glass.GlassBackdrop
 import com.nogirelay.app.ui.glass.GlassMotion
 import com.nogirelay.app.ui.glass.GlassNavBar
@@ -66,6 +76,8 @@ import com.nogirelay.app.ui.home.HomeScreen
 import com.nogirelay.app.ui.home.hasNotificationPermission
 import com.nogirelay.app.ui.messages.MessagesScreen
 import com.nogirelay.app.ui.glass.glassHazeSourceTick
+import com.nogirelay.app.ui.settings.SettingsPage
+import com.nogirelay.app.ui.settings.SettingsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -74,6 +86,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 private const val TAG = "RelayApp"
+
+private val SettingsSlideSpring = spring<IntOffset>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+)
 
 enum class AppTab(val label: String) { HOME("主页"), MESSAGES("消息"), BLOG("博客") }
 
@@ -121,6 +138,9 @@ fun RelayApp(
     var unreadMessageCount by remember { mutableIntStateOf(0) }
     var unreadBlogCount by remember { mutableIntStateOf(0) }
     var navigatedBlogId by remember { mutableStateOf<String?>(null) }
+    // Settings cover the whole shell, navigation capsule included.
+    var settingsOpen by remember { mutableStateOf(false) }
+    var settingsStartPage by remember { mutableStateOf<SettingsPage?>(null) }
     var navigatedMemberId by remember { mutableStateOf<String?>(null) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -197,8 +217,12 @@ fun RelayApp(
             .collect { onUpdateProximity(it) }
     }
 
-    BackHandler(enabled = tab != AppTab.HOME) {
+    BackHandler(enabled = tab != AppTab.HOME && !settingsOpen) {
         tab = AppTab.HOME
+    }
+    LaunchedEffect(initialMessageId, initialBlogId) {
+        // A notification deep link must not land behind the settings.
+        if (initialMessageId != null || initialBlogId != null) settingsOpen = false
     }
 
     val hazeDrawTick = remember { mutableLongStateOf(0L) }
@@ -223,19 +247,25 @@ fun RelayApp(
                 .nestedScroll(hazeScrollDriver),
         ) {
             Box(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxSize().hazeSource(navigationHazeState)) {
+                Box(Modifier.fillMaxSize().glassHazeSource(navigationHazeState)) {
+                    val reducedMotion = LocalGlassReducedMotion.current
                     AppTab.entries.forEach { item ->
                         val isSelected = (tab == item)
-                        val pageActive = isSelected && uiStarted
+                        val pageActive = isSelected && uiStarted && !settingsOpen
                         // Spatial continuity: the incoming page rises and settles
                         // on a spring; the outgoing page sinks and dims. Both stay
                         // composed so scroll positions and playback survive.
                         val presence = remember { Animatable(if (isSelected) 1f else 0f) }
                         LaunchedEffect(isSelected) {
-                            presence.animateTo(
-                                if (isSelected) 1f else 0f,
-                                if (isSelected) GlassMotion.MorphSpec else GlassMotion.GentleSpec,
-                            )
+                            val target = if (isSelected) 1f else 0f
+                            if (reducedMotion) {
+                                presence.snapTo(target)
+                            } else {
+                                presence.animateTo(
+                                    target,
+                                    if (isSelected) GlassMotion.MorphSpec else GlassMotion.GentleSpec,
+                                )
+                            }
                         }
 
                         Box(
@@ -254,7 +284,7 @@ fun RelayApp(
                                     scaleY = s
                                 }
                                 .then(
-                                    if (!isSelected) {
+                                    if (!isSelected || settingsOpen) {
                                         Modifier
                                             .clearAndSetSemantics { }
                                             .pointerInput(Unit) {
@@ -289,11 +319,13 @@ fun RelayApp(
                                         onOpenOverlaySettings = {
                                             context.startActivity(OverlayPermission.settingsIntent(context))
                                         },
-                                        onTestCall = onTestCall,
                                         isSyncing = syncing,
                                         syncLabel = syncLabel,
                                         onSyncHistory = onManualSync,
-                                        onSettingsChanged = { AppGraph.notifyDataChanged(DataChange.SETTINGS) },
+                                        onOpenSettings = { page ->
+                                            settingsStartPage = page
+                                            settingsOpen = true
+                                        },
                                     )
 
                                     AppTab.MESSAGES -> MessagesScreen(
@@ -351,10 +383,37 @@ fun RelayApp(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .zIndex(2f)
+                            .then(if (settingsOpen) Modifier.clearAndSetSemantics { } else Modifier)
                             .navigationBarsPadding()
                             .padding(horizontal = 20.dp)
                             .padding(top = 6.dp, bottom = 16.dp)
                             .width(192.dp),
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = settingsOpen,
+                    enter = fadeIn(tween(200)) + slideInHorizontally(SettingsSlideSpring) { it / 4 },
+                    exit = fadeOut(tween(160)) + slideOutHorizontally(SettingsSlideSpring) { it / 4 },
+                    modifier = Modifier.zIndex(3f),
+                ) {
+                    SettingsScreen(
+                        initialPage = settingsStartPage,
+                        settingsVersion = versions.settings,
+                        fullScreenGranted = fullScreenGranted,
+                        overlayGranted = overlayGranted,
+                        isSyncing = syncing,
+                        syncLabel = syncLabel,
+                        onOpenFullScreenSettings = {
+                            FullScreenPermission.settingsIntent(context)?.let(context::startActivity)
+                        },
+                        onOpenOverlaySettings = {
+                            context.startActivity(OverlayPermission.settingsIntent(context))
+                        },
+                        onTestCall = onTestCall,
+                        onSync = onManualSync,
+                        onSettingsChanged = { AppGraph.notifyDataChanged(DataChange.SETTINGS) },
+                        onClose = { settingsOpen = false },
                     )
                 }
             }

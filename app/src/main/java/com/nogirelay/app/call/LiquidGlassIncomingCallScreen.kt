@@ -52,15 +52,14 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.nogirelay.app.R
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.VoicePlaybackState
@@ -68,9 +67,10 @@ import com.nogirelay.app.performance.isRelayUiStarted
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.glass.GlassCircleButton
 import com.nogirelay.app.ui.glass.GlassColors
-import com.nogirelay.app.ui.glass.GlassControlWhite
+import com.nogirelay.app.ui.glass.GlassPalette
 import com.nogirelay.app.ui.glass.GlassMotion
 import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.GlassType
 import java.util.Locale
 
 private val CallInk = Color(0xFF101116)
@@ -185,12 +185,14 @@ private fun LiquidGlassCallContent(
                         text = callerName,
                         color = Color.White,
                         fontFamily = CallFont,
-                        fontSize = 32.sp,
-                        lineHeight = 42.sp,
                         textAlign = TextAlign.Center,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        style = TextStyle(shadow = Shadow(Color.Black.copy(alpha = 0.25f), blurRadius = 16f)),
+                        style = GlassType.LargeTitle.copy(
+                            fontWeight = FontWeight.Normal,
+                            letterSpacing = TextUnit.Unspecified,
+                            shadow = Shadow(Color.Black.copy(alpha = 0.25f), blurRadius = 16f),
+                        ),
                         modifier = Modifier.fillMaxWidth().semantics { heading() },
                     )
                     Spacer(Modifier.height(10.dp))
@@ -224,7 +226,7 @@ private fun LiquidGlassCallContent(
                                 GlassCallAction(
                                     label = if (speakerOn) "扬声器开" else "扬声器",
                                     icon = Icons.Rounded.VolumeUp,
-                                    tint = if (speakerOn) GlassColors.Accent else GlassControlWhite,
+                                    tint = if (speakerOn) GlassColors.Accent else GlassPalette.Light.controlBody,
                                     onClick = onToggleSpeaker,
                                     controlSize = if (compact) 68.dp else 78.dp,
                                     checked = speakerOn,
@@ -269,7 +271,7 @@ private fun CallStatus(status: String, isRinging: Boolean, elapsedSeconds: Int, 
                 Text(
                     visibleStatus,
                     color = Color.White.copy(alpha = 0.90f),
-                    fontSize = 15.sp,
+                    style = GlassType.Body,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -279,9 +281,7 @@ private fun CallStatus(status: String, isRinging: Boolean, elapsedSeconds: Int, 
         Text(
             text = if (isRinging) "" else String.format(Locale.US, "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60),
             color = Color.White.copy(alpha = 0.82f),
-            fontSize = 14.sp,
-            lineHeight = 22.sp,
-            style = TextStyle(fontFeatureSettings = "tnum"),
+            style = GlassType.Callout.copy(fontFeatureSettings = "tnum"),
             maxLines = 1,
             modifier = Modifier.padding(top = 4.dp),
         )

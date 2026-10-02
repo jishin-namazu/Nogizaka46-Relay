@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nogirelay.app.ui.glass.GlassType
 
 private const val UNREAD_INLINE_ID = "unread-tag"
 
@@ -44,7 +45,7 @@ fun GraduatedTag(
     contentPadding: PaddingValues = PaddingValues(horizontal = if (compact) 3.dp else 4.dp),
 ) {
     val tagHeight = if (compact) 12.dp else 16.dp
-    val textSize = if (compact) 8.sp else 10.sp
+    val textSize = (if (compact) GlassType.Micro else GlassType.Caption2).fontSize
     Box(
         modifier = modifier
             .defaultMinSize(minHeight = tagHeight)
@@ -80,7 +81,7 @@ fun UnreadTag(
     val cornerRadius = if (compact) 3.dp else 4.dp
     val horizontalPadding = if (compact) 3.dp else 4.dp
     val tagHeight = if (compact) 12.dp else 16.dp
-    val textSize = if (compact) 8.sp else 10.sp
+    val textSize = (if (compact) GlassType.Micro else GlassType.Caption2).fontSize
     Box(
         modifier = modifier
             .defaultMinSize(minHeight = tagHeight)

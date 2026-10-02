@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,9 +30,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -46,7 +50,6 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DoneAll
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FilterList
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -61,6 +64,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,10 +82,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.nogirelay.app.NameWithUnreadTag
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
@@ -91,7 +95,6 @@ import com.nogirelay.app.data.BlogSummary
 import com.nogirelay.app.data.DataChange
 import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.isRealBlogImageUrl
-import com.nogirelay.app.data.readDatabase
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.performance.isRelayUiStarted
 import com.nogirelay.app.performance.rememberSearchQuery
@@ -102,6 +105,8 @@ import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.SearchHighlightText
 import com.nogirelay.app.ui.TimeFilter
 import com.nogirelay.app.ui.TimeFilterSection
+import com.nogirelay.app.ui.glass.GlassMetrics
+import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.highlightMatches
 import com.nogirelay.app.ui.rememberRelaySheetBackdropState
 import com.nogirelay.app.ui.clearSelectionOnTap
@@ -111,35 +116,31 @@ import com.nogirelay.app.ui.glass.GlassCapsuleButton
 import com.nogirelay.app.ui.glass.GlassCircleButton
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassDepths
-import com.nogirelay.app.ui.glass.GlassDialog
-import com.nogirelay.app.ui.glass.GlassDialogText
-import com.nogirelay.app.ui.glass.GlassDialogTitle
 import com.nogirelay.app.ui.glass.GlassHeader
 import com.nogirelay.app.ui.glass.GlassIconButton
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassSearchField
 import com.nogirelay.app.ui.glass.GlassSegmentedTabs
 import com.nogirelay.app.ui.glass.GlassShapes
-import com.nogirelay.app.ui.glass.GlassTextField
 import com.nogirelay.app.ui.glass.GlassTone
 import com.nogirelay.app.ui.glass.glassMediaSource
-import com.nogirelay.app.ui.searchSnippets
 import com.nogirelay.app.translation.BlogTranslationLayout
 import com.nogirelay.app.translation.BlogTranslationManager
 import com.nogirelay.app.ui.hasInvertedRange
-import com.nogirelay.app.ui.transfer.DataTransferDrawer
 import com.nogirelay.app.ui.transfer.MemberPickerCard
 import com.nogirelay.app.ui.transfer.memberGroups
 import com.nogirelay.app.ui.transfer.preloadMemberAvatars
 import com.nogirelay.app.ui.primeCachedImageAspectRatios
-import com.nogirelay.app.data.transfer.ExportKind
 import com.nogirelay.app.ui.withoutTextPresentationSelector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val BLOG_PAGE_SIZE = 10
+/** Header and search rows above the first post. */
+private const val BLOG_HEADER_ITEMS = 2
 
 /**
  * Blog list + detail, rebuilt as liquid glass. All data behavior is
@@ -165,11 +166,9 @@ fun BlogScreen(
     val effectiveQuery = rememberSearchQuery(searchQuery, workActive)
     var timeFilter by remember { mutableStateOf(TimeFilter()) }
     var showMemberDialog by remember { mutableStateOf(false) }
-    var currentPage by remember { mutableIntStateOf(0) }
-    var pageInput by remember { mutableStateOf("1") }
-    var showPageDialog by remember { mutableStateOf(false) }
-    var showDataDrawer by remember { mutableStateOf(false) }
     val blogListState = rememberLazyListState()
+    val pagerScope = rememberCoroutineScope()
+    val pager = remember { BlogListPager(context.applicationContext, pagerScope, BlogPrewarmer.cachedSnapshot) }
     var translationEnabled by remember { mutableStateOf(AppGraph.settings.read().translationEnabled) }
     var members by remember { mutableStateOf(BlogPrewarmer.cachedMembers ?: emptyList()) }
 
@@ -182,7 +181,8 @@ fun BlogScreen(
         members = loaded.second
     }
 
-    var pendingScrollBlogId by remember { mutableStateOf<String?>(null) }
+    // List index to reveal once the list shows again (notification deep links).
+    var pendingScrollIndex by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(initialBlogId, workActive) {
         if (!workActive) return@LaunchedEffect
@@ -191,18 +191,8 @@ fun BlogScreen(
             selectedMemberIds = null
             oldestFirst = false
             timeFilter = TimeFilter()
-            withContext(AppGraph.dispatchers.databaseRead) {
-                val rank = AppGraph.database.blogRank(id)
-                if (rank != null) {
-                    val targetPage = rank / BLOG_PAGE_SIZE
-                    withContext(Dispatchers.Main) {
-                        currentPage = targetPage
-                        pageInput = (targetPage + 1).toString()
-                    }
-                }
-            }
+            pendingScrollIndex = withContext(AppGraph.dispatchers.databaseRead) { AppGraph.database.blogRank(id) }
             selectedBlogId = id
-            pendingScrollBlogId = id
             onInitialBlogHandled(id)
         }
     }
@@ -219,8 +209,6 @@ fun BlogScreen(
             selectedBlogId = null
         } else {
             searchQuery = ""
-            currentPage = 0
-            pageInput = "1"
         }
     }
     LaunchedEffect(members) {
@@ -229,134 +217,51 @@ fun BlogScreen(
             val updated = selectedIds.intersect(availableIds)
             if (updated != selectedIds) {
                 selectedMemberIds = updated.takeUnless { it.size == availableIds.size }
-                currentPage = 0
-                pageInput = "1"
             }
         }
     }
 
-    var pageData by remember { mutableStateOf(BlogPrewarmer.cachedInitialData ?: BlogPageData()) }
-    val pageRequest = BlogListRequest(selectedMemberIds, effectiveQuery, oldestFirst, timeFilter, currentPage)
-    var appliedRequest by remember { mutableStateOf<BlogListRequest?>(null) }
-    var pageGeneration by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(versions.blogs, listActive, translationEnabled, pageRequest) {
+    // Infinite list: counts, a month index and chunks near the viewport.
+    val listQuery = BlogListQuery(selectedMemberIds, effectiveQuery, oldestFirst, timeFilter, translationEnabled)
+    LaunchedEffect(versions.blogs, listActive, listQuery) {
         if (!listActive) return@LaunchedEffect
-        val query = effectiveQuery
-        val memberIds = selectedMemberIds
-        val requestedPage = currentPage
-        val oldest = oldestFirst
-        val bounds = timeFilter
-        val loadedPage = readDatabase { cancellation ->
-            val total = AppGraph.database.countBlogs(cancellationSignal = cancellation)
-            val matching = if (memberIds == null && query.isBlank() && !bounds.isActive) total else AppGraph.database.countBlogs(
-                memberIds = memberIds,
-                searchQuery = query,
-                startMillis = bounds.startMillis,
-                endMillisExclusive = bounds.endMillisExclusive,
-                cancellationSignal = cancellation,
-            )
-            val totalPages = ((matching + BLOG_PAGE_SIZE - 1) / BLOG_PAGE_SIZE).coerceAtLeast(1)
-            val page = requestedPage.coerceIn(0, totalPages - 1)
-            val posts = AppGraph.database.blogSummaries(
-                memberIds = memberIds,
-                searchQuery = query,
-                oldestFirst = oldest,
-                startMillis = bounds.startMillis,
-                endMillisExclusive = bounds.endMillisExclusive,
-                limit = BLOG_PAGE_SIZE,
-                offset = page * BLOG_PAGE_SIZE,
-                cancellationSignal = cancellation,
-            )
-            val previews = if (query.isBlank() || posts.isEmpty()) {
-                emptyMap()
-            } else {
-                AppGraph.database.blogSearchSources(posts.map(BlogSummary::id))
-                    .mapNotNull { source ->
-                        cancellation.throwIfCanceled()
-
-                        val excerpts = buildList {
-                            val originalSnippets = searchSnippets(
-                                BlogTextCache.parse(source.id, source.bodyHtml).plainText,
-                                query,
-                            )
-                            originalSnippets.forEachIndexed { index, snippet ->
-                                val label = if (originalSnippets.size > 1) "原文 ${index + 1}" else "原文"
-                                add(BlogSearchPreview(label, snippet))
-                            }
-                            if (translationEnabled) {
-                                val translatedSnippets = searchSnippets(translatedBlogText(source.translation), query)
-                                translatedSnippets.forEachIndexed { index, snippet ->
-                                    val label = if (translatedSnippets.size > 1) "译文 ${index + 1}" else "译文"
-                                    add(BlogSearchPreview(label, snippet))
-                                }
-                            }
-                        }
-                        excerpts.takeIf { it.isNotEmpty() }?.let { source.id to it }
-                    }
-                    .toMap()
-            }
-            val result = BlogPageData(total, matching, totalPages, page, posts, previews, loaded = true)
-            if (query.isBlank() && memberIds == null && !oldest && !bounds.isActive && requestedPage == 0) {
-                BlogPrewarmer.cachedInitialData = result
-            }
-            result
+        val previousQuery = pager.snapshot.query
+        val sameQuery = previousQuery == listQuery
+        val pending = pendingScrollIndex
+        val anchor = when {
+            pending != null -> pending
+            // A data refresh keeps the rows around the current position.
+            sameQuery -> (blogListState.firstVisibleItemIndex - BLOG_HEADER_ITEMS).coerceAtLeast(0)
+            else -> 0
         }
-        primeCachedImageAspectRatios(context, loadedPage.posts.mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) })
-        val resolvedRequest = pageRequest.copy(page = loadedPage.page)
-        if (appliedRequest != resolvedRequest) {
-            // Treat a reordered page as new content even when it contains the
-            // same IDs, so cards crossfade instead of racing across the list.
-            if (appliedRequest != null) pageGeneration++
-            // Keep visible list controls at the same position during sorting.
-            // Pagination from further down the list still returns to the top.
-            val firstIndex = blogListState.firstVisibleItemIndex
-            if (firstIndex < 3) {
-                blogListState.requestScrollToItem(firstIndex, blogListState.firstVisibleItemScrollOffset)
-            } else {
+        // A refresh (e.g. a post marked read) re-reads a wider band, so rows
+        // just scrolled past don't fall back to placeholders.
+        pager.load(listQuery, anchor, radius = if (sameQuery) 3 else 1)
+        when {
+            pending != null -> {
+                blogListState.requestScrollToItem(BLOG_HEADER_ITEMS + pending)
+                pendingScrollIndex = null
+            }
+            // A new query keeps the search controls in place when they are
+            // on screen; from further down the list it returns to the top.
+            !sameQuery && previousQuery != null && blogListState.firstVisibleItemIndex >= BLOG_HEADER_ITEMS ->
                 blogListState.requestScrollToItem(0)
-            }
-        }
-        // Commit once. Lazy item animations retain outgoing cards while their
-        // replacements fade in; the header/search/selector never fade to blank.
-        appliedRequest = resolvedRequest
-        currentPage = loadedPage.page
-        pageInput = (loadedPage.page + 1).toString()
-        pageData = loadedPage
-    }
-    val matchingCount = pageData.matchingCount
-    val totalCount = pageData.totalCount
-    val totalPages = pageData.totalPages
-    val page = pageData.page
-    val blogs = pageData.posts
-    val bodyPreviews = pageData.previews
-    val displayedGeneration = pageGeneration
-
-    LaunchedEffect(selectedBlogId, pageData.loaded, blogs) {
-        if (selectedBlogId == null) {
-            val targetId = pendingScrollBlogId ?: return@LaunchedEffect
-            val index = blogs.indexOfFirst { it.id == targetId }
-            if (index >= 0) {
-                blogListState.scrollToItem(index + 3)
-                pendingScrollBlogId = null
-            }
         }
     }
 
-    LaunchedEffect(blogs, listActive) {
-        if (!listActive || blogs.isEmpty()) return@LaunchedEffect
-        val urls = blogs.mapNotNull { it.imageUrl?.takeIf(::isRealBlogImageUrl) }
-        BlogMediaDownloader.preloadImages(context, urls, limit = urls.size)
-    }
-
-    fun goToPage(targetPage: Int) {
-        val safePage = targetPage.coerceIn(0, totalPages - 1)
-        if (safePage == currentPage || currentPage != page) return
-        // Only the local rows gate navigation. Images load independently after
-        // the page is visible, including when downloads are slow or unavailable.
-        pendingScrollBlogId = null
-        currentPage = safePage
-        pageInput = (safePage + 1).toString()
+    // Read the chunks around whatever is visible, one chunk ahead each way.
+    LaunchedEffect(pager, blogListState) {
+        snapshotFlow {
+            // Empty while the list is not shown (an article is open).
+            val visible = blogListState.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) return@snapshotFlow null
+            val first = visible.first().index - BLOG_HEADER_ITEMS
+            val last = visible.last().index - BLOG_HEADER_ITEMS
+            Triple(first.coerceAtLeast(0), last.coerceAtLeast(0), pager.snapshot.query)
+        }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collect { (first, last) -> pager.ensureLoaded(first, last) }
     }
 
     LaunchedEffect(isActive) {
@@ -366,12 +271,7 @@ fun BlogScreen(
             oldestFirst = false
             searchQuery = ""
             timeFilter = TimeFilter()
-            currentPage = 0
-            pageInput = "1"
             showMemberDialog = false
-            showPageDialog = false
-            showDataDrawer = false
-            appliedRequest = null
             blogListState.scrollToItem(0)
         }
     }
@@ -400,27 +300,14 @@ fun BlogScreen(
                     backdropState = sheetBackdrop,
                     selectedIds = selectedMemberIds ?: members.mapTo(linkedSetOf(), BlogMember::id),
                     timeFilter = timeFilter,
+                    oldestFirst = oldestFirst,
                     onDismiss = { showMemberDialog = false },
-                    onConfirm = { selectedIds, selectedTimeFilter ->
+                    onConfirm = { selectedIds, selectedTimeFilter, selectedOldestFirst ->
                         showMemberDialog = false
                         val allIds = members.mapTo(linkedSetOf(), BlogMember::id)
                         selectedMemberIds = selectedIds.takeUnless { it == allIds }
                         timeFilter = selectedTimeFilter
-                        currentPage = 0
-                        pageInput = "1"
-                    },
-                )
-            }
-
-            if (showPageDialog) {
-                BlogPageDialog(
-                    pageInput = pageInput,
-                    totalPages = totalPages,
-                    onInputChange = { pageInput = it },
-                    onDismiss = { showPageDialog = false },
-                    onConfirm = { requestedPage ->
-                        goToPage(requestedPage - 1)
-                        showPageDialog = false
+                        oldestFirst = selectedOldestFirst
                     },
                 )
             }
@@ -463,203 +350,156 @@ fun BlogScreen(
                     return@AnimatedContent
                 }
 
-                LazyColumn(
-                    state = blogListState,
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    item(key = "blog-header") {
-                        GlassHeader(
-                            title = "博客",
-                            actions = {
+                Box(Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = blogListState,
+                        verticalArrangement = Arrangement.spacedBy(0.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        item(key = "blog-header") {
+                            GlassHeader(title = "博客")
+                        }
+                        item(key = "blog-controls") {
+                            // Search takes the row; sort order lives in the filter sheet.
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .padding(bottom = 8.dp),
+                            ) {
+                                GlassSearchField(
+                                    query = searchQuery,
+                                    onQueryChange = { searchQuery = it },
+                                    placeholder = "搜索标题、正文或日期",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                val isMemberFilterActive = selectedMemberIds != null &&
+                                    (members.isEmpty() || selectedMemberIds?.size != members.size)
+                                val isFilterActive = timeFilter.isActive || isMemberFilterActive || oldestFirst
                                 GlassIconButton(
-                                    onClick = { showDataDrawer = true },
-                                    imageVector = Icons.Rounded.Settings,
-                                    contentDescription = "数据管理",
-                                )
-                            },
-                        )
-                    }
-                    item(key = "blog-controls") {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp),
-                        ) {
-                            GlassSegmentedTabs(
-                                labels = listOf("最新", "最早"),
-                                selectedIndex = if (oldestFirst) 1 else 0,
-                                onSelected = {
-                                    // Reset the page together with the sort order so
-                                    // there is no intermediate request for the old page.
-                                    oldestFirst = it == 1
-                                    currentPage = 0
-                                    pageInput = "1"
-                                    pendingScrollBlogId = null
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
-                            val isMemberFilterActive = selectedMemberIds != null &&
-                                (members.isEmpty() || selectedMemberIds?.size != members.size)
-                            val isFilterActive = timeFilter.isActive || isMemberFilterActive
-                            GlassIconButton(
-                                onClick = { showMemberDialog = true },
-                                imageVector = Icons.Rounded.FilterList,
-                                contentDescription = "筛选成员和时间",
-                                size = 44.dp,
-                                tone = if (isFilterActive) GlassTone.Accent else GlassTone.Neutral,
-                            )
-                        }
-                    }
-                    item(key = "blog-search") {
-                        GlassSearchField(
-                            query = searchQuery,
-                            onQueryChange = {
-                                searchQuery = it
-                                currentPage = 0
-                                pageInput = "1"
-                            },
-                            placeholder = "搜索博客标题、正文或日期",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    }
-
-                    if (pageData.loaded && blogs.isEmpty()) {
-                        item(key = "blog-empty") {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .animateItem(
-                                        fadeInSpec = tween(300, easing = FastOutSlowInEasing),
-                                        placementSpec = tween(300, easing = FastOutSlowInEasing),
-                                        fadeOutSpec = tween(220, easing = FastOutSlowInEasing),
-                                    )
-                                    .fillMaxWidth()
-                                    .padding(vertical = 64.dp),
-                            ) {
-                                GlassPanel(
-                                    shape = GlassShapes.Circle,
-                                    modifier = Modifier.size(84.dp),
-                                ) {
-                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            Icons.AutoMirrored.Rounded.Article,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(32.dp),
-                                            tint = GlassColors.InkTertiary,
-                                        )
-                                    }
-                                }
-                                Spacer(Modifier.height(14.dp))
-                                Text(
-                                    when {
-                                        totalCount == 0 -> "正在等待博客同步"
-                                        searchQuery.isNotBlank() -> "没有找到相关博客"
-                                        else -> "当前成员筛选下没有博客"
-                                    },
-                                    color = GlassColors.InkSecondary,
+                                    onClick = { showMemberDialog = true },
+                                    imageVector = Icons.Rounded.FilterList,
+                                    contentDescription = "排序与筛选",
+                                    size = GlassMetrics.ControlHeight,
+                                    tone = if (isFilterActive) GlassTone.Accent else GlassTone.Neutral,
                                 )
                             }
                         }
-                    } else if (blogs.isNotEmpty()) {
-                        items(blogs, key = { "$displayedGeneration:${it.id}" }) { blog ->
-                            BlogSummaryCard(
-                                modifier = Modifier
-                                    .animateItem(
-                                        fadeInSpec = tween(300, easing = FastOutSlowInEasing),
-                                        placementSpec = tween(300, easing = FastOutSlowInEasing),
-                                        fadeOutSpec = tween(220, easing = FastOutSlowInEasing),
-                                    )
-                                    .padding(bottom = 10.dp),
-                                blog = blog,
-                                searchQuery = effectiveQuery,
-                                bodyPreviews = bodyPreviews[blog.id].orEmpty(),
-                                translationEnabled = translationEnabled,
-                                onClick = {
-                                    selectedBlogId = blog.id
-                                    // The list state retains the exact item and pixel offset.
-                                    // Only notification deep links need a new scroll target.
-                                    pendingScrollBlogId = null
-                                },
-                                onDownload = {
-                                    context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
-                                },
-                                onRetranslate = {
-                                    retranslateScope.launch(Dispatchers.IO) {
-                                        AppGraph.database.markBlogForRetranslation(blog.id)
-                                        AppGraph.notifyDataChanged(DataChange.BLOG_ROWS, setOf(blog.id))
-                                        BlogTranslationManager.enqueue(context, blog.id, force = true)
-                                    }
-                                },
-                            )
-                        }
-                        item(key = "blog-pagination") {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                            ) {
-                                Text(
-                                    text = "共 $matchingCount 篇博客",
-                                    color = GlassColors.InkTertiary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                )
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    GlassCapsuleButton(
-                                        onClick = { goToPage(page - 1) },
-                                        enabled = currentPage == page && page > 0,
-                                        modifier = Modifier.weight(1f),
-                                    ) { Text("上一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
 
-                                    GlassCapsuleButton(
-                                        onClick = {
-                                            pageInput = (page + 1).toString()
-                                            showPageDialog = true
-                                        },
-                                        enabled = currentPage == page && matchingCount > 0,
-                                        tone = GlassTone.Accent,
-                                        modifier = Modifier.weight(1.15f),
+                        val snapshot = pager.snapshot
+                        if (snapshot.loaded && snapshot.matchingCount == 0) {
+                            item(key = "blog-empty") {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .animateItem(
+                                            fadeInSpec = tween(300, easing = FastOutSlowInEasing),
+                                            placementSpec = tween(300, easing = FastOutSlowInEasing),
+                                            fadeOutSpec = tween(220, easing = FastOutSlowInEasing),
+                                        )
+                                        .fillMaxWidth()
+                                        .padding(vertical = 64.dp),
+                                ) {
+                                    GlassPanel(
+                                        shape = GlassShapes.Circle,
+                                        modifier = Modifier.size(84.dp),
                                     ) {
-                                        Text(
-                                            "${page + 1} / $totalPages",
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            fontSize = 13.sp,
-                                        )
-                                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "选择页码", modifier = Modifier.size(18.dp))
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                Icons.AutoMirrored.Rounded.Article,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(32.dp),
+                                                tint = GlassColors.InkTertiary,
+                                            )
+                                        }
                                     }
-
-                                    GlassCapsuleButton(
-                                        onClick = { goToPage(page + 1) },
-                                        enabled = currentPage == page && page < totalPages - 1,
-                                        modifier = Modifier.weight(1f),
-                                    ) { Text("下一页", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
+                                    Spacer(Modifier.height(14.dp))
+                                    Text(
+                                        when {
+                                            snapshot.totalCount == 0 -> "正在等待博客同步"
+                                            searchQuery.isNotBlank() -> "没有找到相关博客"
+                                            else -> "当前成员筛选下没有博客"
+                                        },
+                                        color = GlassColors.InkSecondary,
+                                    )
                                 }
                             }
+                        } else if (snapshot.matchingCount > 0) {
+                            val generation = snapshot.generation
+                            items(
+                                count = snapshot.matchingCount,
+                                key = { index ->
+                                    snapshot.item(index)?.let { "$generation:${it.id}" } ?: "$generation:slot:$index"
+                                },
+                                contentType = { index -> if (snapshot.item(index) != null) "blog" else "blog-placeholder" },
+                            ) { index ->
+                                val blog = snapshot.item(index)
+                                if (blog == null) {
+                                    // Replaced in place by the card, which fades in over it.
+                                    BlogSummaryPlaceholder(
+                                        modifier = Modifier
+                                            .animateItem(fadeInSpec = null, placementSpec = null, fadeOutSpec = null)
+                                            .padding(bottom = 10.dp),
+                                    )
+                                } else {
+                                    BlogSummaryCard(
+                                        modifier = Modifier
+                                            .animateItem(
+                                                fadeInSpec = tween(220, easing = FastOutSlowInEasing),
+                                                placementSpec = tween(260, easing = FastOutSlowInEasing),
+                                                fadeOutSpec = tween(160, easing = FastOutSlowInEasing),
+                                            )
+                                            .padding(bottom = 10.dp),
+                                        blog = blog,
+                                        searchQuery = snapshot.query?.searchQuery.orEmpty(),
+                                        bodyPreviews = snapshot.previews[blog.id].orEmpty(),
+                                        translationEnabled = translationEnabled,
+                                        onClick = {
+                                            selectedBlogId = blog.id
+                                            // The list state retains the exact item and pixel offset.
+                                            pendingScrollIndex = null
+                                        },
+                                        onDownload = {
+                                            context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
+                                        },
+                                        onRetranslate = {
+                                            retranslateScope.launch(Dispatchers.IO) {
+                                                AppGraph.database.markBlogForRetranslation(blog.id)
+                                                AppGraph.notifyDataChanged(DataChange.BLOG_ROWS, setOf(blog.id))
+                                                BlogTranslationManager.enqueue(context, blog.id, force = true)
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                            item(key = "blog-footer") {
+                                Text(
+                                    text = "共 ${snapshot.matchingCount} 篇博客",
+                                    color = GlassColors.InkTertiary,
+                                    style = GlassType.Footnote,
+                                    fontWeight = FontWeight.Medium,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                )
+                            }
+                            item(key = "blog-bottom-spacer") { Spacer(Modifier.height(128.dp)) }
                         }
-                        item(key = "blog-bottom-spacer") { Spacer(Modifier.height(128.dp)) }
                     }
+                    val scrollerSnapshot = pager.snapshot
+                    BlogMonthScroller(
+                        listState = blogListState,
+                        headerItems = BLOG_HEADER_ITEMS,
+                        itemCount = scrollerSnapshot.matchingCount,
+                        months = scrollerSnapshot.months,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            .windowInsetsPadding(WindowInsets.navigationBars)
+                            .padding(top = 112.dp, bottom = 96.dp, end = 2.dp),
+                    )
                 }
-            }
-
-            if (showDataDrawer) {
-                DataTransferDrawer(
-                    kind = ExportKind.BLOGS,
-                    backdropState = sheetBackdrop,
-                    onDismiss = { showDataDrawer = false },
-                )
             }
         }
     }
@@ -671,8 +511,9 @@ private fun BlogFilterDialog(
     backdropState: RelaySheetBackdropState,
     selectedIds: Set<String>,
     timeFilter: TimeFilter,
+    oldestFirst: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (Set<String>, TimeFilter) -> Unit,
+    onConfirm: (Set<String>, TimeFilter, Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     LaunchedEffect(members) {
@@ -680,6 +521,7 @@ private fun BlogFilterDialog(
     }
     var draft by remember(members, selectedIds) { mutableStateOf(selectedIds.toSet()) }
     var draftTimeFilter by remember(timeFilter) { mutableStateOf(timeFilter) }
+    var draftOldestFirst by remember(oldestFirst) { mutableStateOf(oldestFirst) }
     val allMemberIds = remember(members) { members.mapTo(linkedSetOf(), BlogMember::id) }
     GlassBottomSheet(
         onDismissRequest = onDismiss,
@@ -700,8 +542,8 @@ private fun BlogFilterDialog(
                     handle()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "博客筛选",
-                            fontSize = 20.sp,
+                            "排序与筛选",
+                            style = GlassType.Title2,
                             fontWeight = FontWeight.Bold,
                             color = GlassColors.Ink,
                             maxLines = 1,
@@ -711,7 +553,18 @@ private fun BlogFilterDialog(
                         GlassIconButton(
                             onClick = { dismiss(onDismiss) },
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "关闭博客筛选",
+                            contentDescription = "关闭排序与筛选",
+                        )
+                    }
+                }
+                item(key = "sort-order") {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("排序", style = GlassType.Callout, fontWeight = FontWeight.SemiBold, color = GlassColors.Ink)
+                        GlassSegmentedTabs(
+                            labels = listOf("最新优先", "最早优先"),
+                            selectedIndex = if (draftOldestFirst) 1 else 0,
+                            onSelected = { draftOldestFirst = it == 1 },
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
@@ -803,7 +656,7 @@ private fun BlogFilterDialog(
                             Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                         }
                         GlassCapsuleButton(
-                            onClick = { dismiss { onConfirm(draft, draftTimeFilter) } },
+                            onClick = { dismiss { onConfirm(draft, draftTimeFilter, draftOldestFirst) } },
                             enabled = !draftTimeFilter.hasInvertedRange(),
                             tone = GlassTone.Accent,
                             modifier = Modifier.weight(1f),
@@ -820,41 +673,40 @@ private fun BlogFilterDialog(
     }
 }
 
+/**
+ * Stand-in for a post whose chunk is still being read. It mirrors the card's
+ * frame (avatar row, title lines, cover) so the real card lands in place.
+ */
 @Composable
-private fun BlogPageDialog(
-    pageInput: String,
-    totalPages: Int,
-    onInputChange: (String) -> Unit,
-    onDismiss: () -> Unit,
-    onConfirm: (Int) -> Unit,
-) {
-    val requestedPage = pageInput.toIntOrNull()
-    val canJump = requestedPage != null && requestedPage in 1..totalPages
-    GlassDialog(onDismissRequest = onDismiss) {
-        GlassDialogTitle("跳转到页码")
-        Spacer(Modifier.height(6.dp))
-        GlassDialogText("输入 1 到 $totalPages 之间的页码")
-        Spacer(Modifier.height(14.dp))
-        GlassTextField(
-            value = pageInput,
-            onValueChange = { onInputChange(it.filter(Char::isDigit).take(6)) },
-            label = "页码",
-            placeholder = "1 – $totalPages",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(18.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            GlassCapsuleButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                Text("取消", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+private fun BlogSummaryPlaceholder(modifier: Modifier = Modifier) {
+    val fill = GlassColors.Placeholder.copy(alpha = 0.7f)
+    GlassPanel(
+        shape = GlassShapes.Card,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp).clip(CircleShape).background(fill))
+                Spacer(Modifier.size(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(Modifier.width(96.dp).height(14.dp).clip(GlassShapes.Capsule).background(fill))
+                    Box(Modifier.width(132.dp).height(10.dp).clip(GlassShapes.Capsule).background(fill))
+                }
             }
-            GlassCapsuleButton(
-                onClick = { if (canJump) onConfirm(requestedPage!!) },
-                enabled = canJump,
-                tone = GlassTone.Accent,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("跳转", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.fillMaxWidth(0.92f).height(16.dp).clip(GlassShapes.Capsule).background(fill))
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth(0.6f).height(16.dp).clip(GlassShapes.Capsule).background(fill))
+            Spacer(Modifier.height(12.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 3f)
+                    .clip(GlassShapes.CardSmall)
+                    .background(fill),
+            )
         }
     }
 }
@@ -899,7 +751,7 @@ private fun BlogSummaryCard(
                     NameWithUnreadTag(
                         name = highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
                         isUnread = blog.isUnread,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = GlassColors.Ink),
+                        style = GlassType.Headline.copy(fontWeight = FontWeight.Bold, color = GlassColors.Ink),
                         searchQuery = searchQuery,
                         highlightBackground = highlightBackground,
                     )
@@ -908,11 +760,7 @@ private fun BlogSummaryCard(
                         query = searchQuery,
                         highlightBackground = highlightBackground,
                         highlightTextColor = highlightText,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                            color = GlassColors.InkTertiary,
-                        ),
+                        style = GlassType.Footnote.copy(color = GlassColors.InkTertiary),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -950,7 +798,7 @@ private fun BlogSummaryCard(
                 query = searchQuery,
                 highlightBackground = highlightBackground,
                 highlightTextColor = highlightText,
-                style = MaterialTheme.typography.titleMedium,
+                style = GlassType.Title3,
                 color = GlassColors.Ink,
                 fontWeight = FontWeight.Bold,
                 maxLines = 3,
@@ -969,10 +817,8 @@ private fun BlogSummaryCard(
                         query = searchQuery,
                         highlightBackground = highlightBackground,
                         highlightTextColor = highlightText,
-                        style = MaterialTheme.typography.bodyMedium.copy(
+                        style = GlassType.Callout.copy(
                             color = GlassColors.AccentInk,
-                            fontSize = 14.5.sp,
-                            lineHeight = 21.sp,
                             fontWeight = FontWeight.Bold,
                         ),
                         modifier = Modifier.padding(top = 4.dp),
@@ -993,7 +839,7 @@ private fun BlogSummaryCard(
                     Text(
                         preview.label,
                         color = GlassColors.Accent,
-                        fontSize = 11.sp,
+                        style = GlassType.Caption,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier
                             .padding(end = 6.dp)
@@ -1004,11 +850,7 @@ private fun BlogSummaryCard(
                         query = searchQuery,
                         highlightBackground = highlightBackground,
                         highlightTextColor = highlightText,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = GlassColors.InkSecondary,
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp,
-                        ),
+                        style = GlassType.Subhead.copy(color = GlassColors.InkSecondary),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
@@ -1036,7 +878,7 @@ private fun BlogSummaryCard(
                     Text(
                         if (isPreviewsExpanded) "收起匹配项" else "展开剩余 ${bodyPreviews.size - 3} 处匹配",
                         color = GlassColors.Accent,
-                        fontSize = 12.sp,
+                        style = GlassType.Footnote,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -1223,7 +1065,7 @@ private fun BlogDetail(
                 Spacer(Modifier.width(10.dp))
                 Text(
                     "博客详情",
-                    fontSize = 17.sp,
+                    style = GlassType.Title3,
                     fontWeight = FontWeight.Bold,
                     color = GlassColors.Ink,
                     maxLines = 1,
@@ -1258,7 +1100,7 @@ private fun BlogDetail(
                             )
                             Text(
                                 formatBlogDate(blog.publishedAt),
-                                fontSize = 12.sp,
+                                style = GlassType.Footnote,
                                 color = GlassColors.InkTertiary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -1302,8 +1144,7 @@ private fun BlogDetail(
                     Spacer(Modifier.height(14.dp))
                     Text(
                         blog.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
+                        style = GlassType.Title1,
                         color = GlassColors.Ink,
                     )
                     AnimatedContent(
@@ -1318,8 +1159,7 @@ private fun BlogDetail(
                                 it,
                                 color = GlassColors.AccentInk,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                lineHeight = 22.sp,
+                                style = GlassType.Title3,
                                 modifier = Modifier.padding(top = 6.dp),
                             )
                         }
@@ -1366,8 +1206,7 @@ private fun BlogDetail(
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(
                                         paragraph.original,
-                                        lineHeight = 24.sp,
-                                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                                        style = GlassType.Article,
                                         color = GlassColors.Ink,
                                     )
                                     AnimatedContent(
@@ -1381,8 +1220,7 @@ private fun BlogDetail(
                                             Text(
                                                 it,
                                                 color = GlassColors.AccentInk,
-                                                fontSize = 14.5.sp,
-                                                lineHeight = 21.sp,
+                                                style = GlassType.Callout,
                                             )
                                         }
                                     }
@@ -1433,32 +1271,14 @@ private fun displayBlocks(blocks: List<BlogContentBlock>, translations: List<Str
 
 internal data class BlogSearchPreview(val label: String, val text: String)
 
-private data class BlogListRequest(
-    val memberIds: Set<String>?,
-    val query: String,
-    val oldestFirst: Boolean,
-    val timeFilter: TimeFilter,
-    val page: Int,
-)
-
-internal data class BlogPageData(
-    val totalCount: Int = 0,
-    val matchingCount: Int = 0,
-    val totalPages: Int = 1,
-    val page: Int = 0,
-    val posts: List<BlogSummary> = emptyList(),
-    val previews: Map<String, List<BlogSearchPreview>> = emptyMap(),
-    val loaded: Boolean = false,
-)
-
 object BlogPrewarmer {
     @Volatile
-    internal var cachedInitialData: BlogPageData? = null
+    internal var cachedSnapshot: BlogListSnapshot? = null
     @Volatile
     internal var cachedMembers: List<BlogMember>? = null
 }
 
-private fun translatedBlogText(serialized: String?): String {
+internal fun translatedBlogText(serialized: String?): String {
     if (serialized.isNullOrBlank()) return ""
     return runCatching {
         val array = org.json.JSONArray(serialized)

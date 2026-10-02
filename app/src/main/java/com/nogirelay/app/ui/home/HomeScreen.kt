@@ -29,28 +29,18 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Call
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,26 +48,25 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.push.PushRegistrar
-import com.nogirelay.app.ui.glass.GlassBottomSheet
+import com.nogirelay.app.ui.SyncGlyph
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
 import com.nogirelay.app.ui.glass.GlassColors
-import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
 import com.nogirelay.app.ui.glass.GlassHeader
 import com.nogirelay.app.ui.glass.GlassIconButton
+import com.nogirelay.app.ui.glass.GlassMetrics
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
-import com.nogirelay.app.ui.rememberRelaySheetBackdropState
-import com.nogirelay.app.ui.settings.SettingsSection
+import com.nogirelay.app.ui.glass.GlassType
+import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
+import com.nogirelay.app.ui.settings.SettingsPage
 import kotlinx.coroutines.isActive
 
 // Concentric nested corners: outer radius = inset + inner radius.
@@ -96,11 +85,10 @@ fun HomeScreen(
     onRequestNotifications: () -> Unit,
     onOpenFullScreenSettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
-    onTestCall: () -> Unit,
     isSyncing: Boolean,
     syncLabel: String,
     onSyncHistory: () -> Unit,
-    onSettingsChanged: () -> Unit,
+    onOpenSettings: (SettingsPage?) -> Unit,
 ) {
     val context = LocalContext.current
     val firebaseConfigured = remember(versions.settings) { PushRegistrar.isConfigured(context) }
@@ -110,103 +98,62 @@ fun HomeScreen(
 
     val allGranted = notificationGranted && fullScreenGranted && overlayGranted && pushConfigured
 
-    var showSettingsSheet by remember { mutableStateOf(false) }
-    val sheetBackdrop = rememberRelaySheetBackdropState()
     val scrollState = rememberScrollState()
 
-    CompositionLocalProvider(
-        com.nogirelay.app.performance.LocalRelayPageWorkPaused provides sheetBackdrop.isAttached,
+    Box(
+        modifier = Modifier
+            .fillMaxSize(),
     ) {
-        Box(
+        Column(
             modifier = Modifier
-                .fillMaxSize(),
+                .fillMaxSize()
+                .verticalScroll(scrollState),
         ) {
+            GlassHeader(
+                title = "Nogi Relay",
+                actions = {
+                    GlassIconButton(
+                        onClick = { onOpenSettings(null) },
+                        imageVector = Icons.Rounded.Tune,
+                        contentDescription = "设置",
+                    )
+                },
+            )
+
             Column(
+                verticalArrangement = Arrangement.spacedBy(14.dp),
                 modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scrollState),
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 6.dp, bottom = 24.dp),
             ) {
-                GlassHeader(
-                    title = "Nogi Relay",
-                    actions = {
-                        GlassIconButton(
-                            onClick = { showSettingsSheet = true },
-                            imageVector = Icons.Rounded.Tune,
-                            contentDescription = "系统与翻译设置",
-                        )
-                    },
+                HeroStatusCard(
+                    pushReady = pushReady,
+                    isSyncing = isSyncing,
+                    syncLabel = syncLabel,
+                    onSyncHistory = onSyncHistory,
+                    onOpenSettings = { onOpenSettings(SettingsPage.CONNECTION) },
                 )
 
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(top = 6.dp, bottom = 24.dp),
-                ) {
-                    HeroStatusCard(
-                        pushReady = pushReady,
-                        isSyncing = isSyncing,
-                        syncLabel = syncLabel,
-                        onSyncHistory = onSyncHistory,
-                        onOpenSettings = { showSettingsSheet = true },
-                    )
+                SystemHealthPanel(
+                    allGranted = allGranted,
+                    notificationGranted = notificationGranted,
+                    fullScreenGranted = fullScreenGranted,
+                    overlayGranted = overlayGranted,
+                    firebaseConfigured = firebaseConfigured,
+                    pushRegistered = pushRegistered,
+                    onRequestNotifications = onRequestNotifications,
+                    onOpenFullScreenSettings = onOpenFullScreenSettings,
+                    onOpenOverlaySettings = onOpenOverlaySettings,
+                    onOpenSettings = { onOpenSettings(SettingsPage.CONNECTION) },
+                )
 
-                    SystemHealthPanel(
-                        allGranted = allGranted,
-                        notificationGranted = notificationGranted,
-                        fullScreenGranted = fullScreenGranted,
-                        overlayGranted = overlayGranted,
-                        firebaseConfigured = firebaseConfigured,
-                        pushRegistered = pushRegistered,
-                        onRequestNotifications = onRequestNotifications,
-                        onOpenFullScreenSettings = onOpenFullScreenSettings,
-                        onOpenOverlaySettings = onOpenOverlaySettings,
-                        onOpenSettings = { showSettingsSheet = true },
-                    )
+                SettingsEntrancePanel(onClick = { onOpenSettings(null) })
 
-                    SettingsEntrancePanel(onClick = { showSettingsSheet = true })
-
-                    Spacer(Modifier.height(128.dp))
-                }
-            }
-
-            if (showSettingsSheet) {
-                GlassBottomSheet(
-                    onDismissRequest = { showSettingsSheet = false },
-                    backdropState = sheetBackdrop,
-                ) { dismiss, handle ->
-                    SettingsSection(
-                        onSettingsChanged = onSettingsChanged,
-                        onTestCall = onTestCall,
-                        header = {
-                            handle()
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 4.dp, bottom = 12.dp),
-                            ) {
-                                Text(
-                                    text = "系统与翻译设置",
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GlassColors.Ink,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f).padding(end = 12.dp),
-                                )
-                                GlassIconButton(
-                                    onClick = { dismiss { showSettingsSheet = false } },
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = "关闭设置",
-                                    modifier = Modifier.clearAndSetSemantics { },
-                                )
-                            }
-                        },
-                    )
-                }
+                Spacer(Modifier.height(128.dp))
             }
         }
+
     }
 }
 
@@ -222,8 +169,11 @@ private fun HeroStatusCard(
         com.nogirelay.app.performance.isRelayUiStarted() &&
         !com.nogirelay.app.performance.LocalRelayPageWorkPaused.current
     val pulseAlpha = remember { Animatable(0.35f) }
-    LaunchedEffect(visualActive, pushReady) {
-        if (visualActive && pushReady) while (isActive) {
+    // The status light holds still when decorative motion is reduced.
+    val reducedMotion = LocalGlassReducedMotion.current
+    LaunchedEffect(visualActive, pushReady, reducedMotion) {
+        if (reducedMotion) pulseAlpha.snapTo(0.65f)
+        if (visualActive && pushReady && !reducedMotion) while (isActive) {
             pulseAlpha.animateTo(0.95f, tween(1200, easing = LinearEasing))
             pulseAlpha.animateTo(0.35f, tween(1200, easing = LinearEasing))
         }
@@ -263,7 +213,7 @@ private fun HeroStatusCard(
                         text = if (pushReady) "推送已就绪" else "推送待配置",
                         color = GlassColors.Ink,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
+                        style = GlassType.Title3,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -271,8 +221,7 @@ private fun HeroStatusCard(
                         text = syncLabel.takeIf { it.isNotBlank() }
                             ?: if (pushReady) "监听中" else "请配置同步地址与访问令牌",
                         color = GlassColors.InkSecondary,
-                        fontSize = 12.5.sp,
-                        lineHeight = 17.sp,
+                        style = GlassType.Subhead,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -284,29 +233,7 @@ private fun HeroStatusCard(
                     contentDescription = if (isSyncing) "同步中" else "立即同步",
                     size = HomeTileRadius * 2,
                 ) {
-                    AnimatedContent(
-                        targetState = isSyncing,
-                        transitionSpec = {
-                            (fadeIn(tween(180)) + scaleIn(tween(180), initialScale = 0.72f))
-                                .togetherWith(fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.72f))
-                        },
-                        label = "sync-button-state",
-                    ) { syncing ->
-                        if (syncing) {
-                            GlassCircularProgressIndicator(
-                                color = GlassColors.Accent,
-                                strokeWidth = 2.2.dp,
-                                modifier = Modifier.size(21.dp),
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.Sync,
-                                contentDescription = null,
-                                tint = GlassColors.Accent,
-                                modifier = Modifier.size(21.dp),
-                            )
-                        }
-                    }
+                    SyncGlyph(isSyncing = isSyncing, tint = GlassColors.Accent)
                 }
             }
 
@@ -320,13 +247,13 @@ private fun HeroStatusCard(
                         onClick = onOpenSettings,
                         tone = GlassTone.Accent,
                         modifier = Modifier.fillMaxWidth(),
-                        height = HomeTileRadius * 2,
+                        height = GlassMetrics.ControlHeight,
                         shape = HomeTileShape,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
                     ) {
                         Icon(Icons.Rounded.Settings, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("立即配置", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("立即配置", style = GlassType.Subhead, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -367,13 +294,12 @@ private fun SystemHealthPanel(
                     Text(
                         text = "系统运行能力",
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp,
+                        style = GlassType.Headline,
                         color = GlassColors.Ink,
                     )
                     Text(
                         text = if (allGranted) "全部就绪 · 4/4" else "完成以下设置，确保消息和来电正常提醒",
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
+                        style = GlassType.Footnote,
                         color = if (allGranted) GlassColors.Success else GlassColors.InkSecondary,
                     )
                 }
@@ -464,8 +390,7 @@ private fun PermissionTile(
                 Spacer(Modifier.size(6.dp))
                 Text(
                     text = title,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
+                    style = GlassType.Callout,
                     fontWeight = FontWeight.SemiBold,
                     color = GlassColors.Ink,
                     maxLines = 2,
@@ -477,8 +402,7 @@ private fun PermissionTile(
             Text(
                 text = description,
                 color = GlassColors.InkSecondary,
-                fontSize = 12.sp,
-                lineHeight = 16.sp,
+                style = GlassType.Footnote,
             )
             if (!granted) {
                 Spacer(Modifier.weight(1f))
@@ -488,10 +412,10 @@ private fun PermissionTile(
                     tone = GlassTone.Accent,
                     modifier = Modifier.fillMaxWidth(),
                     shape = HomeTileButtonShape,
-                    height = 32.dp,
+                    height = GlassMetrics.CompactControlHeight,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 13.dp),
                 ) {
-                    Text("开启", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("开启", style = GlassType.Footnote, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -503,15 +427,16 @@ private fun SettingsEntrancePanel(onClick: () -> Unit) {
     GlassPanel(
         shape = GlassShapes.Card,
         onClick = onClick,
-        onClickLabel = "打开系统与翻译设置",
-        modifier = Modifier.fillMaxWidth().height(56.dp),
+        onClickLabel = "打开设置",
+        modifier = Modifier.fillMaxWidth().height(GlassMetrics.ControlHeight),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxSize().padding(horizontal = 9.dp),
+            // The icon disc sits concentric with the capsule's rounded end.
+            modifier = Modifier.fillMaxSize().padding(horizontal = 5.dp),
         ) {
             Box(
-                modifier = Modifier.size(38.dp),
+                modifier = Modifier.size(GlassMetrics.ControlHeight - 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 GlassPanel(shape = GlassShapes.Circle, modifier = Modifier.fillMaxSize(), depth = com.nogirelay.app.ui.glass.GlassDepths.None, fillAlpha = 0.34f, blur = 12.dp) {}
@@ -519,13 +444,13 @@ private fun SettingsEntrancePanel(onClick: () -> Unit) {
                     imageVector = Icons.Rounded.Tune,
                     contentDescription = null,
                     tint = GlassColors.Accent,
-                    modifier = Modifier.size(19.dp),
+                    modifier = Modifier.size(16.dp),
                 )
             }
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(10.dp))
             Text(
-                text = "系统与翻译设置",
-                fontSize = 14.5.sp,
+                text = "设置",
+                style = GlassType.Callout,
                 fontWeight = FontWeight.SemiBold,
                 color = GlassColors.Ink,
                 maxLines = 1,

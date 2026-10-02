@@ -130,7 +130,7 @@ internal fun GlassProgressTrack(
         modifier
             .glassControlShadow(GlassShapes.Capsule, depth = GlassDepths.Low.copy(elevation = 6.dp))
             .clip(GlassShapes.Capsule)
-            .background(GlassControlWhite.copy(alpha = controlFillAlpha(GlassTone.Neutral)))
+            .background(GlassControlBody.copy(alpha = controlFillAlpha(GlassTone.Neutral)))
             .glassControlFinish(GlassShapes.Capsule, GlassTone.Neutral, tint = null)
             .drawWithCache {
                 // Share the exact button bevel. Thin, frequently updated fills don't need refraction.
@@ -193,7 +193,7 @@ fun GlassCircularProgressIndicator(
                     val sweep = 80f + 170f * ((1f - cos(phase * 2f * PI).toFloat()) / 2f)
                     drawArc(color.copy(alpha = 0.12f), 0f, 360f, false, origin, arcSize, style = stroke)
                     drawArc(
-                        Color(0xFF4C5360).copy(alpha = 0.12f), start, sweep, false,
+                        GlassColors.Shadow.copy(alpha = (0.12f * GlassColors.ShadowStrength).coerceAtMost(1f)), start, sweep, false,
                         origin + Offset(0f, 0.7.dp.toPx()), arcSize, style = stroke,
                     )
                     drawArc(body, start, sweep, false, origin, arcSize, style = stroke)
