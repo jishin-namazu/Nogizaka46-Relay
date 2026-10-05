@@ -16,18 +16,24 @@ object TranslationManager {
     private val retryAfter = ConcurrentHashMap<String, Long>()
     private val retryCount = ConcurrentHashMap<String, Int>()
 
+    /** Messages skipped while [TranslationHealth] paused translation; resumed by [resumeAfterPause]. */
+    private val deferred = ConcurrentHashMap.newKeySet<String>()
+
     private var bulkJob: kotlinx.coroutines.Job? = null
     private val queue = com.nogirelay.app.performance.BoundedWorkQueue<String>(
         scope, parallelism = 3, capacity = 24, key = { it },
         onFailure = { id, error ->
+            TranslationHealth.recordFailure(error, AppGraph.settings.read())
             val attempts = (retryCount.merge(id, 1, Int::plus) ?: 1).coerceAtMost(8)
             retryAfter[id] = System.currentTimeMillis() + (5_000L * (1L shl (attempts - 1))).coerceAtMost(300_000L)
             Log.w(TAG, "Translation failed for $id", error)
         },
     ) { id ->
         val settings = AppGraph.settings.read()
-        if (isConfigured(settings)) {
-            val message = AppGraph.database.find(id)
+        if (isConfigured(settings) && !TranslationHealth.canTranslate(settings)) {
+            deferred += id
+        } else if (isConfigured(settings)) {
+            val message = AppGraph.messages.find(id)
             if (message != null && !message.translationDone && !message.isTestMessage) {
                 val text = message.text.orEmpty()
                 val translation = if (shouldTranslate(text)) {
@@ -36,8 +42,8 @@ object TranslationManager {
                         .translate(settings.aiApiKey, settings.aiModel.trim(), layout.requestPayload)
                         .mapCatching(layout::restore).getOrThrow().takeIf(String::isNotBlank)
                 } else null
-                AppGraph.database.saveTranslation(id, translation)
-                AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.MESSAGE_ROWS, setOf(id))
+                AppGraph.messages.saveTranslation(id, translation)
+                if (translation != null) TranslationHealth.recordSuccess()
                 retryAfter.remove(id)
                 retryCount.remove(id)
             }
@@ -74,7 +80,7 @@ object TranslationManager {
             while (true) {
                 val settings = AppGraph.settings.read()
                 if (!isConfigured(settings) || !manual && !settings.messageFullTranslation) break
-                val ids = AppGraph.database.pendingTranslationIds(blogs = false, afterId = afterId)
+                val ids = AppGraph.messages.pendingTranslationIds(afterId = afterId)
                 if (ids.isEmpty()) break
                 ids.forEach { id ->
                     if ((retryAfter[id] ?: 0L) <= System.currentTimeMillis()) queue.enqueue(id)
@@ -84,13 +90,21 @@ object TranslationManager {
         }
     }
 
+    /** Re-queues what a translation pause skipped (after a settings change or a retry). */
+    fun resumeAfterPause(context: Context) {
+        resetRetries()
+        val ids = deferred.toList()
+        deferred.removeAll(ids.toSet())
+        enqueueIds(context, ids)
+        enqueue(context)
+    }
+
     fun retranslateEverything(context: Context) {
         val appContext = context.applicationContext
         scope.launch {
             AppGraph.initialize(appContext)
-            AppGraph.database.markAllMessagesForRetranslation()
-            AppGraph.database.markAllBlogsForRetranslation()
-            AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.CONTENT)
+            AppGraph.messages.markAllMessagesForRetranslation()
+            AppGraph.blogs.markAllBlogsForRetranslation()
             resetRetries()
             BlogTranslationManager.resetRetries()
             enqueueBacklog(manual = true)

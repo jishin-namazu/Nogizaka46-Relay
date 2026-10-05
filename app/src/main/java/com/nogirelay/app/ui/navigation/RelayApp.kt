@@ -1,8 +1,9 @@
 package com.nogirelay.app.ui.navigation
 
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.semantics.semantics
 import android.Manifest
 import android.os.Build
-import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,16 +18,14 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -46,57 +44,47 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nogirelay.app.blog.BlogScreen
 import com.nogirelay.app.call.FullScreenPermission
 import com.nogirelay.app.call.OverlayPermission
-import com.nogirelay.app.data.AppGraph
-import com.nogirelay.app.data.DataChange
 import com.nogirelay.app.data.RelayMessage
-import com.nogirelay.app.data.sync.ContentSyncManager
 import com.nogirelay.app.media.VoicePlaybackService
 import com.nogirelay.app.media.VoicePlaybackState
 import com.nogirelay.app.performance.LocalRelayPageActive
 import com.nogirelay.app.performance.isRelayUiStarted
-import com.nogirelay.app.translation.BlogTranslationManager
-import com.nogirelay.app.translation.TranslationManager
+import com.nogirelay.app.ui.glass.GlassBackdrop
+import com.nogirelay.app.ui.glass.GlassMotion
+import com.nogirelay.app.ui.glass.GlassNavBar
+import com.nogirelay.app.ui.glass.GlassNavItem
 import com.nogirelay.app.ui.glass.LocalGlassHazeState
 import com.nogirelay.app.ui.glass.LocalGlassOverlayHazeState
 import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
 import com.nogirelay.app.ui.glass.glassHazeSource
 import com.nogirelay.app.ui.glass.rememberGlassHazeState
-import com.nogirelay.app.ui.glass.GlassBackdrop
-import com.nogirelay.app.ui.glass.GlassMotion
-import com.nogirelay.app.ui.glass.GlassNavBar
-import com.nogirelay.app.ui.glass.GlassNavItem
 import com.nogirelay.app.ui.home.HomeScreen
 import com.nogirelay.app.ui.home.hasNotificationPermission
 import com.nogirelay.app.ui.messages.MessagesScreen
-import com.nogirelay.app.ui.settings.SettingsPage
 import com.nogirelay.app.ui.settings.SettingsScreen
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.withContext
-
-private const val TAG = "RelayApp"
 
 private val SettingsSlideSpring = spring<IntOffset>(
     dampingRatio = Spring.DampingRatioNoBouncy,
     stiffness = Spring.StiffnessMediumLow,
 )
 
-enum class AppTab(val label: String) { HOME("主页"), MESSAGES("消息"), BLOG("博客") }
-
 /**
  * App shell: one continuous milky-glass world.
  *
  * A single [GlassBackdrop] at the root is the shared haze source for every
  * glass surface on every page, so content visibly scrolls behind the
- * floating navigation capsule. Pages are kept alive and transition
- * spatially (gentle rise + settle, never a bare crossfade), and the capsule
- * indicator moves with liquid stretch.
+ * floating navigation capsule. Pages are kept alive, and each keeps its own
+ * place (open conversation or article, filters, scroll) while another tab
+ * shows; tapping the current tab again backs out of a detail or scrolls to
+ * the top. Pages transition spatially (gentle rise + settle).
  */
 @Composable
 fun RelayApp(
@@ -107,36 +95,20 @@ fun RelayApp(
     onOpenMedia: (RelayMessage, String) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onTestCall: () -> Unit,
-    syncRequests: StateFlow<Long>,
-    onManualSync: () -> Unit,
     onUpdateProximity: (VoicePlaybackState) -> Unit,
+    viewModel: RelayAppViewModel = viewModel(),
 ) {
     val context = LocalContext.current
-    val initialMessageId by notificationMessageIds.collectAsState()
-    val initialBlogId by notificationBlogIds.collectAsState()
-    var tab by remember {
-        mutableStateOf(
-            when {
-                initialBlogId != null -> AppTab.BLOG
-                initialMessageId != null -> AppTab.MESSAGES
-                else -> AppTab.HOME
-            },
-        )
-    }
+    val initialMessageId by notificationMessageIds.collectAsStateWithLifecycle()
+    val initialBlogId by notificationBlogIds.collectAsStateWithLifecycle()
+    val shell by viewModel.shell.collectAsStateWithLifecycle()
+    val unreadMessageCount by viewModel.unreadMessages.collectAsStateWithLifecycle()
+    val unreadBlogCount by viewModel.unreadBlogs.collectAsStateWithLifecycle()
+    val syncStatus by viewModel.sync.collectAsStateWithLifecycle()
+    val uiStarted = isRelayUiStarted()
     var notificationGranted by remember { mutableStateOf(hasNotificationPermission(context)) }
     var fullScreenGranted by remember { mutableStateOf(FullScreenPermission.canUse(context)) }
     var overlayGranted by remember { mutableStateOf(OverlayPermission.canUse(context)) }
-    val versions by AppGraph.dataVersions.collectAsStateWithLifecycle()
-    val uiStarted = isRelayUiStarted()
-    var syncing by remember { mutableStateOf(false) }
-    var syncLabel by remember { mutableStateOf("") }
-    var unreadMessageCount by remember { mutableIntStateOf(0) }
-    var unreadBlogCount by remember { mutableIntStateOf(0) }
-    var navigatedBlogId by remember { mutableStateOf<String?>(null) }
-    // Settings cover the whole shell, navigation capsule included.
-    var settingsOpen by remember { mutableStateOf(false) }
-    var settingsStartPage by remember { mutableStateOf<SettingsPage?>(null) }
-    var navigatedMemberId by remember { mutableStateOf<String?>(null) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -148,62 +120,20 @@ fun RelayApp(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(versions.unread, uiStarted) {
-        if (!uiStarted) return@LaunchedEffect
-        withContext(AppGraph.dispatchers.databaseRead) {
-            val msgCount = AppGraph.database.countUnreadMessages()
-            val blogCount = AppGraph.database.countUnreadBlogs()
-            unreadMessageCount = msgCount
-            unreadBlogCount = blogCount
-        }
-    }
-
+    // A notification deep link must not land behind the settings.
     LaunchedEffect(initialMessageId) {
-        if (initialMessageId != null) tab = AppTab.MESSAGES
+        if (initialMessageId != null) viewModel.showFromNotification(AppTab.MESSAGES)
     }
     LaunchedEffect(initialBlogId) {
-        if (initialBlogId != null) tab = AppTab.BLOG
+        if (initialBlogId != null) viewModel.showFromNotification(AppTab.BLOG)
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> notificationGranted = granted }
-
-    LaunchedEffect(syncRequests) {
-        syncRequests.collectLatest {
-            syncing = true
-            val result = runCatching { withContext(Dispatchers.IO) { ContentSyncManager.syncContent(context) } }
-            syncing = false
-            syncLabel = result.fold(
-                onSuccess = { outcome ->
-                    if (outcome.messages > 0 || outcome.blogs > 0) {
-                        "已同步 ${outcome.messages} 条消息、${outcome.blogs} 篇博客"
-                    } else {
-                        "消息和博客已是最新"
-                    }
-                },
-                onFailure = { error ->
-                    Log.w(TAG, "History sync failed", error)
-                    error.message ?: "历史消息同步失败"
-                },
-            )
-            result.getOrNull()?.takeIf { it.messages > 0 || it.blogs > 0 }?.let {
-                AppGraph.notifyDataChanged(DataChange.CONTENT)
-            }
-        }
-    }
-
-    LaunchedEffect(versions.settings) {
-        withContext(Dispatchers.IO) {
-            TranslationManager.enqueue(context)
-            BlogTranslationManager.enqueuePending(context)
-        }
-    }
 
     LaunchedEffect(Unit) {
         VoicePlaybackService.playbackState
@@ -212,29 +142,28 @@ fun RelayApp(
             .collect { onUpdateProximity(it) }
     }
 
-    BackHandler(enabled = tab != AppTab.HOME && !settingsOpen) {
-        tab = AppTab.HOME
+    BackHandler(enabled = shell.tab != AppTab.HOME && !shell.settingsOpen) {
+        viewModel.backToHome()
     }
-    LaunchedEffect(initialMessageId, initialBlogId) {
-        // A notification deep link must not land behind the settings.
-        if (initialMessageId != null || initialBlogId != null) settingsOpen = false
+
+    val openFullScreenSettings: () -> Unit = {
+        FullScreenPermission.settingsIntent(context)?.let(context::startActivity)
     }
+    val openOverlaySettings: () -> Unit = { context.startActivity(OverlayPermission.settingsIntent(context)) }
 
     // Capture pages separately from their own glass materials and the nav overlay.
     val navigationHazeState = rememberGlassHazeState()
 
-    androidx.compose.runtime.CompositionLocalProvider(
-        LocalGlassOverlayHazeState provides navigationHazeState,
-    ) {
-        GlassBackdrop(
-            modifier = Modifier.fillMaxSize(),
-        ) {
+    CompositionLocalProvider(LocalGlassOverlayHazeState provides navigationHazeState) {
+        // Test tags double as resource ids for UI automation (baseline profiles).
+        GlassBackdrop(modifier = Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
             Box(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxSize().glassHazeSource(navigationHazeState)) {
                     val reducedMotion = LocalGlassReducedMotion.current
                     AppTab.entries.forEach { item ->
-                        val isSelected = (tab == item)
-                        val pageActive = isSelected && uiStarted && !settingsOpen
+                        val isSelected = shell.tab == item
+                        val pageActive = isSelected && uiStarted && !shell.settingsOpen
+                        val reselected = remember(item) { viewModel.reselected.filter { it == item }.map { } }
                         // Spatial continuity: the incoming page rises and settles
                         // on a spring; the outgoing page sinks and dims. Both stay
                         // composed so scroll positions and playback survive.
@@ -267,7 +196,7 @@ fun RelayApp(
                                     scaleY = s
                                 }
                                 .then(
-                                    if (!isSelected || settingsOpen) {
+                                    if (!isSelected || shell.settingsOpen) {
                                         Modifier
                                             .clearAndSetSemantics { }
                                             .pointerInput(Unit) {
@@ -283,63 +212,48 @@ fun RelayApp(
                                     },
                                 ),
                         ) {
-                            androidx.compose.runtime.CompositionLocalProvider(LocalRelayPageActive provides pageActive) {
+                            CompositionLocalProvider(LocalRelayPageActive provides pageActive) {
                                 when (item) {
                                     AppTab.HOME -> HomeScreen(
                                         notificationGranted = notificationGranted,
                                         fullScreenGranted = fullScreenGranted,
                                         overlayGranted = overlayGranted,
-                                        versions = versions,
                                         onRequestNotifications = {
                                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                             }
                                         },
-                                        onOpenFullScreenSettings = {
-                                            FullScreenPermission.settingsIntent(context)?.let(context::startActivity)
-                                        },
-                                        onOpenOverlaySettings = {
-                                            context.startActivity(OverlayPermission.settingsIntent(context))
-                                        },
-                                        isSyncing = syncing,
-                                        syncLabel = syncLabel,
-                                        onSyncHistory = onManualSync,
-                                        onOpenSettings = { page ->
-                                            settingsStartPage = page
-                                            settingsOpen = true
-                                        },
+                                        onOpenFullScreenSettings = openFullScreenSettings,
+                                        onOpenOverlaySettings = openOverlaySettings,
+                                        syncStatus = syncStatus,
+                                        onSyncHistory = viewModel::requestSync,
+                                        onOpenSettings = viewModel::openSettings,
+                                        reselected = reselected,
                                     )
 
                                     AppTab.MESSAGES -> MessagesScreen(
                                         isActive = isSelected,
-                                        versions = versions,
                                         initialMessageId = initialMessageId,
-                                        initialMemberId = navigatedMemberId,
-                                        onInitialMemberHandled = { navigatedMemberId = null },
                                         onInitialMessageHandled = onNotificationMessageHandled,
-                                        onUnreadChanged = { ids -> AppGraph.notifyDataChanged(DataChange.MESSAGE_READ, ids) },
                                         onOpenMedia = onOpenMedia,
                                         onPlayVoice = onPlayVoice,
+                                        onOpenSettings = viewModel::openSettings,
+                                        reselected = reselected,
                                     )
 
                                     AppTab.BLOG -> BlogScreen(
                                         isActive = isSelected,
-                                        versions = versions,
-                                        initialBlogId = navigatedBlogId ?: initialBlogId,
-                                        onInitialBlogHandled = {
-                                            navigatedBlogId = null
-                                            onNotificationBlogHandled(it)
-                                        },
-                                        onUnreadChanged = { AppGraph.notifyDataChanged(DataChange.BLOG_READ) },
+                                        initialBlogId = initialBlogId,
+                                        onInitialBlogHandled = onNotificationBlogHandled,
+                                        reselected = reselected,
                                     )
                                 }
                             }
                         }
                     }
-
                 }
 
-                androidx.compose.runtime.CompositionLocalProvider(LocalGlassHazeState provides navigationHazeState) {
+                CompositionLocalProvider(LocalGlassHazeState provides navigationHazeState) {
                     GlassNavBar(
                         items = listOf(
                             GlassNavItem(
@@ -360,12 +274,13 @@ fun RelayApp(
                                 badgeCount = unreadBlogCount,
                             ),
                         ),
-                        selectedIndex = AppTab.entries.indexOf(tab),
-                        onSelected = { tab = AppTab.entries[it] },
+                        selectedIndex = AppTab.entries.indexOf(shell.tab),
+                        onSelected = { viewModel.selectTab(AppTab.entries[it]) },
+                        onReselected = { viewModel.reselectTab(AppTab.entries[it]) },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .zIndex(2f)
-                            .then(if (settingsOpen) Modifier.clearAndSetSemantics { } else Modifier)
+                            .then(if (shell.settingsOpen) Modifier.clearAndSetSemantics { } else Modifier)
                             .navigationBarsPadding()
                             .padding(horizontal = 20.dp)
                             .padding(top = 6.dp, bottom = 16.dp)
@@ -374,35 +289,24 @@ fun RelayApp(
                 }
 
                 AnimatedVisibility(
-                    visible = settingsOpen,
+                    visible = shell.settingsOpen,
                     enter = fadeIn(tween(200)) + slideInHorizontally(SettingsSlideSpring) { it / 4 },
                     exit = fadeOut(tween(160)) + slideOutHorizontally(SettingsSlideSpring) { it / 4 },
                     modifier = Modifier.zIndex(3f),
                 ) {
                     SettingsScreen(
-                        initialPage = settingsStartPage,
-                        settingsVersion = versions.settings,
+                        initialPage = shell.settingsStartPage,
                         fullScreenGranted = fullScreenGranted,
                         overlayGranted = overlayGranted,
-                        isSyncing = syncing,
-                        syncLabel = syncLabel,
-                        onOpenFullScreenSettings = {
-                            FullScreenPermission.settingsIntent(context)?.let(context::startActivity)
-                        },
-                        onOpenOverlaySettings = {
-                            context.startActivity(OverlayPermission.settingsIntent(context))
-                        },
+                        syncStatus = syncStatus,
+                        onOpenFullScreenSettings = openFullScreenSettings,
+                        onOpenOverlaySettings = openOverlaySettings,
                         onTestCall = onTestCall,
-                        onSync = onManualSync,
-                        onSettingsChanged = { AppGraph.notifyDataChanged(DataChange.SETTINGS) },
-                        onClose = { settingsOpen = false },
+                        onSync = viewModel::requestSync,
+                        onClose = viewModel::closeSettings,
                     )
                 }
             }
         }
     }
 }
-
-
-
-

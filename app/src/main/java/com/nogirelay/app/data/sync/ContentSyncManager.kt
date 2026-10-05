@@ -22,10 +22,11 @@ object ContentSyncManager {
     fun syncContent(context: Context): SyncOutcome {
         val messageResult = runCatching { syncMessagesFromServer(context) }
         val blogResult = runCatching { syncBlogsFromOfficial(context) }
-        if (messageResult.isFailure && blogResult.isFailure) {
-            throw IllegalStateException(
-                "消息同步失败：${messageResult.exceptionOrNull()?.message}；BLOG 同步失败：${blogResult.exceptionOrNull()?.message}",
-            )
+        val messageError = messageResult.exceptionOrNull()
+        val blogError = blogResult.exceptionOrNull()
+        if (messageError != null && blogError != null) {
+            // The message server's reason (token, address) is the one to act on.
+            throw messageError.apply { addSuppressed(blogError) }
         }
         messageResult.exceptionOrNull()?.let { Log.w(TAG, "Message sync failed", it) }
         blogResult.exceptionOrNull()?.let { Log.w(TAG, "BLOG sync failed", it) }
@@ -44,12 +45,12 @@ object ContentSyncManager {
     private fun syncBlogPages(context: Context, newBlogIds: MutableSet<String>): Int {
         val pageSize = 100
         runCatching {
-            AppGraph.database.replaceBlogMembers(AppGraph.blogClient.fetchMembers())
+            AppGraph.blogMembers.replaceBlogMembers(AppGraph.blogClient.fetchMembers())
         }.onFailure { error ->
             Log.w(TAG, "BLOG member directory sync failed; keeping the last successful list", error)
         }
-        val fullSyncComplete = AppGraph.database.isBlogFullSyncComplete()
-        val syncBoundaryId = AppGraph.database.blogSyncHeadId()
+        val fullSyncComplete = AppGraph.syncState.isBlogFullSyncComplete()
+        val syncBoundaryId = AppGraph.syncState.blogSyncHeadId()
         var inserted = 0
 
         if (fullSyncComplete && syncBoundaryId != null) {
@@ -68,7 +69,7 @@ object ContentSyncManager {
                 val boundaryReached = page.posts.any { it.id == syncBoundaryId }
                 page.posts.forEach { post ->
                     val isUnread = !BlogReadTracker.isViewing(post.id)
-                    if (AppGraph.database.upsertBlog(post, isUnread = isUnread)) {
+                    if (AppGraph.blogs.upsertBlog(post, isUnread = isUnread)) {
                         inserted += 1
                         newBlogIds += post.id
                     }
@@ -86,7 +87,7 @@ object ContentSyncManager {
                 error("BLOG 增量同步未能完整到达同步边界或末尾；未移动同步边界，下次将安全重试")
             }
             if (newestId != null) {
-                AppGraph.database.markBlogSyncHead(newestId)
+                AppGraph.syncState.markBlogSyncHead(newestId)
                 if (finalCount != expectedCount || finalHeadId != newestId) {
                     Log.d(TAG, "BLOG 增量同步期间官网发布了新博客 (head=$finalHeadId, syncedHead=$newestId)；已安全推进边界至 $newestId，新增博客将在下个周期同步")
                 }
@@ -109,7 +110,7 @@ object ContentSyncManager {
                 page.posts.forEach { post ->
                     seenIds += post.id
 
-                    if (AppGraph.database.upsertBlog(post)) inserted += 1
+                    if (AppGraph.blogs.upsertBlog(post)) inserted += 1
                     BlogMediaDownloader.enqueue(context, post)
                 }
                 offset += page.posts.size
@@ -118,7 +119,7 @@ object ContentSyncManager {
             val finalHead = AppGraph.blogClient.fetchPage(limit = pageSize, offset = 0)
             val headCovered = finalHead.posts.all { it.id in seenIds }
             if (stable && expectedCount == finalCount && seenIds.size == finalCount && headCovered) {
-                AppGraph.database.markBlogFullSyncComplete(finalHead.posts.firstOrNull()?.id)
+                AppGraph.syncState.markBlogFullSyncComplete(finalHead.posts.firstOrNull()?.id)
                 Log.d(TAG, "BLOG full sync verified: count=$finalCount, attempts=${attempt + 1}")
                 return inserted
             }
@@ -138,8 +139,8 @@ object ContentSyncManager {
         )
         if (settings.relayUrl.isBlank() || settings.accessToken.isBlank()) return 0
 
-        val fullSyncComplete = AppGraph.database.isMessageFullSyncComplete()
-        val syncBoundaryId = AppGraph.database.messageSyncHeadId()
+        val fullSyncComplete = AppGraph.syncState.isMessageFullSyncComplete()
+        val syncBoundaryId = AppGraph.syncState.messageSyncHeadId()
 
         val newMessageIds = linkedSetOf<String>()
         return try {
@@ -195,7 +196,7 @@ object ContentSyncManager {
             error("消息增量同步未能完整到达同步边界或末尾；未移动同步边界，下次将安全重试")
         }
         if (newestId != null) {
-            AppGraph.database.markMessageSyncHead(newestId)
+            AppGraph.syncState.markMessageSyncHead(newestId)
             if (!countCovered || finalHeadId != newestId) {
                 Log.d(TAG, "消息增量同步期间服务器接收到新消息 (head=$finalHeadId, syncedHead=$newestId)；已安全推进边界至 $newestId，新增消息将在下个周期同步")
             }
@@ -236,7 +237,7 @@ object ContentSyncManager {
                 seenIds.size == offset
             }
             if (stable && countCovered && headCovered) {
-                AppGraph.database.markMessageFullSyncComplete(finalHead.firstOrNull()?.id)
+                AppGraph.syncState.markMessageFullSyncComplete(finalHead.firstOrNull()?.id)
                 Log.d(TAG, "Message full sync verified: count=${seenIds.size}, attempts=${attempt + 1}")
                 return inserted
             }
@@ -254,7 +255,7 @@ object ContentSyncManager {
             .getOrNull()
 
     private fun storeSyncedMessage(context: Context, message: RelayMessage, isUnread: Boolean = false): Boolean {
-        val inserted = AppGraph.database.insert(message, isUnread = isUnread)
+        val inserted = AppGraph.messages.insert(message, isUnread = isUnread)
         if (message.type != MessageType.TEXT) {
             runCatching { MediaDownloader.enqueueIfNeeded(context, message) }
                 .onFailure { error -> Log.w(TAG, "Media download enqueue failed for ${message.id}", error) }

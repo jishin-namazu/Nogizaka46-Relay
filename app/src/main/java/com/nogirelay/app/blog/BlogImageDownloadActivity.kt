@@ -80,6 +80,7 @@ import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
 import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.isAppInDarkMode
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -105,16 +106,25 @@ class BlogImageDownloadActivity : ComponentActivity() {
             isAppearanceLightNavigationBars = lightBars
         }
         AppGraph.initialize(this)
-        val blog = intent.getStringExtra(EXTRA_BLOG_ID)?.let(AppGraph.database::findBlog)
-        if (blog == null) {
+        val blogId = intent.getStringExtra(EXTRA_BLOG_ID) ?: run {
             finish()
             return
         }
-        setContent {
-            NogiRelayTheme {
-                SyncSystemBarsWithTheme()
-                GlassBackdrop(modifier = Modifier.fillMaxSize()) {
-                    BlogImageDownloadScreen(blog = blog, onBack = ::finish)
+        // The post is read and its HTML parsed for images off the main thread.
+        lifecycleScope.launch {
+            val loaded = withContext(AppGraph.dispatchers.databaseRead) {
+                AppGraph.blogs.findBlog(blogId)?.let { it to BlogMediaDownloader.imageUrls(it) }
+            }
+            if (loaded == null) {
+                finish()
+                return@launch
+            }
+            setContent {
+                NogiRelayTheme {
+                    SyncSystemBarsWithTheme()
+                    GlassBackdrop(modifier = Modifier.fillMaxSize()) {
+                        BlogImageDownloadScreen(blog = loaded.first, urls = loaded.second, onBack = ::finish)
+                    }
                 }
             }
         }
@@ -122,10 +132,9 @@ class BlogImageDownloadActivity : ComponentActivity() {
 }
 
 @Composable
-private fun BlogImageDownloadScreen(blog: BlogPost, onBack: () -> Unit) {
+private fun BlogImageDownloadScreen(blog: BlogPost, urls: List<String>, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val urls = remember(blog.id, blog.bodyHtml, blog.imageUrl) { BlogMediaDownloader.imageUrls(blog) }
     var selectedUrls by remember(urls) { mutableStateOf(emptySet<String>()) }
     var downloading by remember { mutableStateOf(false) }
     var downloadCompleted by remember { mutableStateOf(false) }
@@ -373,6 +382,7 @@ private fun BlogImageCell(
         onClick = onClick,
         onClickLabel = "第 ${index + 1} 张博客图片",
         shape = GlassShapes.Card,
+        staticMaterial = true,
         tone = GlassTone.Accent,
         tint = lerp(GlassControlBody, GlassColors.Accent, selection),
         fillAlpha = 0.24f + 0.28f * selection,

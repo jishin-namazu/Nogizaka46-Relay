@@ -91,7 +91,7 @@ class RelayClient {
         }
         return try {
             val status = connection.responseCode
-            if (status !in 200..299) error("$errorLabel 返回 $status")
+            if (status !in 200..299) throw HttpStatusException(status, "$errorLabel 返回 $status")
             parse(connection.inputStream.bufferedReader().use { it.readText() })
         } finally {
             connection.disconnect()

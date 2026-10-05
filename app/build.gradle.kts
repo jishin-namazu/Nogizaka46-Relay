@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("androidx.baselineprofile")
 }
 
 import java.util.Properties
@@ -53,6 +54,23 @@ val relayBaseUrlLiteral = relayBaseUrl
     .replace("\"", "\\\"")
     .replace("\r", "\\r")
     .replace("\n", "\\n")
+
+// 4b. 基线配置文件专用包的同步地址与令牌：只注入 com.nogirelay.app.profile，不进入 debug/release。
+//     优先 RELAY_PROFILE_BASE_URL / RELAY_PROFILE_ACCESS_TOKEN，其次 -PrelayProfileBaseUrl / -PrelayProfileAccessToken，
+//     再次 local.properties 的 relay.profile.baseUrl / relay.profile.access.token，最后沿用上面的 relay.* 配置。
+fun buildConfigString(value: String) = "\"" + value
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+    .replace("\r", "\\r")
+    .replace("\n", "\\n") + "\""
+val relayProfileBaseUrl = System.getenv("RELAY_PROFILE_BASE_URL")
+    ?: (project.findProperty("relayProfileBaseUrl") as String?)
+    ?: localProperties.getProperty("relay.profile.baseUrl")
+    ?: relayBaseUrl
+val relayProfileAccessToken = System.getenv("RELAY_PROFILE_ACCESS_TOKEN")
+    ?: (project.findProperty("relayProfileAccessToken") as String?)
+    ?: localProperties.getProperty("relay.profile.access.token")
+    ?: relayAccessToken
 
 // 5. FCM 配置：若本地无 google-services.json 文件，但环境变量提供了 GOOGLE_SERVICES_JSON，则自动写入
 val googleServicesFile = file("google-services.json")
@@ -129,6 +147,39 @@ android {
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
 }
 
+// The profile generator installs its own build of the app. Give those build
+// types (added by the baseline profile plugin) their own application id, so
+// generating a profile never replaces the installed app or touches its data.
+androidComponents {
+    onVariants { variant ->
+        val buildType = variant.buildType.orEmpty()
+        if (buildType.startsWith("nonMinified") || buildType.startsWith("benchmark")) {
+            variant.applicationId.set("com.nogirelay.app.profile")
+            // The profiling app starts empty; with a server it syncs real messages
+            // and blogs, so the recorded journeys render real lists.
+            variant.buildConfigFields?.put(
+                "DEFAULT_RELAY_URL",
+                com.android.build.api.variant.BuildConfigField("String", buildConfigString(relayProfileBaseUrl), null),
+            )
+            variant.buildConfigFields?.put(
+                "RELAY_ACCESS_TOKEN",
+                com.android.build.api.variant.BuildConfigField("String", buildConfigString(relayProfileAccessToken), null),
+            )
+        }
+    }
+}
+
+// google-services.json has no client for the profiling package, and profiling
+// does not need push; the app starts without Firebase in that build.
+tasks.matching {
+    it.name.endsWith("GoogleServices") && (it.name.contains("NonMinified") || it.name.contains("Benchmark"))
+}.configureEach { enabled = false }
+
+baselineProfile {
+    // Profiles are generated on demand (see baselineprofile/), not on every release build.
+    automaticGenerationDuringBuild = false
+}
+
 tasks.matching { it.name in setOf("assembleDebug", "assembleRelease") }.configureEach {
     doLast {
         val variantName = if (name.contains("Release")) "release" else "debug"
@@ -166,6 +217,12 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    // 语音播放：ExoPlayer + MediaSession（媒体通知、锁屏与耳机线控、拔出耳机自动暂停）
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
+    // 侧载 APK 也能安装基线配置文件（应用商店之外首次启动即可受益）
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    baselineProfile(project(":baselineprofile"))
     implementation(platform("com.google.firebase:firebase-bom:34.19.0"))
     implementation("com.google.firebase:firebase-messaging")
 

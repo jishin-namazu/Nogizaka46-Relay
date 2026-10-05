@@ -19,6 +19,7 @@ object BlogTranslationManager {
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
     private val retryAfter = ConcurrentHashMap<String, Long>()
     private val retryCount = ConcurrentHashMap<String, Int>()
+    private val deferred = ConcurrentHashMap.newKeySet<String>()
     private val requestSlots = Semaphore(3)
 
     private data class Work(val context: Context, val id: String, val force: Boolean, val retryFailures: Boolean)
@@ -72,7 +73,7 @@ object BlogTranslationManager {
             while (remaining > 0) {
                 val settings = AppGraph.settings.read()
                 if (!isConfigured(settings) || !manual && !settings.blogFullTranslation) break
-                val ids = AppGraph.database.pendingTranslationIds(true, afterId, minOf(24, remaining))
+                val ids = AppGraph.blogs.pendingTranslationIds(afterId, minOf(24, remaining))
                 if (ids.isEmpty()) break
                 ids.forEach { schedule(context, it, false, true) }
                 afterId = ids.last()
@@ -95,6 +96,15 @@ object BlogTranslationManager {
         }
     }
 
+    /** Re-queues what a translation pause skipped (after a settings change or a retry). */
+    fun resumeAfterPause(context: Context) {
+        resetRetries()
+        val ids = deferred.toList()
+        deferred.removeAll(ids.toSet())
+        ids.forEach { enqueue(context, it) }
+        enqueuePending(context)
+    }
+
     fun resetRetries() {
         retryAfter.clear()
         retryCount.clear()
@@ -112,29 +122,35 @@ object BlogTranslationManager {
                 val settings = AppGraph.settings.read()
                 require(settings.translationEnabled) { "请先启用翻译" }
                 require(settings.aiApiKey.isNotBlank() && settings.aiModel.isNotBlank()) { "请先配置 API Key 和翻译模型" }
-                if (force) AppGraph.database.markBlogForRetranslation(blogId)
-                val blog = AppGraph.database.findBlog(blogId) ?: error("BLOG 不存在")
+                if (force) AppGraph.blogs.markBlogForRetranslation(blogId)
+                val blog = AppGraph.blogs.findBlog(blogId) ?: error("BLOG 不存在")
                 if (blog.bodyHtml.isBlank()) {
                     Log.d(TAG, "BLOG $blogId bodyHtml is blank; skipping translation until content is fetched")
                     return@runCatching
                 }
                 if (blog.translationDone && !force) return@runCatching
+                if (!TranslationHealth.canTranslate(settings)) {
+                    deferred += blogId
+                    return@runCatching
+                }
                 val blocks = BlogContentParser.blocks(blog.bodyHtml)
                 val bodyText = BlogContentParser.plainText(blocks)
                 val source = listOf(blog.title.trim(), bodyText).filter(String::isNotBlank).joinToString("\n\n\n")
                 if (source.isBlank()) {
-                    AppGraph.database.saveBlogTranslation(blogId, null)
+                    AppGraph.blogs.saveBlogTranslation(blogId, null)
                     return@runCatching
                 }
                 val layout = BlogTranslationLayout.from(source)
                 val provider = AIProviderFactory.getProvider(settings.aiProvider)
-                    val translation = provider.translate(
-                        settings.aiApiKey,
-                        settings.aiModel.trim(),
-                        layout.requestPayload,
-                    ).mapCatching(layout::validateAndSerialize).getOrThrow()
-                    AppGraph.database.saveBlogTranslation(blogId, translation)
-                    AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.BLOG_ROWS, setOf(blogId))
+                val translation = provider.translate(
+                    settings.aiApiKey,
+                    settings.aiModel.trim(),
+                    layout.requestPayload,
+                ).mapCatching(layout::validateAndSerialize)
+                    .onFailure { TranslationHealth.recordFailure(it, settings) }
+                    .getOrThrow()
+                AppGraph.blogs.saveBlogTranslation(blogId, translation)
+                TranslationHealth.recordSuccess()
             }
         }
 }

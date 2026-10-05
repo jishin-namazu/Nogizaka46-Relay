@@ -1,7 +1,6 @@
 package com.nogirelay.app.ui
 
 import android.Manifest
-import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.SystemClock
 import android.widget.Toast
@@ -93,6 +92,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.lifecycleScope
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
@@ -173,8 +173,22 @@ class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
         WindowCompat.setDecorFitsSystemWindows(window, false)
         AppGraph.initialize(this)
+        // The window is transparent until content arrives, so reading the pages
+        // off the main thread costs no visible frame.
+        lifecycleScope.launch {
+            val pages = withContext(AppGraph.dispatchers.databaseRead) { loadPages() }
+            if (pages == null) {
+                finish()
+                return@launch
+            }
+            show(pages.first, pages.second, pages.third)
+        }
+    }
+
+    /** The pages to show, the page to start on and the shared-element key; null when there is nothing. */
+    private fun loadPages(): Triple<List<RelayMessage>, Int, String?>? {
         val messageId = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)
-        val storedMessage = messageId?.let(AppGraph.database::find)
+        val storedMessage = messageId?.let(AppGraph.messages::find)
         val directImageUrl = intent.getStringExtra(EXTRA_IMAGE_URL)
         val directImageUrls = intent.getStringArrayListExtra(EXTRA_IMAGE_URLS)
             ?.filter(String::isNotBlank)
@@ -202,18 +216,19 @@ class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
                 isPlayed = false,
             )
         }
-        if (messages.isEmpty()) {
-            finish()
-            return
-        }
+        if (messages.isEmpty()) return null
         val initialPage = if (storedMessage == null) {
             intent.getIntExtra(EXTRA_IMAGE_INDEX, 0).coerceIn(messages.indices)
         } else {
             messages.indexOfFirst { it.id == storedMessage.id }.takeIf { it >= 0 } ?: 0
         }
-        viewerType = messages[initialPage].type
         val transitionKey = intent.getStringExtra(EXTRA_TRANSITION_KEY)
             ?: storedMessage?.id
+        return Triple(messages, initialPage, transitionKey)
+    }
+
+    private fun show(messages: List<RelayMessage>, initialPage: Int, transitionKey: String?) {
+        viewerType = messages[initialPage].type
 
         setContent {
             NogiRelayTheme(darkTheme = true) {
@@ -234,7 +249,7 @@ class MediaViewerActivity : ComponentActivity(), RefreshRatePolicyOwner {
 private fun memberMediaViewerPages(message: RelayMessage): List<RelayMessage> {
     if (message.type != MessageType.IMAGE && message.type != MessageType.VIDEO) return listOf(message)
     val ordered = runCatching {
-        AppGraph.database.mediaMessagesForMember(
+        AppGraph.messages.mediaMessagesForMember(
             message.memberKey,
             message.type,
             limit = VIEWER_MEDIA_LIMIT,
@@ -797,7 +812,6 @@ private fun VideoPlayer(
     var videoFrameReady by remember(message.id) { mutableStateOf(false) }
     var videoPlaying by remember { mutableStateOf(false) }
     var isCompleted by remember { mutableStateOf(false) }
-    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     val coroutineScope = rememberCoroutineScope()
     var wasPlayingBeforeDrag by remember { mutableStateOf(false) }
     val playbackPositionState = remember(message.id) { mutableFloatStateOf(0f) }
@@ -954,11 +968,8 @@ private fun VideoPlayer(
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                             )
-                            setOnPreparedListener { mp ->
-                                mediaPlayer = mp
-                                if (mp.videoWidth > 0 && mp.videoHeight > 0) {
-                                    onAspectRatio(mp.videoWidth.toFloat() / mp.videoHeight)
-                                }
+                            onVideoSize = { width, height -> onAspectRatio(width.toFloat() / height) }
+                            onPrepared = {
                                 isPrepared = true
                                 duration = this.duration.coerceAtLeast(0)
                                 playbackPositionState.floatValue = 0f
@@ -966,15 +977,22 @@ private fun VideoPlayer(
                                 videoPlaying = controlsEnabled && active
                                 isCompleted = false
                             }
-                            setOnCompletionListener {
+                            onCompletion = {
                                 videoPlaying = false
                                 isCompleted = true
                                 controlsVisible = true
                                 playbackPositionState.floatValue = duration.toFloat().coerceAtLeast(0f)
                             }
-                            setOnInfoListener { _, what, _ ->
-                                if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) videoFrameReady = true
-                                false
+                            onFirstFrame = { videoFrameReady = true }
+                            // Headset buttons, focus loss and unplugging pause or resume
+                            // from outside; the controls follow.
+                            onPlayingChanged = { playing ->
+                                videoPlaying = playing
+                                if (playing) {
+                                    isCompleted = false
+                                } else {
+                                    controlsVisible = true
+                                }
                             }
                         }
                     },
@@ -983,7 +1001,7 @@ private fun VideoPlayer(
                             view.tag = path
                             isPrepared = false
                             videoFrameReady = false
-                            view.setVideoPath(path)
+                            view.setVideoPath(path, title = message.memberName)
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
@@ -1100,7 +1118,6 @@ private fun VideoPlayer(
                         }
                     },
                     onSeek = { targetMs, onComplete ->
-                        val mp = mediaPlayer
                         var completed = false
                         val finishSeek = {
                             if (!completed) {
@@ -1119,14 +1136,13 @@ private fun VideoPlayer(
                             finishSeek()
                         }
 
-                        if (mp != null) {
-                            mp.setOnSeekCompleteListener {
+                        val view = videoView
+                        if (view != null) {
+                            view.seekTo(targetMs) {
                                 timeoutJob.cancel()
                                 finishSeek()
                             }
-                            mp.seekTo(targetMs.toLong(), MediaPlayer.SEEK_CLOSEST)
                         } else {
-                            videoView?.seekTo(targetMs)
                             timeoutJob.cancel()
                             finishSeek()
                         }

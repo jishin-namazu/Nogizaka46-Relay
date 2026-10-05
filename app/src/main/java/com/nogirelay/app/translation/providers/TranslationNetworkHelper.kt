@@ -1,5 +1,6 @@
 package com.nogirelay.app.translation.providers
 
+import com.nogirelay.app.data.HttpStatusException
 import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProvider
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +31,7 @@ object TranslationNetworkHelper {
                 connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
             } else {
                 val error = connection.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
-                throw Exception("HTTP $responseCode: ${error ?: "Unknown error"}")
+                throw HttpStatusException(responseCode, "HTTP $responseCode: ${error ?: "Unknown error"}")
             }
 
             val allModels = provider.parseModelsResponse(response)
@@ -67,7 +68,7 @@ object TranslationNetworkHelper {
                 connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
             } else {
                 val error = connection.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
-                throw Exception("HTTP $responseCode: ${error ?: "Unknown error"}")
+                throw HttpStatusException(responseCode, "HTTP $responseCode: ${error ?: "Unknown error"}")
             }
 
             provider.parseTranslateResponse(response)

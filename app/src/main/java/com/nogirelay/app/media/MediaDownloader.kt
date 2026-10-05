@@ -23,7 +23,6 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.nio.file.Files
 import java.net.URL
-import java.security.MessageDigest
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -70,9 +69,7 @@ object MediaDownloader {
     }
 
     private fun notFoundMarkerFile(context: Context, url: String): File {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(url.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte) }
+        val digest = UrlDigests.sha256(url)
         return File(File(context.filesDir, "media-cache"), "$digest.notfound")
     }
 
@@ -153,21 +150,21 @@ object MediaDownloader {
         message.videoHasAudio?.let { return it }
 
         val stored = withContext(AppGraph.dispatchers.databaseRead) {
-            runCatching { AppGraph.database.find(message.id)?.videoHasAudio }.getOrNull()
+            runCatching { AppGraph.messages.find(message.id)?.videoHasAudio }.getOrNull()
         }
         if (stored != null) return stored
         val detected = withContext(Dispatchers.IO) { cachedVideoHasAudioTrack(context, message) } ?: return null
         withContext(AppGraph.dispatchers.databaseWrite) {
-            runCatching { AppGraph.database.setVideoHasAudio(message.id, detected) }
+            runCatching { AppGraph.messages.setVideoHasAudio(message.id, detected) }
         }
         return detected
     }
 
     private fun persistVideoAudioTrack(context: Context, message: RelayMessage) {
-        val existing = runCatching { AppGraph.database.find(message.id)?.videoHasAudio }.getOrNull()
+        val existing = runCatching { AppGraph.messages.find(message.id)?.videoHasAudio }.getOrNull()
         if (existing != null) return
         val hasAudio = cachedVideoHasAudioTrack(context, message) ?: return
-        runCatching { AppGraph.database.setVideoHasAudio(message.id, hasAudio) }
+        runCatching { AppGraph.messages.setVideoHasAudio(message.id, hasAudio) }
     }
 
     fun cachedVideoHasAudioTrack(context: Context, message: RelayMessage): Boolean? {
@@ -507,7 +504,7 @@ object MediaDownloader {
 
     internal fun notifyCacheChanged(context: Context, url: String) {
         AppGraph.initialize(context)
-        val kinds = runCatching { AppGraph.database.mediaRefKindsForUrl(url) }
+        val kinds = runCatching { AppGraph.mediaRefs.mediaRefKindsForUrl(url) }
             .getOrDefault(com.nogirelay.app.data.MediaRefKind.entries.toSet())
         MediaCacheRevision.changed(kinds)
     }
@@ -527,9 +524,7 @@ object MediaDownloader {
     }
 
     fun cacheFileForUrl(context: Context, url: String, extension: String): File {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(url.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte) }
+        val digest = UrlDigests.sha256(url)
         return File(File(context.applicationContext.filesDir, "media-cache"), "$digest.$extension")
     }
 
@@ -561,7 +556,7 @@ object MediaDownloader {
     private fun extensionFor(url: String, type: MessageType): String {
         val path = url.toUri().path.orEmpty()
         val extension = path.substringAfterLast('.', "").lowercase().takeIf {
-            it.matches(Regex("[a-z0-9]{2,5}"))
+            it.matches(EXTENSION_PATTERN)
         }
         return extension ?: when (type) {
             MessageType.IMAGE -> "jpg"
@@ -633,9 +628,7 @@ object MediaDownloader {
     }
 
     fun videoThumbnailFile(context: Context, videoUrl: String): File {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(videoUrl.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte) }
+        val digest = UrlDigests.sha256(videoUrl)
         return File(File(context.filesDir, "video-thumbnails"), "$digest.jpg")
     }
 
@@ -645,4 +638,6 @@ object MediaDownloader {
         val file = videoThumbnailFile(context.applicationContext, mediaUrl)
         return file.takeIf { it.exists() && it.length() > 0L }
     }
+
+    private val EXTENSION_PATTERN = Regex("[a-z0-9]{2,5}")
 }

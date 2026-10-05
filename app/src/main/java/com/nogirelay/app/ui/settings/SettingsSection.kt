@@ -94,6 +94,10 @@ import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.glassPopoverAnchor
 import com.nogirelay.app.ui.glass.rememberGlassPopoverState
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.rounded.WarningAmber
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nogirelay.app.translation.TranslationHealth
+import com.nogirelay.app.translation.TranslationIssue
 
 /**
  * The four settings pages. Each page owns only its own drafts and saves them
@@ -166,7 +170,6 @@ internal fun SettingsCard(
 @Composable
 internal fun ConnectionSettingsPage(
     onBack: () -> Unit,
-    onSettingsChanged: () -> Unit,
 ) {
     val context = LocalContext.current
     val initial = remember { AppGraph.settings.read() }
@@ -181,7 +184,6 @@ internal fun ConnectionSettingsPage(
         AppGraph.settings.save(AppGraph.settings.read().copy(userNickname = trimmed))
         userNickname = trimmed
         nicknameLabel = "昵称已保存"
-        onSettingsChanged()
     }
 
     SettingsPageScaffold(title = "连接", onBack = onBack) {
@@ -216,7 +218,6 @@ internal fun ConnectionSettingsPage(
                                 onSuccess = { "设备已注册，系统推送已就绪" },
                                 onFailure = { it.message?.takeIf(String::isNotBlank) ?: "FCM 设备注册失败" },
                             )
-                            onSettingsChanged()
                         }
                     },
                     tone = GlassTone.Accent,
@@ -275,7 +276,6 @@ internal fun ConnectionSettingsPage(
 @Composable
 internal fun TranslationSettingsPage(
     onBack: () -> Unit,
-    onSettingsChanged: () -> Unit,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -319,16 +319,13 @@ internal fun TranslationSettingsPage(
 
     fun retranslateAll() {
         retranslateStatus = "已标记全部内容，正在后台按当前模型重新翻译…"
+        TranslationHealth.clear()
         TranslationManager.retranslateEverything(context)
-        onSettingsChanged()
     }
 
     fun refreshTranslationWorkers() {
-        TranslationManager.resetRetries()
-        BlogTranslationManager.resetRetries()
-        TranslationManager.enqueue(context)
-        BlogTranslationManager.enqueuePending(context)
-        onSettingsChanged()
+        TranslationManager.resumeAfterPause(context)
+        BlogTranslationManager.resumeAfterPause(context)
     }
 
     fun saveTranslationSettings() {
@@ -370,7 +367,21 @@ internal fun TranslationSettingsPage(
     )
     val translationVisibilityFade = tween<Float>(durationMillis = 200)
 
+    val translationIssue by TranslationHealth.issue.collectAsStateWithLifecycle()
+
     SettingsPageScaffold(title = "翻译", onBack = onBack) {
+        val issue = translationIssue
+        if (translationEnabled && issue != null) {
+            item(key = "translation-issue", contentType = "settings-card") {
+                TranslationIssueCard(
+                    issue = issue,
+                    onRetry = {
+                        TranslationHealth.clear()
+                        refreshTranslationWorkers()
+                    },
+                )
+            }
+        }
         item(key = "translation", contentType = "settings-card") {
             SettingsCard(
                 title = "AI 翻译",
@@ -381,13 +392,7 @@ internal fun TranslationSettingsPage(
                         onCheckedChange = {
                             translationEnabled = it
                             AppGraph.settings.save(AppGraph.settings.read().copy(translationEnabled = it))
-                            TranslationManager.resetRetries()
-                            BlogTranslationManager.resetRetries()
-                            if (it) {
-                                TranslationManager.enqueue(context)
-                                BlogTranslationManager.enqueuePending(context)
-                            }
-                            onSettingsChanged()
+                            if (it) refreshTranslationWorkers()
                         },
                     )
                 },
@@ -672,7 +677,6 @@ internal fun CallSettingsPage(
     onOpenOverlaySettings: () -> Unit,
     onTestCall: () -> Unit,
     onBack: () -> Unit,
-    onSettingsChanged: () -> Unit,
 ) {
     var incomingCallStyle by remember { mutableStateOf(AppGraph.settings.read().incomingCallStyle) }
 
@@ -685,7 +689,6 @@ internal fun CallSettingsPage(
                     onSelected = { index ->
                         incomingCallStyle = if (index == 0) IncomingCallStyle.CLASSIC else IncomingCallStyle.LIQUID_GLASS
                         AppGraph.settings.save(AppGraph.settings.read().copy(incomingCallStyle = incomingCallStyle))
-                        onSettingsChanged()
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -706,7 +709,7 @@ internal fun CallSettingsPage(
             SettingsCard(title = "来电权限") {
                 PermissionRow(
                     title = "全屏来电",
-                    description = if (fullScreenGranted) "允许在锁屏上显示成员来电" else "Android 14 起需要开启特殊权限",
+                    description = if (fullScreenGranted) "允许在锁屏上显示成员来电" else fullScreenPermissionHint(),
                     granted = fullScreenGranted,
                     onOpen = onOpenFullScreenSettings,
                 )
@@ -882,6 +885,51 @@ private fun DataEntryRow(icon: ImageVector, title: String, onClick: () -> Unit) 
 // ---------------------------------------------------------------------------
 // Shared pieces
 // ---------------------------------------------------------------------------
+
+/** Why translation stopped or keeps failing, and the way out. */
+@Composable
+private fun TranslationIssueCard(issue: TranslationIssue, onRetry: () -> Unit) {
+    SettingsCard(
+        title = if (issue.blocking) "翻译已暂停" else "翻译遇到问题",
+        trailing = {
+            Icon(
+                Icons.Rounded.WarningAmber,
+                contentDescription = null,
+                tint = if (issue.blocking) GlassColors.Danger else GlassColors.Warning,
+                modifier = Modifier.size(20.dp),
+            )
+        },
+    ) {
+        Text(issue.title, style = GlassType.Callout, fontWeight = FontWeight.SemiBold, color = GlassColors.Ink)
+        Text(issue.advice, style = GlassType.Footnote, color = GlassColors.InkSecondary)
+        if (issue.detail.isNotBlank()) {
+            Text(
+                "${issue.provider.displayName} · ${issue.model.ifBlank { "未选择模型" }}：${issue.detail}",
+                style = GlassType.Caption,
+                color = GlassColors.InkTertiary,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        GlassCapsuleButton(
+            onClick = onRetry,
+            tone = GlassTone.Accent,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.size(6.dp))
+            Text("重试翻译", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** What the missing full-screen permission costs on this device. */
+internal fun fullScreenPermissionHint(): String =
+    if (android.os.Build.VERSION.SDK_INT >= 34) {
+        "需开启后才能在锁屏上弹出成员来电"
+    } else {
+        "需开启后才能弹出全屏来电"
+    }
 
 @Composable
 private fun FullTranslationToggle(

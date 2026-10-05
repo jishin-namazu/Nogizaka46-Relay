@@ -2,7 +2,6 @@ package com.nogirelay.app.data.transfer
 
 import android.content.Context
 import android.net.Uri
-import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.media.MediaCacheRevision
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -123,14 +122,6 @@ object DataTransferManager {
                 states.publish(TransferState(kind = kind))
             } catch (error: Throwable) {
                 states.publish(TransferState(kind = kind, error = error.message ?: "导入失败"))
-            } finally {
-                AppGraph.notifyDataChanged(
-                    if (kind == ExportKind.MESSAGES) {
-                        com.nogirelay.app.data.DataChange.MESSAGES
-                    } else {
-                        com.nogirelay.app.data.DataChange.BLOGS
-                    },
-                )
             }
         }
     }

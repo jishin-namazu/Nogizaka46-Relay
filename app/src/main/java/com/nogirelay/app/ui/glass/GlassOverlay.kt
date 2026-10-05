@@ -49,6 +49,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.dismiss as dismissSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -263,6 +264,9 @@ fun GlassBottomSheet(
             val topSafeInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout)
             Column(
                 Modifier.fillMaxWidth()
+                    // The sheet is its own window: expose its test tags to UI
+                    // automation here too, as the app root does for the page.
+                    .semantics { testTagsAsResourceId = true }
                     // Cap the content inside the moving surface. Material must still
                     // measure its anchors against the full window to leave this gap above it.
                     .layout { measurable, constraints ->

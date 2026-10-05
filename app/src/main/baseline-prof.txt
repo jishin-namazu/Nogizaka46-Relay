@@ -2,8 +2,10 @@ Lcom/nogirelay/app/NogiRelayApplication;
 Lcom/nogirelay/app/MainActivity;
 Lcom/nogirelay/app/MainActivityKt;
 Lcom/nogirelay/app/blog/**;
-Lcom/nogirelay/app/data/BlogRepository;
 Lcom/nogirelay/app/data/MessageDatabase;
+Lcom/nogirelay/app/data/DataInvalidationTracker;
+Lcom/nogirelay/app/data/db/**;
+Lcom/nogirelay/app/data/repository/**;
 Lcom/nogirelay/app/performance/**;
 Lcom/nogirelay/app/ui/RemoteImageKt;
 HSPLcom/nogirelay/app/ui/messages/**;->**(**)**

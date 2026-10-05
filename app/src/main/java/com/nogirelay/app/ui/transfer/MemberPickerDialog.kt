@@ -195,6 +195,7 @@ fun MemberPickerCard(
         onClick = onClick,
         onClickLabel = member.name,
         shape = if (graduatedTagAtCorner) GlassShapes.CardSmall else GlassShapes.Card,
+        staticMaterial = true,
         tone = if (selectionProgress > 0.5f) GlassTone.Accent else GlassTone.Neutral,
         fillAlpha = 0.30f + (GlassColors.AccentFillAlpha - 0.30f) * selectionProgress,
         depth = if (selected) GlassDepths.Low else GlassDepths.None,

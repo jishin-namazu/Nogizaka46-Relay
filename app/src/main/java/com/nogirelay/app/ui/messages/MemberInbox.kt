@@ -1,5 +1,7 @@
 package com.nogirelay.app.ui.messages
 
+import com.nogirelay.app.ui.UiTestTags
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -121,7 +123,7 @@ fun MemberInbox(
         state = state,
         userScrollEnabled = recedeProgress == null,
         verticalArrangement = Arrangement.spacedBy(MemberCardSpacing),
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().testTag(UiTestTags.MEMBER_INBOX),
         contentPadding = PaddingValues(bottom = 128.dp),
     ) {
         header?.let { content ->
@@ -297,6 +299,7 @@ private fun ThreadCapsule(
         onClick = if (expansion == null) onClick else null,
         onClickLabel = thread.name,
         shape = GlassShapes.Card,
+        staticMaterial = true,
         // While opened, the shadow is drawn at the slot instead (see below).
         shadowAlpha = if (expansion == null) 1f else 0f,
         blurEnabled = !covered,
@@ -310,6 +313,7 @@ private fun ThreadCapsule(
         // The tap's release spring finishes while the card starts to grow.
         keepPressFeedback = true,
         modifier = modifier
+            .testTag(UiTestTags.MEMBER_THREAD)
             .onGloballyPositioned { slotInRoot = it.boundsInRoot() }
             .then(
                 if (expansion != null) {

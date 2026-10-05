@@ -94,7 +94,6 @@ object DataImporter {
         options: ImportOptions,
         onProgress: (phase: String, done: Int, total: Int) -> Unit,
     ): ImportReport {
-        val database = AppGraph.database
         val staging = File(context.cacheDir, "transfer-import")
         val raw = context.contentResolver.openInputStream(uri) ?: error("无法读取所选文件")
 
@@ -132,15 +131,15 @@ object DataImporter {
         }
 
         fun writeMessage(message: RelayMessage, links: Map<String, String>) {
-            database.transaction {
-                if (database.insertImported(message)) {
+            AppGraph.database.transaction {
+                if (AppGraph.messages.insertImported(message)) {
                     inserted += 1
                 } else {
                     duplicates += 1
-                    if (database.refreshImportedLinks(message.id, links)) linkRefreshed += 1
+                    if (AppGraph.messages.refreshImportedLinks(message.id, links)) linkRefreshed += 1
                     val translation = message.translation
                     if (!translation.isNullOrBlank() &&
-                        database.backfillMessageTranslation(message.id, translation)
+                        AppGraph.messages.backfillMessageTranslation(message.id, translation)
                     ) {
                         backfilled += 1
                     }
@@ -149,22 +148,22 @@ object DataImporter {
         }
 
         fun writeBlog(post: BlogPost, links: Map<String, String>) {
-            database.transaction {
-                if (database.insertBlogIfAbsent(post)) {
+            AppGraph.database.transaction {
+                if (AppGraph.blogs.insertBlogIfAbsent(post)) {
                     inserted += 1
                 } else {
                     duplicates += 1
 
-                    val existing = database.findBlog(post.id)
-                    if (database.refreshImportedBlogLinks(post.id, links)) linkRefreshed += 1
-                    val merged = database.findBlog(post.id)
+                    val existing = AppGraph.blogs.findBlog(post.id)
+                    if (AppGraph.blogs.refreshImportedBlogLinks(post.id, links)) linkRefreshed += 1
+                    val merged = AppGraph.blogs.findBlog(post.id)
                     if (existing != null && merged != null) {
                         mediaAdopted += adoptBlogMediaCache(context, existing, merged)
                     }
                     val translation = post.translation
                     if (!translation.isNullOrBlank() && merged != null &&
                         BlogImportMerge.sameTranslationSource(merged, post) &&
-                        database.backfillBlogTranslation(post.id, translation)
+                        AppGraph.blogs.backfillBlogTranslation(post.id, translation)
                     ) {
                         backfilled += 1
                     }
@@ -339,7 +338,7 @@ object DataImporter {
                                 manifest.members
                                     .filter { it.directory && memberSelected(it.id) }
                                     .forEach { member ->
-                                    val merged = database.insertMemberIfAbsent(
+                                    val merged = AppGraph.blogMembers.insertMemberIfAbsent(
                                         BlogMember(
                                             id = member.id,
                                             name = member.name,

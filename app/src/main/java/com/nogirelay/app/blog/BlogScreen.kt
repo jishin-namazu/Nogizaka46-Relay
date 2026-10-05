@@ -1,5 +1,7 @@
 package com.nogirelay.app.blog
 
+import com.nogirelay.app.ui.UiTestTags
+import androidx.compose.ui.platform.testTag
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -58,11 +60,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -92,8 +92,6 @@ import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.data.BlogReadTracker
 import com.nogirelay.app.data.BlogSummary
-import com.nogirelay.app.data.DataChange
-import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.isRealBlogImageUrl
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.performance.isRelayUiStarted
@@ -132,12 +130,14 @@ import com.nogirelay.app.ui.transfer.memberGroups
 import com.nogirelay.app.ui.transfer.preloadMemberAvatars
 import com.nogirelay.app.ui.primeCachedImageAspectRatios
 import com.nogirelay.app.ui.withoutTextPresentationSelector
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 /** Header and search rows above the first post. */
 private const val BLOG_HEADER_ITEMS = 2
@@ -148,86 +148,61 @@ private const val BLOG_HEADER_ITEMS = 2
  */
 @Composable
 fun BlogScreen(
-    versions: DataVersions,
     initialBlogId: String?,
     onInitialBlogHandled: (String) -> Unit,
-    onUnreadChanged: () -> Unit,
     isActive: Boolean = true,
+    reselected: Flow<Unit> = emptyFlow(),
+    viewModel: BlogViewModel = viewModel(),
 ) {
     val sheetBackdrop = rememberRelaySheetBackdropState()
     val workActive = isActive && isRelayUiStarted() && !sheetBackdrop.isAttached
     val context = LocalContext.current
-    val retranslateScope = rememberCoroutineScope()
-    var selectedBlogId by remember { mutableStateOf<String?>(null) }
-    val listActive = workActive && selectedBlogId == null
-    var selectedMemberIds by remember { mutableStateOf<Set<String>?>(null) }
-    var oldestFirst by remember { mutableStateOf(false) }
-    var searchQuery by remember { mutableStateOf("") }
-    val effectiveQuery = rememberSearchQuery(searchQuery, workActive)
-    var timeFilter by remember { mutableStateOf(TimeFilter()) }
+    val selected = viewModel.selectedBlogId
+    val listActive = workActive && selected == null
+    val effectiveQuery = rememberSearchQuery(viewModel.searchQuery, workActive)
+    // The filter sheet is transient; everything it edits lives in the ViewModel.
     var showMemberDialog by remember { mutableStateOf(false) }
     val blogListState = rememberLazyListState()
-    val pagerScope = rememberCoroutineScope()
-    val pager = remember { BlogListPager(context.applicationContext, pagerScope, BlogPrewarmer.cachedSnapshot) }
-    var translationEnabled by remember { mutableStateOf(AppGraph.settings.read().translationEnabled) }
-    var members by remember { mutableStateOf(BlogPrewarmer.cachedMembers ?: emptyList()) }
-
-    LaunchedEffect(versions.blogStructure, versions.settings, listActive) {
-        if (!listActive) return@LaunchedEffect
-        val loaded = withContext(AppGraph.dispatchers.databaseRead) {
-            AppGraph.settings.read().translationEnabled to AppGraph.database.blogMembers()
-        }
-        translationEnabled = loaded.first
-        members = loaded.second
-    }
-
-    // List index to reveal once the list shows again (notification deep links).
-    var pendingScrollIndex by remember { mutableStateOf<Int?>(null) }
+    val pager = viewModel.pager
+    val translationEnabled by viewModel.translationEnabled.collectAsStateWithLifecycle()
+    val members by viewModel.members.collectAsStateWithLifecycle()
+    val listRevision by viewModel.listRevision.collectAsStateWithLifecycle()
 
     LaunchedEffect(initialBlogId, workActive) {
         if (!workActive) return@LaunchedEffect
-        initialBlogId?.let { id ->
-            searchQuery = ""
-            selectedMemberIds = null
-            oldestFirst = false
-            timeFilter = TimeFilter()
-            pendingScrollIndex = withContext(AppGraph.dispatchers.databaseRead) { AppGraph.database.blogRank(id) }
-            selectedBlogId = id
-            onInitialBlogHandled(id)
-        }
+        initialBlogId?.let { id -> viewModel.openFromNotification(id) { onInitialBlogHandled(id) } }
     }
 
     val focusManager = LocalFocusManager.current
     val textToolbar = LocalTextToolbar.current
     AutoClearSelectionOnExit(isActive = isActive)
 
-    val selected = selectedBlogId
-    BackHandler(enabled = isActive && (selected != null || searchQuery.isNotEmpty())) {
+    BackHandler(enabled = isActive && (selected != null || viewModel.searchQuery.isNotEmpty())) {
         focusManager.clearFocus()
         textToolbar.hide()
-        if (selected != null) {
-            selectedBlogId = null
-        } else {
-            searchQuery = ""
+        if (selected != null) viewModel.closeBlog() else viewModel.searchQuery = ""
+    }
+    // Tapping the Blog tab again closes the article, then scrolls to the top.
+    LaunchedEffect(reselected) {
+        reselected.collect {
+            if (viewModel.selectedBlogId != null) viewModel.closeBlog() else blogListState.animateScrollToItem(0)
         }
     }
-    LaunchedEffect(members) {
-        selectedMemberIds?.let { selectedIds ->
-            val availableIds = members.mapTo(mutableSetOf(), BlogMember::id)
-            val updated = selectedIds.intersect(availableIds)
-            if (updated != selectedIds) {
-                selectedMemberIds = updated.takeUnless { it.size == availableIds.size }
-            }
-        }
-    }
+    LaunchedEffect(members) { viewModel.pruneMemberSelection(members) }
 
     // Infinite list: counts, a month index and chunks near the viewport.
-    val listQuery = BlogListQuery(selectedMemberIds, effectiveQuery, oldestFirst, timeFilter, translationEnabled)
-    LaunchedEffect(versions.blogs, listActive, listQuery) {
+    val listQuery = BlogListQuery(
+        viewModel.selectedMemberIds,
+        effectiveQuery,
+        viewModel.oldestFirst,
+        viewModel.timeFilter,
+        translationEnabled,
+    )
+    LaunchedEffect(listRevision, listActive, listQuery) {
         if (!listActive) return@LaunchedEffect
         val previousQuery = pager.snapshot.query
         val sameQuery = previousQuery == listQuery
-        val pending = pendingScrollIndex
+        val pending = viewModel.pendingScrollIndex
         val anchor = when {
             pending != null -> pending
             // A data refresh keeps the rows around the current position.
@@ -236,16 +211,27 @@ fun BlogScreen(
         }
         // A refresh (e.g. a post marked read) re-reads a wider band, so rows
         // just scrolled past don't fall back to placeholders.
-        pager.load(listQuery, anchor, radius = if (sameQuery) 3 else 1)
+        pager.load(listQuery, anchor, radius = if (sameQuery) 3 else 1, changes = viewModel.rowChanges.value)
         when {
             pending != null -> {
                 blogListState.requestScrollToItem(BLOG_HEADER_ITEMS + pending)
-                pendingScrollIndex = null
+                viewModel.pendingScrollIndex = null
             }
             // A new query keeps the search controls in place when they are
             // on screen; from further down the list it returns to the top.
             !sameQuery && previousQuery != null && blogListState.firstVisibleItemIndex >= BLOG_HEADER_ITEMS ->
                 blogListState.requestScrollToItem(0)
+        }
+    }
+
+    // Read marks and new translations patch the shown rows instead of reloading the list.
+    val rowChanges by viewModel.rowChanges.collectAsStateWithLifecycle()
+    LaunchedEffect(rowChanges, listActive) {
+        if (!listActive) return@LaunchedEffect
+        if (pager.applyRowChanges(rowChanges)) {
+            val query = pager.snapshot.query ?: return@LaunchedEffect
+            val anchor = (blogListState.firstVisibleItemIndex - BLOG_HEADER_ITEMS).coerceAtLeast(0)
+            pager.load(query, anchor, radius = 3, changes = rowChanges)
         }
     }
 
@@ -264,29 +250,6 @@ fun BlogScreen(
             .collect { (first, last) -> pager.ensureLoaded(first, last) }
     }
 
-    LaunchedEffect(isActive) {
-        if (!isActive) {
-            selectedBlogId = null
-            selectedMemberIds = null
-            oldestFirst = false
-            searchQuery = ""
-            timeFilter = TimeFilter()
-            showMemberDialog = false
-            blogListState.scrollToItem(0)
-        }
-    }
-
-    LaunchedEffect(showMemberDialog) {
-        if (showMemberDialog && members.isEmpty()) {
-            withContext(AppGraph.dispatchers.databaseRead) {
-                val loaded = AppGraph.database.blogMembers()
-                if (loaded.isNotEmpty()) {
-                    members = loaded
-                }
-            }
-        }
-    }
-
     CompositionLocalProvider(
         com.nogirelay.app.performance.LocalRelayPageWorkPaused provides sheetBackdrop.isAttached,
     ) {
@@ -298,16 +261,13 @@ fun BlogScreen(
                 BlogFilterDialog(
                     members = members,
                     backdropState = sheetBackdrop,
-                    selectedIds = selectedMemberIds ?: members.mapTo(linkedSetOf(), BlogMember::id),
-                    timeFilter = timeFilter,
-                    oldestFirst = oldestFirst,
+                    selectedIds = viewModel.selectedMemberIds ?: members.mapTo(linkedSetOf(), BlogMember::id),
+                    timeFilter = viewModel.timeFilter,
+                    oldestFirst = viewModel.oldestFirst,
                     onDismiss = { showMemberDialog = false },
                     onConfirm = { selectedIds, selectedTimeFilter, selectedOldestFirst ->
                         showMemberDialog = false
-                        val allIds = members.mapTo(linkedSetOf(), BlogMember::id)
-                        selectedMemberIds = selectedIds.takeUnless { it == allIds }
-                        timeFilter = selectedTimeFilter
-                        oldestFirst = selectedOldestFirst
+                        viewModel.applyFilter(selectedIds, selectedTimeFilter, selectedOldestFirst)
                     },
                 )
             }
@@ -340,9 +300,8 @@ fun BlogScreen(
                     BlogDetail(
                         blogId = selectedId,
                         isActive = workActive && selectedId == selected,
-                        dataVersion = maxOf(versions.blogContent, versions.settings),
-                        onBack = { selectedBlogId = null },
-                        onUnreadChanged = onUnreadChanged,
+                        onBack = viewModel::closeBlog,
+                        onRetranslate = viewModel::retranslate,
                     )
                     LaunchedEffect(selectedId, initialBlogId) {
                         if (selectedId == initialBlogId) onInitialBlogHandled(selectedId)
@@ -354,7 +313,7 @@ fun BlogScreen(
                     LazyColumn(
                         state = blogListState,
                         verticalArrangement = Arrangement.spacedBy(0.dp),
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().testTag(UiTestTags.BLOG_LIST),
                     ) {
                         item(key = "blog-header") {
                             GlassHeader(title = "博客")
@@ -370,14 +329,12 @@ fun BlogScreen(
                                     .padding(bottom = 8.dp),
                             ) {
                                 GlassSearchField(
-                                    query = searchQuery,
-                                    onQueryChange = { searchQuery = it },
+                                    query = viewModel.searchQuery,
+                                    onQueryChange = { viewModel.searchQuery = it },
                                     placeholder = "搜索标题、正文或日期",
                                     modifier = Modifier.weight(1f),
                                 )
-                                val isMemberFilterActive = selectedMemberIds != null &&
-                                    (members.isEmpty() || selectedMemberIds?.size != members.size)
-                                val isFilterActive = timeFilter.isActive || isMemberFilterActive || oldestFirst
+                                val isFilterActive = viewModel.isFilterActive
                                 GlassIconButton(
                                     onClick = { showMemberDialog = true },
                                     imageVector = Icons.Rounded.FilterList,
@@ -417,11 +374,12 @@ fun BlogScreen(
                                     }
                                     Spacer(Modifier.height(14.dp))
                                     Text(
-                                        when {
-                                            snapshot.totalCount == 0 -> "正在等待博客同步"
-                                            searchQuery.isNotBlank() -> "没有找到相关博客"
-                                            else -> "当前成员筛选下没有博客"
-                                        },
+                                        blogEmptyMessage(
+                                            totalCount = snapshot.totalCount,
+                                            searching = viewModel.searchQuery.isNotBlank(),
+                                            memberFiltered = viewModel.selectedMemberIds != null,
+                                            timeFiltered = viewModel.timeFilter.isActive,
+                                        ),
                                         color = GlassColors.InkSecondary,
                                     )
                                 }
@@ -456,21 +414,11 @@ fun BlogScreen(
                                         searchQuery = snapshot.query?.searchQuery.orEmpty(),
                                         bodyPreviews = snapshot.previews[blog.id].orEmpty(),
                                         translationEnabled = translationEnabled,
-                                        onClick = {
-                                            selectedBlogId = blog.id
-                                            // The list state retains the exact item and pixel offset.
-                                            pendingScrollIndex = null
-                                        },
+                                        onClick = { viewModel.openBlog(blog.id) },
                                         onDownload = {
                                             context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
                                         },
-                                        onRetranslate = {
-                                            retranslateScope.launch(Dispatchers.IO) {
-                                                AppGraph.database.markBlogForRetranslation(blog.id)
-                                                AppGraph.notifyDataChanged(DataChange.BLOG_ROWS, setOf(blog.id))
-                                                BlogTranslationManager.enqueue(context, blog.id, force = true)
-                                            }
-                                        },
+                                        onRetranslate = { viewModel.retranslate(blog.id) },
                                     )
                                 }
                             }
@@ -682,6 +630,7 @@ private fun BlogSummaryPlaceholder(modifier: Modifier = Modifier) {
     val fill = GlassColors.Placeholder.copy(alpha = 0.7f)
     GlassPanel(
         shape = GlassShapes.Card,
+        staticMaterial = true,
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
@@ -730,7 +679,9 @@ private fun BlogSummaryCard(
         onClick = onClick,
         onClickLabel = blog.title,
         shape = GlassShapes.Card,
+        staticMaterial = true,
         modifier = modifier
+            .testTag(UiTestTags.BLOG_CARD)
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
     ) {
@@ -932,26 +883,23 @@ private data class ParsedBlogDetail(
 private fun BlogDetail(
     blogId: String,
     isActive: Boolean = true,
-    dataVersion: Long,
     onBack: () -> Unit,
-    onUnreadChanged: () -> Unit,
+    onRetranslate: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val retranslateScope = rememberCoroutineScope()
-    var localRefresh by remember { mutableIntStateOf(0) }
+    // Subscribed only while shown; the last post stays on screen meanwhile.
+    val postFlow = remember(blogId, isActive) {
+        if (isActive) AppGraph.blogRepository.post(blogId) else emptyFlow()
+    }
+    val post by postFlow.collectAsStateWithLifecycle(initialValue = null)
+    val settings by AppGraph.settings.settings.collectAsStateWithLifecycle()
 
     val detailState by produceState<ParsedBlogDetail?>(
         initialValue = null,
-        blogId,
-        dataVersion,
-        localRefresh,
-        isActive,
+        post,
+        settings.translationEnabled,
     ) {
-        if (!isActive) return@produceState
-        val loaded = withContext(AppGraph.dispatchers.databaseRead) {
-            val blog = AppGraph.database.findBlog(blogId) ?: return@withContext null
-            blog to AppGraph.settings.read()
-        }
+        val loaded = post?.let { it to settings }
 
         value = loaded?.let { (blog, settings) ->
             withContext(AppGraph.dispatchers.parsing) {
@@ -984,17 +932,11 @@ private fun BlogDetail(
     LaunchedEffect(blogId, isActive) {
         if (!isActive) return@LaunchedEffect
 
-        withContext(NonCancellable) {
-            val updated = withContext(AppGraph.dispatchers.databaseWrite) {
-                AppGraph.database.markBlogRead(blogId)
-            }
-            if (updated > 0) {
-                localRefresh++
-                onUnreadChanged()
-            }
+        withContext(NonCancellable + AppGraph.dispatchers.databaseWrite) {
+            AppGraph.blogs.markBlogRead(blogId)
         }
     }
-    LaunchedEffect(detailState?.blog?.bodyHtml, dataVersion, isActive) {
+    LaunchedEffect(detailState?.blog?.bodyHtml, detailState?.blog?.translationDone, isActive) {
         if (!isActive) return@LaunchedEffect
         val current = detailState?.blog ?: return@LaunchedEffect
         val isTranslationEnabled = detailState?.translationEnabled ?: false
@@ -1045,6 +987,7 @@ private fun BlogDetail(
         contentPadding = PaddingValues(bottom = 128.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
+            .testTag(UiTestTags.BLOG_DETAIL)
             .fillMaxSize()
             .statusBarsPadding()
             .clearSelectionOnTap(focusManager, textToolbar),
@@ -1077,6 +1020,7 @@ private fun BlogDetail(
         item(key = "blog-detail-heading") {
             GlassPanel(
                 shape = GlassShapes.Card,
+                staticMaterial = true,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             ) {
                 Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -1108,13 +1052,7 @@ private fun BlogDetail(
                         }
                         if (translationEnabled && blog.bodyHtml.isNotBlank()) {
                             GlassCircleButton(
-                                onClick = {
-                                    retranslateScope.launch(Dispatchers.IO) {
-                                        AppGraph.database.markBlogForRetranslation(blog.id)
-                                        AppGraph.notifyDataChanged(DataChange.BLOG_ROWS, setOf(blog.id))
-                                        BlogTranslationManager.enqueue(context, blog.id, force = true)
-                                    }
-                                },
+                                onClick = { onRetranslate(blog.id) },
                                 contentDescription = "重新翻译",
                                 size = 40.dp,
                             ) {
@@ -1195,6 +1133,7 @@ private fun BlogDetail(
                 }
                 is DisplayBlock.Paragraphs -> GlassPanel(
                     shape = GlassShapes.Card,
+                    staticMaterial = true,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 ) {
                     SelectionContainer {
@@ -1270,6 +1209,21 @@ private fun displayBlocks(blocks: List<BlogContentBlock>, translations: List<Str
 }
 
 internal data class BlogSearchPreview(val label: String, val text: String)
+
+/** Why the list is empty, naming the filters actually in effect. */
+private fun blogEmptyMessage(
+    totalCount: Int,
+    searching: Boolean,
+    memberFiltered: Boolean,
+    timeFiltered: Boolean,
+): String = when {
+    totalCount == 0 -> "正在等待博客同步"
+    searching -> "没有找到相关博客"
+    memberFiltered && timeFiltered -> "所选成员在这段时间内没有博客"
+    timeFiltered -> "这段时间内没有博客"
+    memberFiltered -> "所选成员还没有博客"
+    else -> "暂无博客"
+}
 
 object BlogPrewarmer {
     @Volatile

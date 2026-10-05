@@ -1,7 +1,7 @@
 package com.nogirelay.app.data.transfer
 
-import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.DataChange
+import com.nogirelay.app.data.DataInvalidationTracker
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertEquals
@@ -57,14 +57,30 @@ class ExportEstimateCacheTest {
     }
 
     @Test fun displayRefreshDoesNotInvalidateButContentChangeDoes() {
-        val before = AppGraph.exportDataVersions.value
-        val uiBefore = AppGraph.dataVersions.value
-        AppGraph.notifyDataChanged(DataChange.CONTENT, invalidateExportEstimate = false)
-        assertSame(before, AppGraph.exportDataVersions.value)
-        assertTrue(AppGraph.dataVersions.value.revision > uiBefore.revision)
-        AppGraph.notifyDataChanged(DataChange.MESSAGES)
-        assertTrue(AppGraph.exportDataVersions.value.messageStructure > before.messageStructure)
-        AppGraph.notifyDataChanged(DataChange.BLOGS)
-        assertTrue(AppGraph.exportDataVersions.value.blogContent > before.blogContent)
+        val tracker = DataInvalidationTracker()
+        val before = tracker.exportVersions.value
+        val uiBefore = tracker.versions.value
+        tracker.publish(DataChange.CONTENT, invalidateExport = false)
+        assertSame(before, tracker.exportVersions.value)
+        assertTrue(tracker.versions.value.revision > uiBefore.revision)
+        tracker.publish(DataChange.MESSAGES)
+        assertTrue(tracker.exportVersions.value.messageStructure > before.messageStructure)
+        tracker.publish(DataChange.BLOGS)
+        assertTrue(tracker.exportVersions.value.blogContent > before.blogContent)
+    }
+
+    @Test fun batchedChangesPublishOnceAfterCommitAndNotAfterRollback() {
+        val tracker = DataInvalidationTracker()
+        val before = tracker.versions.value
+        tracker.batched { commit ->
+            tracker.publish(DataChange.MESSAGE_ROWS, setOf("a"))
+            tracker.publish(DataChange.MESSAGE_ROWS, setOf("b"))
+            assertSame(before, tracker.versions.value)
+            commit()
+        }
+        assertEquals(setOf("a", "b"), tracker.versions.value.messageIdsSince(before.messages))
+        val committed = tracker.versions.value
+        tracker.batched { tracker.publish(DataChange.MESSAGES) }
+        assertSame(committed, tracker.versions.value)
     }
 }

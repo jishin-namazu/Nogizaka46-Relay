@@ -164,19 +164,19 @@ fun DataTransferDrawer(
     var tabIndex by remember(kind) { mutableIntStateOf(0) }
     val uiStarted = com.nogirelay.app.performance.isRelayUiStarted()
     val contentFlow = remember(kind) {
-        AppGraph.dataVersions.map { if (kind == ExportKind.MESSAGES) it.messageStructure else it.blogContent }
+        AppGraph.invalidation.versions.map { if (kind == ExportKind.MESSAGES) it.messageStructure else it.blogContent }
             .distinctUntilChanged()
     }
     val initialContentRevision = remember(kind) {
-        AppGraph.dataVersions.value.let { if (kind == ExportKind.MESSAGES) it.messageStructure else it.blogContent }
+        AppGraph.invalidation.versions.value.let { if (kind == ExportKind.MESSAGES) it.messageStructure else it.blogContent }
     }
     val contentRevision by contentFlow.collectAsStateWithLifecycle(initialValue = initialContentRevision)
     val estimateContentFlow = remember(kind) {
-        AppGraph.exportDataVersions.map { if (kind == ExportKind.MESSAGES) it.messages else it.blogContent }
+        AppGraph.invalidation.exportVersions.map { if (kind == ExportKind.MESSAGES) it.messages else it.blogContent }
             .distinctUntilChanged()
     }
     val initialEstimateContentRevision = remember(kind) {
-        AppGraph.exportDataVersions.value.let {
+        AppGraph.invalidation.exportVersions.value.let {
             if (kind == ExportKind.MESSAGES) it.messages else it.blogContent
         }
     }
@@ -201,7 +201,7 @@ fun DataTransferDrawer(
         membersLoaded = false
         members = withContext(Dispatchers.IO) {
             when (kind) {
-                ExportKind.MESSAGES -> AppGraph.database.messageExportMembers().map {
+                ExportKind.MESSAGES -> AppGraph.messages.messageExportMembers().map {
                     BlogMember(
                         id = it.memberKey,
                         name = it.name,
@@ -210,7 +210,7 @@ fun DataTransferDrawer(
                         displayOrder = it.displayOrder,
                     )
                 }
-                ExportKind.BLOGS -> AppGraph.database.blogMembers()
+                ExportKind.BLOGS -> AppGraph.blogMembers.blogMembers()
             }
         }
         membersLoaded = true
@@ -273,7 +273,7 @@ fun DataTransferDrawer(
                 }
             }
 
-            val latest = AppGraph.exportDataVersions.value
+            val latest = AppGraph.invalidation.exportVersions.value
             val currentContent = if (kind == ExportKind.MESSAGES) latest.messages else latest.blogContent
             if (currentContent == estimateRequest.contentRevision &&
                 (!includeMedia || scopedMediaRevision.value == estimateRequest.mediaRevision)) {

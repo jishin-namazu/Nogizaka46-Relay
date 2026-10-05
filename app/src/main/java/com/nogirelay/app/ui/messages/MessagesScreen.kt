@@ -50,8 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nogirelay.app.data.AppGraph
-import com.nogirelay.app.data.DataChange
-import com.nogirelay.app.data.DataVersions
 import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
@@ -72,18 +70,22 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import androidx.compose.ui.text.style.TextAlign
+import com.nogirelay.app.ui.glass.GlassCapsuleButton
+import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.settings.SettingsPage
 
 @Composable
 fun MessagesScreen(
-    versions: DataVersions,
     initialMessageId: String?,
-    initialMemberId: String? = null,
-    onInitialMemberHandled: ((String) -> Unit)? = null,
     onInitialMessageHandled: (String) -> Unit,
-    onUnreadChanged: (Set<String>) -> Unit,
     onOpenMedia: (RelayMessage, String) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
+    onOpenSettings: (SettingsPage?) -> Unit,
     isActive: Boolean = true,
+    reselected: Flow<Unit> = emptyFlow(),
     viewModel: MessagesViewModel = viewModel(),
 ) {
     val context = LocalContext.current
@@ -92,11 +94,9 @@ fun MessagesScreen(
     val downloadScope = rememberCoroutineScope()
     val retranslateScope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val messageChanges by viewModel.messageChanges.collectAsStateWithLifecycle()
 
-    DisposableEffect(versions.messages, versions.settings, workActive) {
-        if (workActive) viewModel.load(versions)
-        onDispose { viewModel.stopLoading() }
-    }
+    LaunchedEffect(workActive) { viewModel.setActive(workActive) }
 
     val threads = uiState.threads
     val translationEnabled = uiState.translationEnabled
@@ -105,7 +105,8 @@ fun MessagesScreen(
         if (workActive) VoicePlaybackService.playbackState else flowOf(VoicePlaybackService.playbackState.value)
     }
     val playbackState by playbackFlow.collectAsStateWithLifecycle(initialValue = VoicePlaybackState())
-    var selectedEntry by remember { mutableStateOf<MemberMessageEntry?>(null) }
+    // The open conversation lives in the ViewModel, so it survives tab switches.
+    val selectedEntry by viewModel.openEntry.collectAsStateWithLifecycle()
     // Set when the member was opened from its inbox card, which then expands.
     var openedCardThreadId by remember { mutableStateOf<String?>(null) }
     val selectedMemberId = selectedEntry?.memberKey
@@ -122,17 +123,13 @@ fun MessagesScreen(
 
     fun openMember(memberKey: String, notificationMessageId: String? = null, fromCard: Boolean = false) {
         openedCardThreadId = memberKey.takeIf { fromCard }
-        selectedEntry = MemberMessageEntry(
-            memberKey = memberKey,
-            playbackState = VoicePlaybackService.playbackState.value,
-            notificationMessageId = notificationMessageId,
-        )
+        viewModel.openMember(memberKey, notificationMessageId)
     }
 
-    LaunchedEffect(isActive) {
-        if (!isActive) {
-            selectedEntry = null
-            inboxListState.scrollToItem(0)
+    // Tapping the Messages tab again backs out of a conversation, then scrolls up.
+    LaunchedEffect(reselected) {
+        reselected.collect {
+            if (viewModel.openEntry.value != null) viewModel.close() else inboxListState.animateScrollToItem(0)
         }
     }
 
@@ -180,20 +177,12 @@ fun MessagesScreen(
     LaunchedEffect(initialMessageId, isActive) {
         if (!isActive) return@LaunchedEffect
         val targetId = initialMessageId ?: return@LaunchedEffect
-        val message = withContext(AppGraph.dispatchers.databaseRead) { AppGraph.database.find(targetId) }
+        val message = withContext(AppGraph.dispatchers.databaseRead) { AppGraph.messages.find(targetId) }
         if (message == null) {
             onInitialMessageHandled(targetId)
             return@LaunchedEffect
         }
         openMember(message.memberKey, notificationMessageId = targetId)
-        initialMemberId?.let { onInitialMemberHandled?.invoke(it) }
-    }
-
-    LaunchedEffect(initialMemberId, initialMessageId, isActive) {
-        if (!isActive || initialMessageId != null) return@LaunchedEffect
-        val targetMember = initialMemberId?.ifBlank { null } ?: return@LaunchedEffect
-        openMember(targetMember)
-        onInitialMemberHandled?.invoke(targetMember)
     }
 
     val saveDownload: (RelayMessage) -> Unit = { message ->
@@ -243,7 +232,7 @@ fun MessagesScreen(
             if (uiState.loading && threads.isEmpty()) {
                 Box(Modifier.fillMaxSize())
             } else if (threads.isEmpty()) {
-                // Empty state floats as a calm glass droplet.
+                // Empty state floats as a calm glass droplet, with the way forward.
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         GlassPanel(
@@ -261,17 +250,32 @@ fun MessagesScreen(
                         }
                         Spacer(Modifier.height(18.dp))
                         Text(
-                            "还没有同步消息",
+                            if (uiState.relayConfigured) "暂无消息" else "还没有同步消息",
                             fontWeight = FontWeight.SemiBold,
                             style = GlassType.Title3,
                             color = GlassColors.Ink,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "保存同步设置后，新消息会出现在这里",
+                            if (uiState.relayConfigured) {
+                                "成员的新消息会通过推送自动出现在这里"
+                            } else {
+                                "填写同步地址和访问令牌后，消息会出现在这里"
+                            },
                             color = GlassColors.InkSecondary,
                             style = GlassType.Subhead,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp),
                         )
+                        if (!uiState.relayConfigured) {
+                            Spacer(Modifier.height(16.dp))
+                            GlassCapsuleButton(
+                                onClick = { onOpenSettings(SettingsPage.CONNECTION) },
+                                tone = GlassTone.Accent,
+                            ) {
+                                Text("前往连接设置", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            }
+                        }
                     }
                 }
             } else {
@@ -295,7 +299,7 @@ fun MessagesScreen(
                                     memberName = member?.name.orEmpty(),
                                     memberAvatarUrl = member?.avatarUrl,
                                     active = isActive && selectedEntry === entry,
-                                    versions = versions,
+                                    messageChanges = messageChanges,
                                     playbackState = playbackState,
                                     translationEnabled = translationEnabled,
                                     userNickname = userNickname,
@@ -305,21 +309,19 @@ fun MessagesScreen(
                                             if (initialMessageId != null && initialMessageId == entry.notificationMessageId) {
                                                 onInitialMessageHandled(initialMessageId)
                                             }
-                                            selectedEntry = null
+                                            viewModel.close(entry)
                                         }
                                     },
                                     onInitialMessageHandled = { if (selectedEntry === entry) onInitialMessageHandled(it) },
                                     onViewingLatest = { if (selectedEntry === entry) viewingLatest = it },
-                                    onUnreadChanged = onUnreadChanged,
                                     onOpenMedia = onOpenMedia,
                                     onPlayVoice = onPlayVoice,
                                     onDownload = ::download,
                                     onRetranslate = { message ->
                                         retranslateScope.launch {
                                             withContext(AppGraph.dispatchers.databaseWrite) {
-                                                AppGraph.database.markForRetranslation(message.id)
+                                                AppGraph.messages.markForRetranslation(message.id)
                                             }
-                                            AppGraph.notifyDataChanged(DataChange.MESSAGE_ROWS, setOf(message.id))
                                             TranslationManager.enqueueIds(context, listOf(message.id))
                                         }
                                     },
@@ -342,8 +344,8 @@ fun MessagesScreen(
                                 // Restoring the same entry retargets the running
                                 // spring, so the collapse turns into an expansion
                                 // with its current velocity and the page keeps its state.
-                                onReopen = if (selectedEntry == null) {
-                                    { selectedEntry = entry }
+                                onReopen = if (selectedEntry == null && entry != null) {
+                                    { viewModel.reopen(entry) }
                                 } else {
                                     null
                                 },
