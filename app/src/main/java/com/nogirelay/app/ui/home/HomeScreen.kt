@@ -53,7 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.nogirelay.app.data.AppGraph
-import com.nogirelay.app.data.DataVersions
+import com.nogirelay.app.data.sync.SyncStatus
 import com.nogirelay.app.push.PushRegistrar
 import com.nogirelay.app.ui.SyncGlyph
 import com.nogirelay.app.ui.glass.GlassCapsuleButton
@@ -67,7 +67,14 @@ import com.nogirelay.app.ui.glass.GlassTone
 import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
 import com.nogirelay.app.ui.settings.SettingsPage
+import com.nogirelay.app.ui.settings.fullScreenPermissionHint
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.isActive
+
+/** Notifications, full-screen calls, background launch and server push. */
+private const val HEALTH_ITEM_COUNT = 4
 
 // Concentric nested corners: outer radius = inset + inner radius.
 private val HomeCardInset = 12.dp
@@ -81,24 +88,24 @@ fun HomeScreen(
     notificationGranted: Boolean,
     fullScreenGranted: Boolean,
     overlayGranted: Boolean,
-    versions: DataVersions,
     onRequestNotifications: () -> Unit,
     onOpenFullScreenSettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
-    isSyncing: Boolean,
-    syncLabel: String,
+    syncStatus: SyncStatus,
     onSyncHistory: () -> Unit,
     onOpenSettings: (SettingsPage?) -> Unit,
+    reselected: Flow<Unit> = emptyFlow(),
 ) {
     val context = LocalContext.current
-    val firebaseConfigured = remember(versions.settings) { PushRegistrar.isConfigured(context) }
-    val pushRegistered = remember(versions.settings) { AppGraph.settings.isPushRegistrationConfirmed() }
-    val pushConfigured = firebaseConfigured && pushRegistered
-    val pushReady = pushConfigured
-
-    val allGranted = notificationGranted && fullScreenGranted && overlayGranted && pushConfigured
+    val firebaseConfigured = remember { PushRegistrar.isConfigured(context) }
+    val pushRegistered by AppGraph.settings.pushRegistered.collectAsStateWithLifecycle()
+    val pushReady = firebaseConfigured && pushRegistered
+    val readyCount = listOf(notificationGranted, fullScreenGranted, overlayGranted, pushReady).count { it }
 
     val scrollState = rememberScrollState()
+    LaunchedEffect(reselected) {
+        reselected.collect { scrollState.animateScrollTo(0) }
+    }
 
     Box(
         modifier = Modifier
@@ -129,14 +136,14 @@ fun HomeScreen(
             ) {
                 HeroStatusCard(
                     pushReady = pushReady,
-                    isSyncing = isSyncing,
-                    syncLabel = syncLabel,
+                    isSyncing = syncStatus.syncing,
+                    syncLabel = syncStatus.label,
                     onSyncHistory = onSyncHistory,
                     onOpenSettings = { onOpenSettings(SettingsPage.CONNECTION) },
                 )
 
                 SystemHealthPanel(
-                    allGranted = allGranted,
+                    readyCount = readyCount,
                     notificationGranted = notificationGranted,
                     fullScreenGranted = fullScreenGranted,
                     overlayGranted = overlayGranted,
@@ -263,7 +270,7 @@ private fun HeroStatusCard(
 
 @Composable
 private fun SystemHealthPanel(
-    allGranted: Boolean,
+    readyCount: Int,
     notificationGranted: Boolean,
     fullScreenGranted: Boolean,
     overlayGranted: Boolean,
@@ -274,6 +281,7 @@ private fun SystemHealthPanel(
     onOpenOverlaySettings: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
+    val allGranted = readyCount == HEALTH_ITEM_COUNT
     GlassPanel(
         shape = GlassShapes.CardLarge,
         modifier = Modifier.fillMaxWidth(),
@@ -298,7 +306,11 @@ private fun SystemHealthPanel(
                         color = GlassColors.Ink,
                     )
                     Text(
-                        text = if (allGranted) "全部就绪 · 4/4" else "完成以下设置，确保消息和来电正常提醒",
+                        text = if (allGranted) {
+                            "全部就绪 · $readyCount/$HEALTH_ITEM_COUNT"
+                        } else {
+                            "已就绪 $readyCount/$HEALTH_ITEM_COUNT，完成其余设置以确保消息和来电正常提醒"
+                        },
                         style = GlassType.Footnote,
                         color = if (allGranted) GlassColors.Success else GlassColors.InkSecondary,
                     )
@@ -325,7 +337,7 @@ private fun SystemHealthPanel(
                     )
                     PermissionTile(
                         title = "全屏来电",
-                        description = if (fullScreenGranted) "允许在锁屏上显示成员来电" else "Android 14 需要开启特殊权限",
+                        description = if (fullScreenGranted) "允许在锁屏上显示成员来电" else fullScreenPermissionHint(),
                         granted = fullScreenGranted,
                         imageVector = Icons.Rounded.Call,
                         action = onOpenFullScreenSettings,

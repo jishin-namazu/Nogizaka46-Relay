@@ -132,7 +132,7 @@ class BlogClient {
         }
         return try {
             val status = connection.responseCode
-            if (status !in 200..299) error("$endpointLabel 返回 $status")
+            if (status !in 200..299) throw HttpStatusException(status, "$endpointLabel 返回 $status")
             parseJsonpObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally {
             connection.disconnect()

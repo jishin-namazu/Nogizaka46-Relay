@@ -3,4 +3,6 @@
     <string name="app_name">Nogi Relay</string>
     <string name="channel_calls">成员来电</string>
     <string name="channel_messages">新消息</string>
+    <string name="channel_playback">语音播放</string>
+    <string name="voice_message">语音消息</string>
 </resources>

@@ -3,124 +3,169 @@ package com.nogirelay.app.ui
 import android.content.Context
 import android.graphics.Matrix
 import android.graphics.SurfaceTexture
-import android.media.MediaPlayer
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
+import android.net.Uri
 import android.view.Surface
 import android.view.TextureView
+import androidx.annotation.OptIn
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.session.MediaSession
+import java.io.File
 
-/** A Fit-scaled video texture that participates in Compose clipping and transforms. */
+/**
+ * A Fit-scaled video texture that participates in Compose clipping and
+ * transforms, played by ExoPlayer.
+ *
+ * Its [MediaSession] gives the video the same system presence as voice
+ * messages: headset and Bluetooth buttons, the assistant, audio focus and
+ * pausing when headphones are unplugged. Pauses and resumes that come from
+ * the system reach the screen through [onPlayingChanged].
+ */
+@OptIn(UnstableApi::class)
 internal class TextureVideoView(context: Context) : TextureView(context), TextureView.SurfaceTextureListener {
-    private var player: MediaPlayer? = null
+    private var player: ExoPlayer? = null
+    private var session: MediaSession? = null
     private var surface: Surface? = null
     private var path: String? = null
     private var prepared = false
-    private var playWhenReady = false
-    private var resumePosition = 0
-    private var preparedListener: MediaPlayer.OnPreparedListener? = null
-    private var completionListener: MediaPlayer.OnCompletionListener? = null
-    private var infoListener: MediaPlayer.OnInfoListener? = null
-    private val audioManager = context.getSystemService(AudioManager::class.java)
-    private val audioAttributes = AudioAttributes.Builder()
-        .setUsage(AudioAttributes.USAGE_MEDIA)
-        .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-        .build()
-    private var hasAudioFocus = false
-    private val audioFocus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-        .setAudioAttributes(audioAttributes)
-        .setOnAudioFocusChangeListener { change ->
-            if (change < 0) pause()
+    private var videoSize = VideoSize.UNKNOWN
+    private var pendingSeekDone: (() -> Unit)? = null
+
+    /** First time the player is ready to play. */
+    var onPrepared: () -> Unit = {}
+
+    /** The decoded video size, for the page's aspect ratio. */
+    var onVideoSize: (width: Int, height: Int) -> Unit = { _, _ -> }
+
+    /** The first frame reached the screen. */
+    var onFirstFrame: () -> Unit = {}
+
+    /** Whether playback is wanted, including pauses from headset buttons, focus loss or unplugging. */
+    var onPlayingChanged: (Boolean) -> Unit = {}
+
+    var onCompletion: () -> Unit = {}
+
+    private val listener = object : Player.Listener {
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            when (playbackState) {
+                Player.STATE_READY -> {
+                    if (!prepared) {
+                        prepared = true
+                        onPrepared()
+                    }
+                    pendingSeekDone?.let {
+                        pendingSeekDone = null
+                        it()
+                    }
+                }
+                Player.STATE_ENDED -> {
+                    player?.pause()
+                    onCompletion()
+                }
+            }
         }
-        .build()
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            onPlayingChanged(playWhenReady && player?.playbackState != Player.STATE_ENDED)
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            keepScreenOn = isPlaying
+        }
+
+        override fun onVideoSizeChanged(size: VideoSize) {
+            videoSize = size
+            if (size.width > 0 && size.height > 0) onVideoSize(displayWidth(size), size.height)
+            updateFitTransform()
+        }
+
+        override fun onRenderedFirstFrame() = onFirstFrame()
+
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            pendingSeekDone = null
+            onPlayingChanged(false)
+        }
+    }
 
     init {
         isOpaque = false
         surfaceTextureListener = this
     }
 
-    val isPlaying: Boolean get() = prepared && runCatching { player?.isPlaying == true }.getOrDefault(false)
-    val duration: Int get() = if (prepared) runCatching { player?.duration ?: 0 }.getOrDefault(0) else 0
-    val currentPosition: Int get() = if (prepared) runCatching { player?.currentPosition ?: 0 }.getOrDefault(0) else 0
+    val isPlaying: Boolean get() = player?.isPlaying == true
+    val duration: Int get() = player?.duration?.takeIf { prepared && it != C.TIME_UNSET }?.toInt() ?: 0
+    val currentPosition: Int get() = if (prepared) player?.currentPosition?.toInt() ?: 0 else 0
 
-    fun setOnPreparedListener(listener: MediaPlayer.OnPreparedListener) { preparedListener = listener }
-    fun setOnCompletionListener(listener: MediaPlayer.OnCompletionListener) { completionListener = listener }
-    fun setOnInfoListener(listener: MediaPlayer.OnInfoListener) { infoListener = listener }
-
-    fun setVideoPath(value: String) {
+    /** Loads a local video; [title] names it to the system (headset controls, assistant). */
+    fun setVideoPath(value: String, title: String? = null) {
         if (path == value && player != null) return
         releasePlayer()
         path = value
-        resumePosition = 0
-        preparePlayer()
+        val exo = ExoPlayer.Builder(context)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+        exo.addListener(listener)
+        exo.setSeekParameters(SeekParameters.EXACT)
+        surface?.let(exo::setVideoSurface)
+        exo.setMediaItem(
+            MediaItem.Builder()
+                .setUri(Uri.fromFile(File(value)))
+                .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+                .build(),
+        )
+        exo.prepare()
+        player = exo
+        // Several viewer pages may hold a player at once; each needs its own session id.
+        session = MediaSession.Builder(context, exo)
+            .setId("video-${System.identityHashCode(this)}-${value.hashCode()}")
+            .build()
     }
 
     fun start() {
-        playWhenReady = true
-        if (!prepared) return
-        if (!hasAudioFocus) {
-            hasAudioFocus = audioManager.requestAudioFocus(audioFocus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        }
-        if (hasAudioFocus) {
-            player?.start()
-            keepScreenOn = true
-        }
+        val exo = player ?: return
+        if (exo.playbackState == Player.STATE_ENDED) exo.seekTo(0)
+        exo.play()
     }
 
     fun pause() {
-        playWhenReady = false
-        if (isPlaying) player?.pause()
-        releaseAudioFocus()
+        player?.pause()
     }
 
-    fun seekTo(position: Int) {
-        resumePosition = position
-        if (prepared) player?.seekTo(position)
+    /** Seeks exactly; [onComplete] runs once the frame at [position] is ready (or at once without a player). */
+    fun seekTo(position: Int, onComplete: () -> Unit = {}) {
+        val exo = player
+        if (exo == null || !prepared) {
+            onComplete()
+            return
+        }
+        pendingSeekDone = onComplete
+        exo.seekTo(position.toLong().coerceAtLeast(0L))
     }
 
     fun stopPlayback() {
-        playWhenReady = false
         path = null
         releasePlayer()
     }
 
-    private fun preparePlayer() {
-        val videoPath = path ?: return
-        val texture = surfaceTexture ?: return
-        if (!isAvailable || player != null) return
-        val videoSurface = Surface(texture).also { surface = it }
-        val media = MediaPlayer().also { player = it }
-        media.setAudioAttributes(audioAttributes)
-        media.setSurface(videoSurface)
-        media.setOnPreparedListener {
-            if (player !== it) return@setOnPreparedListener
-            prepared = true
-            updateFitTransform(it.videoWidth, it.videoHeight)
-            if (resumePosition > 0) it.seekTo(resumePosition)
-            preparedListener?.onPrepared(it)
-            if (playWhenReady) start()
-        }
-        media.setOnVideoSizeChangedListener { _, width, height -> updateFitTransform(width, height) }
-        media.setOnCompletionListener {
-            playWhenReady = false
-            releaseAudioFocus()
-            completionListener?.onCompletion(it)
-        }
-        media.setOnInfoListener { mp, what, extra -> infoListener?.onInfo(mp, what, extra) ?: false }
-        media.setOnErrorListener { _, _, _ ->
-            playWhenReady = false
-            releasePlayer()
-            true
-        }
-        try {
-            media.setDataSource(videoPath)
-            media.prepareAsync()
-        } catch (_: Exception) {
-            releasePlayer()
-        }
-    }
+    private fun displayWidth(size: VideoSize): Int = (size.width * size.pixelWidthHeightRatio).toInt()
 
-    private fun updateFitTransform(videoWidth: Int, videoHeight: Int) {
+    private fun updateFitTransform() {
+        val videoWidth = displayWidth(videoSize)
+        val videoHeight = videoSize.height
         if (videoWidth <= 0 || videoHeight <= 0 || width <= 0 || height <= 0) return
         val fit = minOf(width.toFloat() / videoWidth, height.toFloat() / videoHeight)
         setTransform(Matrix().apply {
@@ -129,28 +174,34 @@ internal class TextureVideoView(context: Context) : TextureView(context), Textur
     }
 
     private fun releasePlayer() {
-        releaseAudioFocus()
+        pendingSeekDone = null
         prepared = false
-        player?.release()
+        videoSize = VideoSize.UNKNOWN
+        keepScreenOn = false
+        session?.release()
+        session = null
+        player?.let {
+            it.removeListener(listener)
+            it.release()
+        }
         player = null
+    }
+
+    override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
+        val videoSurface = Surface(texture).also { surface = it }
+        player?.setVideoSurface(videoSurface)
+        updateFitTransform()
+    }
+
+    override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = updateFitTransform()
+
+    override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+        // The player keeps its position; a new surface resumes the picture.
+        player?.clearVideoSurface()
         surface?.release()
         surface = null
-    }
-
-    private fun releaseAudioFocus() {
-        keepScreenOn = false
-        if (hasAudioFocus) audioManager.abandonAudioFocusRequest(audioFocus)
-        hasAudioFocus = false
-    }
-
-    override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) = preparePlayer()
-    override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) {
-        player?.takeIf { prepared }?.let { updateFitTransform(it.videoWidth, it.videoHeight) }
-    }
-    override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
-        resumePosition = currentPosition
-        releasePlayer()
         return true
     }
+
     override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
 }

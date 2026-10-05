@@ -34,7 +34,7 @@ class IncomingCallPreparationService : Service() {
 
         startForeground(PREPARING_NOTIFICATION_ID, preparingNotification())
         serviceScope.launch {
-            val message = AppGraph.database.find(messageId)
+            val message = AppGraph.messages.find(messageId)
             if (message == null) {
                 stopSelfResult(startId)
                 return@launch

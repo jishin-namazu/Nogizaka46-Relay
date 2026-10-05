@@ -1,3 +1,7 @@
-sdk.dir=C\:/Users/YOUR_USER/AppData/Local/Android/Sdk
+sdk.dir=
 relay.baseUrl=https://your-server.example
 relay.access.token=replace-with-your-token
+
+# 可选：生成基线配置文件时专用包使用的同步服务（只进入 com.nogirelay.app.profile）
+# relay.profile.baseUrl=https://your-server.example
+# relay.profile.access.token=replace-with-your-token

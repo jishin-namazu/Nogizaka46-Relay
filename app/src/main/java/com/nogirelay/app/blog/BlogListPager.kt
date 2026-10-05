@@ -1,5 +1,6 @@
 package com.nogirelay.app.blog
 
+import com.nogirelay.app.data.repository.BlogRowChanges
 import android.content.Context
 import android.os.CancellationSignal
 import android.util.Log
@@ -93,35 +94,38 @@ internal class BlogListPager(
     private val chunkJobs = mutableMapOf<Int, Job>()
     private var epoch = 0
 
+    /** Row and list revisions the current snapshot reflects. */
+    private var rowVersion = -1L
+    private var listRevision = -1L
+
     /**
      * Loads [query] (or reloads it after a data change) with the chunks within
      * [radius] of [anchorIndex]'s chunk. Suspends until the new snapshot is live.
      */
-    suspend fun load(query: BlogListQuery, anchorIndex: Int, radius: Int = 1) {
+    suspend fun load(query: BlogListQuery, anchorIndex: Int, radius: Int = 1, changes: BlogRowChanges? = null) {
         val myEpoch = ++epoch
+        changes?.let {
+            rowVersion = it.version
+            listRevision = it.listRevision
+        }
         chunkJobs.values.forEach(Job::cancel)
         chunkJobs.clear()
         val previous = snapshot
         val anchorChunk = (anchorIndex.coerceAtLeast(0)) / BLOG_CHUNK_SIZE
         val loaded = readDatabase { cancellation ->
-            val total = AppGraph.database.countBlogs(cancellationSignal = cancellation)
-            val matching = if (query.isDefault) total else AppGraph.database.countBlogs(
+            // One grouped pass gives both the month index and the match count;
+            // the unfiltered total only needs a separate (indexed) count.
+            val monthCounts = AppGraph.blogs.blogMonthCounts(
                 memberIds = query.memberIds,
                 searchQuery = query.searchQuery,
+                oldestFirst = query.oldestFirst,
                 startMillis = query.timeFilter.startMillis,
                 endMillisExclusive = query.timeFilter.endMillisExclusive,
                 cancellationSignal = cancellation,
             )
-            val months = monthSlots(
-                AppGraph.database.blogMonthCounts(
-                    memberIds = query.memberIds,
-                    searchQuery = query.searchQuery,
-                    oldestFirst = query.oldestFirst,
-                    startMillis = query.timeFilter.startMillis,
-                    endMillisExclusive = query.timeFilter.endMillisExclusive,
-                    cancellationSignal = cancellation,
-                ),
-            )
+            val months = monthSlots(monthCounts)
+            val matching = monthCounts.sumOf { it.second }
+            val total = if (query.isDefault) matching else AppGraph.blogs.countBlogs(cancellationSignal = cancellation)
             val lastChunk = ((matching - 1) / BLOG_CHUNK_SIZE).coerceAtLeast(0)
             val wanted = (anchorChunk - radius..anchorChunk + radius).filter { it in 0..lastChunk }
             val chunks = wanted.associateWith { readChunk(query, it, cancellation) }
@@ -141,6 +145,32 @@ internal class BlogListPager(
         )
         if (query.isDefault && anchorChunk <= 1) BlogPrewarmer.cachedSnapshot = snapshot
         preloadImages(loaded.chunks.values.flatMap { it.posts })
+    }
+
+    /**
+     * Re-reads just the loaded rows named by [changes] (read marks, new
+     * translations) and swaps them in place. Returns true when the list must
+     * reload instead: too many rows changed, or a search could now match
+     * differently. A structural change is left to the list revision reload.
+     */
+    suspend fun applyRowChanges(changes: BlogRowChanges): Boolean {
+        if (changes.version <= rowVersion) return false
+        val current = snapshot
+        val query = current.query ?: return false
+        if (changes.listRevision != listRevision) return false
+        val ids = changes.changedSince(rowVersion) ?: return true
+        if (query.searchQuery.isNotBlank()) return true
+        rowVersion = changes.version
+        val shown = current.chunks.values.asSequence().flatten().filterNotNull().map(BlogSummary::id).toSet()
+        val wanted = ids.filter(shown::contains)
+        if (wanted.isEmpty()) return false
+        val fresh = readDatabase { AppGraph.blogs.blogSummariesByIds(wanted) }.associateBy(BlogSummary::id)
+        val latest = snapshot
+        if (latest.query != query) return false
+        snapshot = latest.copy(
+            chunks = latest.chunks.mapValues { (_, rows) -> rows.map { row -> row?.let { fresh[it.id] ?: it } } },
+        )
+        return false
     }
 
     /** Starts reading any missing chunk overlapping list indices [first]..[last]. */
@@ -179,7 +209,7 @@ internal class BlogListPager(
     }
 
     private fun readChunk(query: BlogListQuery, chunk: Int, cancellation: CancellationSignal): LoadedChunk {
-        val posts = AppGraph.database.blogSummaries(
+        val posts = AppGraph.blogs.blogSummaries(
             memberIds = query.memberIds,
             searchQuery = query.searchQuery,
             oldestFirst = query.oldestFirst,
@@ -193,7 +223,7 @@ internal class BlogListPager(
         val previews = if (searchQuery.isBlank() || posts.isEmpty()) {
             emptyMap()
         } else {
-            AppGraph.database.blogSearchSources(posts.map(BlogSummary::id))
+            AppGraph.blogs.blogSearchSources(posts.map(BlogSummary::id))
                 .mapNotNull { source ->
                     cancellation.throwIfCanceled()
                     val excerpts = buildList {

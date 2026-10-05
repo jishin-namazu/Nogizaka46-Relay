@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import com.nogirelay.app.blog.BlogNotifier
@@ -17,6 +18,7 @@ import com.nogirelay.app.call.OfficialProximityScreenControl
 import com.nogirelay.app.call.ProximityScreenControl
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogReadTracker
+import com.nogirelay.app.data.BlogTextIndex
 import com.nogirelay.app.data.MediaRefIndex
 import com.nogirelay.app.data.MessageReadTracker
 import com.nogirelay.app.data.MessageType
@@ -32,14 +34,16 @@ import com.nogirelay.app.ui.MediaViewerActivity
 import com.nogirelay.app.ui.NogiRelayTheme
 import com.nogirelay.app.ui.SyncSystemBarsWithTheme
 import com.nogirelay.app.ui.isAppInDarkMode
+import com.nogirelay.app.ui.navigation.AppTab
 import com.nogirelay.app.ui.navigation.RelayApp
+import com.nogirelay.app.ui.navigation.RelayAppViewModel
 import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
-    private val syncRequests = MutableStateFlow(0L)
+    private val appViewModel: RelayAppViewModel by viewModels()
     private val notificationMessageIds = MutableStateFlow<String?>(null)
     private val notificationBlogIds = MutableStateFlow<String?>(null)
     private lateinit var proximityControl: ProximityScreenControl
@@ -52,7 +56,6 @@ class MainActivity : ComponentActivity() {
             proximityControl.setEnabled(true)
         }
     }
-    private var lastAutoSyncAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,7 +73,7 @@ class MainActivity : ComponentActivity() {
         }
         NotificationChannels.create(this)
         lifecycleScope.launch(AppGraph.dispatchers.databaseWrite) {
-            AppGraph.database.deleteTestMessages().forEach { IncomingCallNotifier.cancel(this@MainActivity, it) }
+            AppGraph.messages.deleteTestMessages().forEach { IncomingCallNotifier.cancel(this@MainActivity, it) }
         }
         if (AppGraph.settings.read().relayUrl.isNotBlank()) {
             PushRegistrar.registerCurrentToken(this)
@@ -78,7 +81,8 @@ class MainActivity : ComponentActivity() {
         TranslationManager.enqueue(this)
         BlogTranslationManager.enqueuePending(this)
 
-        MediaRefIndex.ensureBuilt(AppGraph.database)
+        MediaRefIndex.ensureBuilt(AppGraph.mediaRefs)
+        BlogTextIndex.ensureBuilt()
 
         proximityControl = OfficialProximityScreenControl(this)
         audioManager = getSystemService(AudioManager::class.java)
@@ -92,6 +96,13 @@ class MainActivity : ComponentActivity() {
         }
         notificationMessageIds.value = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID)
         notificationBlogIds.value = intent.getStringExtra(BlogNotifier.EXTRA_BLOG_ID)
+        // Open straight on the notification's tab, without a first frame of the home page.
+        if (savedInstanceState == null) {
+            when {
+                notificationBlogIds.value != null -> appViewModel.showFromNotification(AppTab.BLOG)
+                notificationMessageIds.value != null -> appViewModel.showFromNotification(AppTab.MESSAGES)
+            }
+        }
 
         setContent {
             NogiRelayTheme {
@@ -108,9 +119,8 @@ class MainActivity : ComponentActivity() {
                     onOpenMedia = ::openMedia,
                     onPlayVoice = ::playVoice,
                     onTestCall = ::testCall,
-                    syncRequests = syncRequests,
-                    onManualSync = { syncRequests.update { it + 1 } },
                     onUpdateProximity = ::updateProximityLock,
+                    viewModel = appViewModel,
                 )
             }
         }
@@ -124,16 +134,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        AppGraph.notifyDataChanged(
-            com.nogirelay.app.data.DataChange.CONTENT,
-            invalidateExportEstimate = false,
-        )
-
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (lastAutoSyncAt == 0L || now - lastAutoSyncAt >= AUTO_SYNC_MIN_INTERVAL_MS) {
-            lastAutoSyncAt = now
-            syncRequests.update { it + 1 }
-        }
+        // Relative times ("今天", "昨天") and rows written while away refresh on return.
+        AppGraph.invalidation.publish(com.nogirelay.app.data.DataChange.CONTENT, invalidateExport = false)
+        AppGraph.sync.requestIfStale(AUTO_SYNC_MIN_INTERVAL_MS)
     }
 
     override fun onResume() {
@@ -221,13 +224,15 @@ class MainActivity : ComponentActivity() {
             ringtoneUrl = null,
             isPlayed = false,
         )
-        AppGraph.database.insert(message)
-        startActivity(
-            Intent(this, IncomingCallActivity::class.java).apply {
-                putExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID, message.id)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            },
-        )
+        lifecycleScope.launch {
+            withContext(AppGraph.dispatchers.databaseWrite) { AppGraph.messages.insert(message) }
+            startActivity(
+                Intent(this@MainActivity, IncomingCallActivity::class.java).apply {
+                    putExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID, message.id)
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                },
+            )
+        }
     }
 
     private companion object {

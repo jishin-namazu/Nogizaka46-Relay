@@ -60,6 +60,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.nogirelay.app.R
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.IncomingCallStyle
 import com.nogirelay.app.data.RelayMessage
@@ -80,6 +83,7 @@ class IncomingCallActivity : ComponentActivity() {
     private var callState by mutableStateOf(CallState.RINGING)
     private var speakerOn by mutableStateOf(false)
     private var finishingCall = false
+    private var answerRequested = false
 
     private val finishReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -133,14 +137,28 @@ class IncomingCallActivity : ComponentActivity() {
         val incomingCallStyle = AppGraph.settings.read().incomingCallStyle
         configureWindow(incomingCallStyle)
 
-        message = resolveMessage(intent) ?: run {
+        val messageId = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID) ?: run {
             finish()
             return
         }
+        // Read the message off the main thread: the call often wakes a locked
+        // device, where a stalled first frame is most visible.
+        lifecycleScope.launch {
+            val loaded = withContext(AppGraph.dispatchers.databaseRead) { AppGraph.messages.find(messageId) }
+            if (loaded == null) {
+                finish()
+                return@launch
+            }
+            message = loaded
+            startCall(incomingCallStyle)
+        }
+    }
+
+    private fun startCall(incomingCallStyle: IncomingCallStyle) {
         registerCallReceiver()
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
 
-        val autoAnswer = intent.getBooleanExtra(IncomingCallNotifier.EXTRA_AUTO_ANSWER, false)
+        val autoAnswer = intent.getBooleanExtra(IncomingCallNotifier.EXTRA_AUTO_ANSWER, false) || answerRequested
         callState = if (autoAnswer) CallState.PLAYING else CallState.RINGING
         if (autoAnswer) startVoicePlayback() else {
             startRingtone()
@@ -182,7 +200,10 @@ class IncomingCallActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.getBooleanExtra(IncomingCallNotifier.EXTRA_AUTO_ANSWER, false)) answer()
+        if (intent.getBooleanExtra(IncomingCallNotifier.EXTRA_AUTO_ANSWER, false)) {
+            // Answered from the notification before the message finished loading.
+            if (::message.isInitialized) answer() else answerRequested = true
+        }
     }
 
     override fun onDestroy() {
@@ -195,11 +216,6 @@ class IncomingCallActivity : ComponentActivity() {
         run { audioManager.isSpeakerphoneOn = false }
         runCatching { unregisterReceiver(finishReceiver) }
         super.onDestroy()
-    }
-
-    private fun resolveMessage(intent: Intent): RelayMessage? {
-        val messageId = intent.getStringExtra(IncomingCallNotifier.EXTRA_MESSAGE_ID) ?: return null
-        return AppGraph.database.find(messageId)
     }
 
     private fun configureWindow(style: IncomingCallStyle) {
@@ -258,11 +274,13 @@ class IncomingCallActivity : ComponentActivity() {
         speakerOn = false
         @Suppress("DEPRECATION")
         run { audioManager.isSpeakerphoneOn = false }
-        AppGraph.database.markPlayed(message.id)
+        val playedId = message.id
+        AppGraph.applicationScope.launch(AppGraph.dispatchers.databaseWrite) { AppGraph.messages.markPlayed(playedId) }
         startService(
             Intent(this, VoicePlaybackService::class.java).apply {
                 action = VoicePlaybackService.ACTION_PLAY
                 putExtra(VoicePlaybackService.EXTRA_MESSAGE_ID, message.id)
+                putExtra(VoicePlaybackService.EXTRA_CALL, true)
             },
         )
     }
@@ -297,7 +315,9 @@ class IncomingCallActivity : ComponentActivity() {
         stopRingtone()
         vibrationControl.stop()
         proximityControl.close()
-        if (::message.isInitialized && message.isTestMessage) AppGraph.database.deleteTestMessages()
+        if (::message.isInitialized && message.isTestMessage) {
+            AppGraph.applicationScope.launch(AppGraph.dispatchers.databaseWrite) { AppGraph.messages.deleteTestMessages() }
+        }
         finishAndRemoveTask()
     }
 

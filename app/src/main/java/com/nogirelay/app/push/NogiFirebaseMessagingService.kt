@@ -56,21 +56,19 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
             val previewBlog = runCatching { AppGraph.blogClient.fromPush(remoteMessage.data) }
                 .onFailure { Log.w(TAG, "Invalid BLOG push payload", it) }
                 .getOrNull() ?: return
-            if (AppGraph.database.upsertBlog(previewBlog, isUnread = !BlogReadTracker.isViewing(previewBlog.id))) {
+            if (AppGraph.blogs.upsertBlog(previewBlog, isUnread = !BlogReadTracker.isViewing(previewBlog.id))) {
                 BlogNotifier.show(this, previewBlog)
             }
-            AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.BLOGS)
             fetchAndPrepareBlogInBackground(previewBlog)
             return
         }
         val result = runCatching { resolveMessage(remoteMessage.data) }
         val message = result.getOrNull() ?: return
-        val isNew = AppGraph.database.insert(
+        val isNew = AppGraph.messages.insert(
             message = message,
             isUnread = !MessageReadTracker.isViewing(message.memberKey),
         )
         if (!isNew) return
-        AppGraph.notifyDataChanged(com.nogirelay.app.data.DataChange.MESSAGES)
 
         if (message.shouldRing) {
             startCallPreparation(message)
@@ -110,7 +108,7 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
                 val fullBlog = AppGraph.blogClient.fetchBlogPost(previewBlog.id, previewBlog.memberId)
                 if (fullBlog != null && fullBlog.bodyHtml.isNotBlank()) {
                     Log.d(TAG, "Successfully fetched full blog ${fullBlog.id}, updating database and cache")
-                    AppGraph.database.upsertBlog(fullBlog, isUnread = !BlogReadTracker.isViewing(fullBlog.id))
+                    AppGraph.blogs.upsertBlog(fullBlog, isUnread = !BlogReadTracker.isViewing(fullBlog.id))
                     BlogMediaDownloader.enqueue(this, fullBlog)
                     BlogTranslationManager.enqueue(this, fullBlog.id, force = true)
                 } else {

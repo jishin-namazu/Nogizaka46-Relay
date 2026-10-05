@@ -288,6 +288,13 @@ fun GlassPanel(
     shadowAlpha: Float = 1f,
     blurEnabled: Boolean = true,
     /**
+     * Draws the glass as a still material: the same body tint and edge light,
+     * without sampling and blurring the backdrop. For cards repeated down a
+     * scrolling list, which sit on the flat page backdrop where live blur
+     * looks the same but costs an offscreen pass per card per frame.
+     */
+    staticMaterial: Boolean = false,
+    /**
      * Clips to a shape that changes every frame (a morphing container). It is
      * read in the layer, so the change never recomposes the panel or rebuilds
      * its glass; the material itself keeps [shape].
@@ -300,6 +307,7 @@ fun GlassPanel(
     val interactionSource = remember { MutableInteractionSource() }
     val press = rememberGlassPress(interactionSource, enabled = onClick != null)
     val pressed = onClick != null || keepPressFeedback
+    val liveBlur = blurEnabled && !staticMaterial && LocalGlassBlurEnabled.current
     Box(
         modifier = modifier
             .then(
@@ -346,9 +354,10 @@ fun GlassPanel(
                 control = true,
                 edgeStrength = edgeStrength,
                 tint = tint,
-                blurEnabled = blurEnabled && LocalGlassBlurEnabled.current,
+                blurEnabled = liveBlur,
             )
-            .then(if (tone == GlassTone.OnDark) Modifier.glassEdgeLight(shape, tone, edgeStrength) else Modifier),
+            // Live glass lights its own rim; the still material draws it here.
+            .then(if (tone == GlassTone.OnDark || !liveBlur) Modifier.glassEdgeLight(shape, tone, edgeStrength) else Modifier),
         content = content,
     )
 }

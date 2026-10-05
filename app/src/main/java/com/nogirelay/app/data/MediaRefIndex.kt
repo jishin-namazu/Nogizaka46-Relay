@@ -12,13 +12,14 @@ object MediaRefIndex {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val running = AtomicBoolean(false)
 
-    fun ensureBuilt(database: MessageDatabase) {
-        if (database.mediaRefsReady()) return
+    fun ensureBuilt(refs: com.nogirelay.app.data.db.MediaRefDao) {
         if (!running.compareAndSet(false, true)) return
+        // Even the readiness check opens (and may migrate) the database: keep it off the caller's thread.
         scope.launch {
             try {
-                database.rebuildMediaRefs()
-                database.markMediaRefsReady()
+                if (refs.mediaRefsReady()) return@launch
+                refs.rebuildMediaRefs()
+                refs.markMediaRefsReady()
                 Log.d(TAG, "media refs rebuilt at parse version " + MediaRefs.PARSE_VERSION)
             } catch (error: Throwable) {
                 Log.w(TAG, "media refs rebuild failed", error)

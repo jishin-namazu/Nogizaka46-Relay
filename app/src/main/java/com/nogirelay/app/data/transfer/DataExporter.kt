@@ -71,7 +71,6 @@ object DataExporter {
 
         onProgress: ((ExportEstimateProgress) -> Unit)? = null,
     ): ExportEstimate {
-        val database = AppGraph.database
 
         val job = coroutineContext[Job]
         val throttle = com.nogirelay.app.performance.ProgressThrottle(android.os.SystemClock::elapsedRealtime)
@@ -89,8 +88,8 @@ object DataExporter {
         var bytes = 0L
 
         val total = when (kind) {
-            ExportKind.MESSAGES -> database.countMessagesForMembers(memberKeys)
-            ExportKind.BLOGS -> database.countBlogsForMembers(memberKeys)
+            ExportKind.MESSAGES -> AppGraph.messages.countMessagesForMembers(memberKeys)
+            ExportKind.BLOGS -> AppGraph.blogs.countBlogsForMembers(memberKeys)
         }
         if (!includeMedia) {
             publishProgress(ExportEstimatePhase.RECORDS, total, total)
@@ -121,10 +120,10 @@ object DataExporter {
             }
         }
 
-        val refRows = if (database.mediaRefsReady()) {
-            database.mediaRefsFor(kind.toMediaRefKind(), memberKeys)
+        val refRows = if (AppGraph.mediaRefs.mediaRefsReady()) {
+            AppGraph.mediaRefs.mediaRefsFor(kind.toMediaRefKind(), memberKeys)
         } else {
-            MediaRefIndex.ensureBuilt(database)
+            MediaRefIndex.ensureBuilt(AppGraph.mediaRefs)
             null
         }
         if (refRows != null) {
@@ -140,13 +139,13 @@ object DataExporter {
         } else {
             publishProgress(ExportEstimatePhase.RECORDS, 0, total)
             when (kind) {
-                ExportKind.MESSAGES -> database.forEachMessageForMembers(memberKeys) { message ->
+                ExportKind.MESSAGES -> AppGraph.messages.forEachMessageForMembers(memberKeys) { message ->
                     checkActive()
                     inspect(ExportFormat.mediaCandidates(message))
                     records += 1
                     publishProgress(ExportEstimatePhase.RECORDS, records, total)
                 }
-                ExportKind.BLOGS -> database.forEachBlogForMembers(memberKeys) { post ->
+                ExportKind.BLOGS -> AppGraph.blogs.forEachBlogForMembers(memberKeys) { post ->
                     checkActive()
                     inspect(ExportFormat.mediaCandidates(post))
                     records += 1
@@ -179,7 +178,6 @@ object DataExporter {
         outputUri: Uri,
         onProgress: (phase: String, done: Int, total: Int) -> Unit,
     ): ExportReport {
-        val database = AppGraph.database
         val resolver = context.contentResolver
         val manifest = ExportManifest(
             formatVersion = ExportFormat.FORMAT_VERSION,
@@ -189,11 +187,11 @@ object DataExporter {
             kind = request.kind,
             includesMedia = request.includeMedia,
             includesTranslations = request.includeTranslations,
-            members = manifestMembers(database, request.kind, request.memberKeys),
+            members = manifestMembers(request.kind, request.memberKeys),
         )
         val totalRecords = when (request.kind) {
-            ExportKind.MESSAGES -> database.countMessagesForMembers(request.memberKeys)
-            ExportKind.BLOGS -> database.countBlogsForMembers(request.memberKeys)
+            ExportKind.MESSAGES -> AppGraph.messages.countMessagesForMembers(request.memberKeys)
+            ExportKind.BLOGS -> AppGraph.blogs.countBlogsForMembers(request.memberKeys)
         }
 
         val mediaPaths = LinkedHashMap<String, ResolvedMedia>()
@@ -202,11 +200,11 @@ object DataExporter {
         var recordCount = 0
 
         val refsByRecord: Map<String, List<MediaCandidate>>? = if (request.includeMedia) {
-            if (database.mediaRefsReady()) {
-                database.mediaRefsFor(request.kind.toMediaRefKind(), request.memberKeys)
+            if (AppGraph.mediaRefs.mediaRefsReady()) {
+                AppGraph.mediaRefs.mediaRefsFor(request.kind.toMediaRefKind(), request.memberKeys)
                     .groupBy({ it.recordId }, { MediaCandidate(it.role, it.url, it.type) })
             } else {
-                MediaRefIndex.ensureBuilt(database)
+                MediaRefIndex.ensureBuilt(AppGraph.mediaRefs)
                 null
             }
         } else {
@@ -271,8 +269,8 @@ object DataExporter {
                     onProgress("读取记录", recordCount, totalRecords)
                 }
                 when (request.kind) {
-                    ExportKind.MESSAGES -> database.forEachMessageForMembers(request.memberKeys) { writeRecord(it) }
-                    ExportKind.BLOGS -> database.forEachBlogForMembers(request.memberKeys) { writeRecord(it) }
+                    ExportKind.MESSAGES -> AppGraph.messages.forEachMessageForMembers(request.memberKeys) { writeRecord(it) }
+                    ExportKind.BLOGS -> AppGraph.blogs.forEachBlogForMembers(request.memberKeys) { writeRecord(it) }
                 }
                 zip.closeEntry()
 
@@ -321,16 +319,15 @@ object DataExporter {
     }
 
     private fun manifestMembers(
-        database: com.nogirelay.app.data.MessageDatabase,
         kind: ExportKind,
         memberKeys: Set<String>,
     ): List<ManifestMember> = when (kind) {
-        ExportKind.MESSAGES -> database.messageExportMembers()
+        ExportKind.MESSAGES -> AppGraph.messages.messageExportMembers()
             .filter { it.memberKey in memberKeys }
             .map {
                 ManifestMember(it.memberKey, it.name, it.category, it.avatarUrl, it.displayOrder, it.directory)
             }
-        ExportKind.BLOGS -> database.blogMembers()
+        ExportKind.BLOGS -> AppGraph.blogMembers.blogMembers()
             .filter { it.id in memberKeys }
             .map {
                 ManifestMember(it.id, it.name, it.category, it.avatarUrl, it.displayOrder, true, it.graduated)

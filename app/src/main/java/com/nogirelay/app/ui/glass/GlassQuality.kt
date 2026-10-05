@@ -1,5 +1,7 @@
 package com.nogirelay.app.ui.glass
 
+import androidx.compose.runtime.collectAsState
+import com.nogirelay.app.data.AppGraph
 import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -83,10 +85,14 @@ fun rememberGlassQuality(): GlassQuality {
         }
     }
 
-    return remember(signals) {
+    // The user's own choices in Settings > Appearance can only turn effects off.
+    val userBlur = if (AppGraph.isInitialized) AppGraph.settings.glassBlurEnabled.collectAsState().value else true
+    val userReducedMotion = if (AppGraph.isInitialized) AppGraph.settings.reduceMotion.collectAsState().value else false
+
+    return remember(signals, userBlur, userReducedMotion) {
         GlassQuality(
-            blur = !signals.lowRam && !signals.powerSave && !signals.throttled,
-            reducedMotion = signals.animationsOff || signals.powerSave,
+            blur = userBlur && !signals.lowRam && !signals.powerSave && !signals.throttled,
+            reducedMotion = userReducedMotion || signals.animationsOff || signals.powerSave,
         )
     }
 }

@@ -16,11 +16,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Call
@@ -30,7 +35,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,12 +49,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.IncomingCallStyle
 import com.nogirelay.app.data.ThemeMode
+import com.nogirelay.app.data.sync.SyncStatus
 import com.nogirelay.app.data.transfer.ExportKind
 import com.nogirelay.app.performance.LocalRelayPageWorkPaused
 import com.nogirelay.app.push.PushRegistrar
+import com.nogirelay.app.translation.TranslationHealth
 import com.nogirelay.app.ui.AiTranslateIcon
 import com.nogirelay.app.ui.glass.GlassBackdrop
 import com.nogirelay.app.ui.glass.GlassColors
@@ -58,6 +65,7 @@ import com.nogirelay.app.ui.glass.GlassDetailHeader
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassSegmentedTabs
 import com.nogirelay.app.ui.glass.GlassShapes
+import com.nogirelay.app.ui.glass.GlassSwitch
 import com.nogirelay.app.ui.glass.GlassType
 import com.nogirelay.app.ui.glass.LocalGlassOverlayHazeState
 import com.nogirelay.app.ui.glass.glassHazeSource
@@ -81,16 +89,13 @@ enum class SettingsPage(val title: String) {
 @Composable
 fun SettingsScreen(
     initialPage: SettingsPage?,
-    settingsVersion: Long,
     fullScreenGranted: Boolean,
     overlayGranted: Boolean,
-    isSyncing: Boolean,
-    syncLabel: String,
+    syncStatus: SyncStatus,
     onOpenFullScreenSettings: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
     onTestCall: () -> Unit,
     onSync: () -> Unit,
-    onSettingsChanged: () -> Unit,
     onClose: () -> Unit,
 ) {
     var page by rememberSaveable { mutableStateOf(initialPage) }
@@ -138,21 +143,14 @@ fun SettingsScreen(
                     val back = { page = null }
                     when (shown) {
                         null -> SettingsIndex(
-                            settingsVersion = settingsVersion,
                             fullScreenGranted = fullScreenGranted,
                             overlayGranted = overlayGranted,
-                            syncLabel = syncLabel,
+                            syncStatus = syncStatus,
                             onOpen = { page = it },
                             onClose = onClose,
                         )
-                        SettingsPage.CONNECTION -> ConnectionSettingsPage(
-                            onBack = back,
-                            onSettingsChanged = onSettingsChanged,
-                        )
-                        SettingsPage.TRANSLATION -> TranslationSettingsPage(
-                            onBack = back,
-                            onSettingsChanged = onSettingsChanged,
-                        )
+                        SettingsPage.CONNECTION -> ConnectionSettingsPage(onBack = back)
+                        SettingsPage.TRANSLATION -> TranslationSettingsPage(onBack = back)
                         SettingsPage.CALL -> CallSettingsPage(
                             fullScreenGranted = fullScreenGranted,
                             overlayGranted = overlayGranted,
@@ -160,11 +158,10 @@ fun SettingsScreen(
                             onOpenOverlaySettings = onOpenOverlaySettings,
                             onTestCall = onTestCall,
                             onBack = back,
-                            onSettingsChanged = onSettingsChanged,
                         )
                         SettingsPage.DATA -> DataSettingsPage(
-                            isSyncing = isSyncing,
-                            syncLabel = syncLabel,
+                            isSyncing = syncStatus.syncing,
+                            syncLabel = syncStatus.label,
                             onSync = onSync,
                             onOpenDataManagement = { dataKind = it },
                             onBack = back,
@@ -186,18 +183,17 @@ fun SettingsScreen(
 
 @Composable
 private fun SettingsIndex(
-    settingsVersion: Long,
     fullScreenGranted: Boolean,
     overlayGranted: Boolean,
-    syncLabel: String,
+    syncStatus: SyncStatus,
     onOpen: (SettingsPage) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
-    val settings = remember(settingsVersion) { AppGraph.settings.read() }
-    val pushReady = remember(settingsVersion) {
-        PushRegistrar.isConfigured(context) && AppGraph.settings.isPushRegistrationConfirmed()
-    }
+    val settings by AppGraph.settings.settings.collectAsStateWithLifecycle()
+    val pushRegistered by AppGraph.settings.pushRegistered.collectAsStateWithLifecycle()
+    val translationIssue by TranslationHealth.issue.collectAsStateWithLifecycle()
+    val pushReady = remember(pushRegistered) { PushRegistrar.isConfigured(context) && pushRegistered }
     val callPermissionsReady = fullScreenGranted && overlayGranted
 
     Column(Modifier.fillMaxSize()) {
@@ -206,9 +202,15 @@ private fun SettingsIndex(
             onBack = onClose,
             backContentDescription = "关闭设置",
         )
+        // Scrolls, so large font sizes and small screens still reach every group.
         Column(
             verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(top = 6.dp, bottom = 24.dp),
         ) {
             SettingsGroupRow(
                 icon = { Icon(Icons.Rounded.Cloud, contentDescription = null, tint = GlassColors.Accent, modifier = Modifier.size(20.dp)) },
@@ -220,15 +222,17 @@ private fun SettingsIndex(
                 needsAttention = !pushReady,
                 onClick = { onOpen(SettingsPage.CONNECTION) },
             )
+            val issue = translationIssue.takeIf { settings.translationEnabled }
             SettingsGroupRow(
                 icon = { AiTranslateIcon(size = 20.dp, tint = GlassColors.Accent, contentDescription = null) },
                 title = SettingsPage.TRANSLATION.title,
-                summary = if (settings.translationEnabled) {
-                    "${settings.aiProvider.displayName} · ${settings.aiModel.ifBlank { "未选择模型" }}"
-                } else {
-                    "AI 翻译未开启"
+                summary = when {
+                    !settings.translationEnabled -> "AI 翻译未开启"
+                    issue != null -> issue.title
+                    else -> "${settings.aiProvider.displayName} · ${settings.aiModel.ifBlank { "未选择模型" }}"
                 },
-                needsAttention = settings.translationEnabled && settings.aiModel.isBlank(),
+                needsAttention = settings.translationEnabled && (settings.aiModel.isBlank() || issue != null),
+                attentionIsError = issue?.blocking == true,
                 onClick = { onOpen(SettingsPage.TRANSLATION) },
             )
             SettingsGroupRow(
@@ -245,19 +249,23 @@ private fun SettingsIndex(
             SettingsGroupRow(
                 icon = { Icon(Icons.Rounded.Inventory2, contentDescription = null, tint = GlassColors.Accent, modifier = Modifier.size(20.dp)) },
                 title = SettingsPage.DATA.title,
-                summary = syncLabel.ifBlank { "同步、导入导出与补齐媒体" },
-                needsAttention = false,
+                summary = syncStatus.label.ifBlank { "同步、导入导出与补齐媒体" },
+                needsAttention = syncStatus.failed,
+                attentionIsError = syncStatus.failed,
                 onClick = { onOpen(SettingsPage.DATA) },
             )
             AppearanceCard()
+            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
         }
     }
 }
 
-/** Light / dark appearance; applies at once to every screen. */
+/** Light / dark appearance and the glass material; applies at once to every screen. */
 @Composable
 private fun AppearanceCard() {
-    val mode by AppGraph.settings.themeMode.collectAsState()
+    val mode by AppGraph.settings.themeMode.collectAsStateWithLifecycle()
+    val blurEnabled by AppGraph.settings.glassBlurEnabled.collectAsStateWithLifecycle()
+    val reduceMotion by AppGraph.settings.reduceMotion.collectAsStateWithLifecycle()
     SettingsCard(title = "外观") {
         GlassSegmentedTabs(
             labels = ThemeMode.entries.map(ThemeMode::label),
@@ -265,6 +273,35 @@ private fun AppearanceCard() {
             onSelected = { AppGraph.settings.saveThemeMode(ThemeMode.entries[it]) },
             modifier = Modifier.fillMaxWidth(),
         )
+        AppearanceToggle(
+            title = "玻璃模糊",
+            description = "关闭后卡片改用实色底，更省电，文字也更清晰。省电模式、低内存或设备过热时会自动关闭。",
+            checked = blurEnabled,
+            onCheckedChange = AppGraph.settings::saveGlassBlurEnabled,
+        )
+        AppearanceToggle(
+            title = "减少动效",
+            description = "去掉页面过渡、呼吸灯等装饰动画。系统关闭动画或省电模式时会自动减少。",
+            checked = reduceMotion,
+            onCheckedChange = AppGraph.settings::saveReduceMotion,
+        )
+    }
+}
+
+@Composable
+private fun AppearanceToggle(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = GlassType.Callout, fontWeight = FontWeight.SemiBold, color = GlassColors.Ink)
+            Text(description, style = GlassType.Footnote, color = GlassColors.InkSecondary)
+        }
+        Spacer(Modifier.width(10.dp))
+        GlassSwitch(checked = checked, onCheckedChange = onCheckedChange, label = title)
     }
 }
 
@@ -275,6 +312,7 @@ private fun SettingsGroupRow(
     summary: String,
     needsAttention: Boolean,
     onClick: () -> Unit,
+    attentionIsError: Boolean = false,
 ) {
     GlassPanel(
         shape = GlassShapes.Card,
@@ -311,7 +349,7 @@ private fun SettingsGroupRow(
                             Modifier
                                 .size(7.dp)
                                 .clip(GlassShapes.Circle)
-                                .background(GlassColors.Warning),
+                                .background(if (attentionIsError) GlassColors.Danger else GlassColors.Warning),
                         )
                     }
                 }

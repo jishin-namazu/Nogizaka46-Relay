@@ -64,6 +64,8 @@ fun GlassNavBar(
     selectedIndex: Int,
     onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Tapping the tab that is already selected (scroll to top, back out of a detail). */
+    onReselected: (Int) -> Unit = {},
 ) {
     val shape = GlassShapes.Capsule
     val pageSources = remember { HazeSourceSelection.All.where { it.zIndex == 0f } }
@@ -113,7 +115,7 @@ fun GlassNavBar(
                     selected = index == selectedIndex,
                     onClick = {
                         pulseToken++
-                        if (index != selectedIndex) onSelected(index)
+                        if (index != selectedIndex) onSelected(index) else onReselected(index)
                     },
                 )
             }

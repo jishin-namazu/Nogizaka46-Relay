@@ -11,7 +11,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
 
-class SettingsStore(context: Context) {
+class SettingsStore(
+    context: Context,
+    private val invalidation: DataInvalidationTracker,
+) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val modelCatalogs = mutableMapOf<AIProviderType, Pair<String, List<AIModel>>>()
     private var sortedCatalog: Pair<List<AIModel>, List<AIModel>>? = null
@@ -30,9 +33,45 @@ class SettingsStore(context: Context) {
         _themeMode.value = mode
     }
 
+    private val _glassBlurEnabled = MutableStateFlow(prefs.getBoolean(KEY_GLASS_BLUR, true))
+
+    /** The user's own switch for frosted blur, on top of the automatic power and thermal checks. */
+    val glassBlurEnabled: StateFlow<Boolean> = _glassBlurEnabled
+
+    fun saveGlassBlurEnabled(enabled: Boolean) {
+        prefs.edit { putBoolean(KEY_GLASS_BLUR, enabled) }
+        _glassBlurEnabled.value = enabled
+    }
+
+    private val _reduceMotion = MutableStateFlow(prefs.getBoolean(KEY_REDUCE_MOTION, false))
+
+    /** The user's own switch for decorative motion, on top of the system animation scale. */
+    val reduceMotion: StateFlow<Boolean> = _reduceMotion
+
+    fun saveReduceMotion(reduce: Boolean) {
+        prefs.edit { putBoolean(KEY_REDUCE_MOTION, reduce) }
+        _reduceMotion.value = reduce
+    }
+
     private fun readThemeMode(): ThemeMode {
         val stored = prefs.getString(KEY_THEME_MODE, null) ?: return ThemeMode.SYSTEM
         return runCatching { ThemeMode.valueOf(stored) }.getOrDefault(ThemeMode.SYSTEM)
+    }
+
+    private val _settings by lazy { MutableStateFlow(read()) }
+
+    /** The saved settings; every [save] publishes a new value. */
+    val settings: StateFlow<AppSettings> get() = _settings
+
+    private val _pushRegistered by lazy { MutableStateFlow(isPushRegistrationConfirmed()) }
+
+    /** Whether the server has confirmed this device's current push token. */
+    val pushRegistered: StateFlow<Boolean> get() = _pushRegistered
+
+    private fun settingsChanged() {
+        _settings.value = read()
+        _pushRegistered.value = isPushRegistrationConfirmed()
+        invalidation.publish(DataChange.SETTINGS, invalidateExport = false)
     }
 
     fun read(): AppSettings {
@@ -55,9 +94,6 @@ class SettingsStore(context: Context) {
     fun save(settings: AppSettings) {
         val relayUrl = settings.relayUrl.trim().trimEnd('/')
         val accessToken = settings.accessToken.trim()
-        val relayConfigChanged =
-            prefs.getString(KEY_RELAY_URL, "").orEmpty() != relayUrl ||
-                prefs.getString(KEY_ACCESS_TOKEN, "").orEmpty() != accessToken
 
         prefs.edit {
             putString(KEY_RELAY_URL, relayUrl)
@@ -73,7 +109,7 @@ class SettingsStore(context: Context) {
             putString(KEY_INCOMING_CALL_STYLE, settings.incomingCallStyle.name)
         }
 
-        if (relayConfigChanged) AppGraph.notifyDataChanged(DataChange.SETTINGS)
+        settingsChanged()
     }
 
     fun apiKeyFor(provider: AIProviderType): String = prefs.getString(apiKeyKey(provider), "").orEmpty()
@@ -102,7 +138,7 @@ class SettingsStore(context: Context) {
             putString(KEY_PUSH_TOKEN, token)
             remove(KEY_PUSH_REGISTRATION_FINGERPRINT)
         }
-        AppGraph.notifyDataChanged(DataChange.SETTINGS)
+        settingsChanged()
     }
 
     fun isPushRegistrationConfirmed(): Boolean {
@@ -116,7 +152,7 @@ class SettingsStore(context: Context) {
         if (current != pushRegistrationFingerprint(token, relayUrl, accessToken)) return
         if (prefs.getString(KEY_PUSH_REGISTRATION_FINGERPRINT, null) == current) return
         prefs.edit { putString(KEY_PUSH_REGISTRATION_FINGERPRINT, current) }
-        AppGraph.notifyDataChanged(DataChange.SETTINGS)
+        settingsChanged()
     }
 
     private fun currentPushRegistrationFingerprint(): String? {
@@ -215,6 +251,8 @@ class SettingsStore(context: Context) {
         const val KEY_USER_NICKNAME = "user_nickname"
         const val KEY_INCOMING_CALL_STYLE = "incoming_call_style"
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_GLASS_BLUR = "glass_blur_enabled"
+        const val KEY_REDUCE_MOTION = "reduce_motion"
         const val KEY_PUSH_TOKEN = "push_token"
         const val KEY_PUSH_REGISTRATION_FINGERPRINT = "push_registration_fingerprint"
         const val KEY_LEGACY_AI_API_KEY = "ai_api_key"

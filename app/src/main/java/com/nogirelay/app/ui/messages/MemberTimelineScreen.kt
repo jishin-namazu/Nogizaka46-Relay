@@ -1,5 +1,7 @@
 package com.nogirelay.app.ui.messages
 
+import com.nogirelay.app.ui.UiTestTags
+import androidx.compose.ui.platform.testTag
 import android.os.CancellationSignal
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -97,8 +99,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.nogirelay.app.data.AppGraph
-import com.nogirelay.app.data.DataChange
-import com.nogirelay.app.data.DataVersions
+import com.nogirelay.app.data.repository.MessageChanges
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.data.readDatabase
@@ -159,7 +160,7 @@ internal fun MemberTimelineScreen(
     memberAvatarUrl: String?,
     onContentReady: () -> Unit = {},
     active: Boolean,
-    versions: DataVersions,
+    messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
     userNickname: String,
@@ -167,7 +168,6 @@ internal fun MemberTimelineScreen(
     onBack: () -> Unit,
     onInitialMessageHandled: (String) -> Unit,
     onViewingLatest: (Boolean) -> Unit,
-    onUnreadChanged: (Set<String>) -> Unit,
     onOpenMedia: (RelayMessage, String) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onDownload: (RelayMessage) -> Unit,
@@ -191,9 +191,8 @@ internal fun MemberTimelineScreen(
     fun toggleFavorite(message: RelayMessage) {
         screenScope.launch {
             withContext(AppGraph.dispatchers.databaseWrite) {
-                AppGraph.database.setMessageFavorite(message.id, !message.isFavorite)
+                AppGraph.messages.setMessageFavorite(message.id, !message.isFavorite)
             }
-            AppGraph.notifyDataChanged(DataChange.MESSAGE_ROWS, setOf(message.id))
         }
     }
 
@@ -207,7 +206,7 @@ internal fun MemberTimelineScreen(
         }
         screenScope.launch {
             val belongsToMember = withContext(AppGraph.dispatchers.databaseRead) {
-                AppGraph.database.find(targetId)?.memberKey == entry.memberKey
+                AppGraph.messages.find(targetId)?.memberKey == entry.memberKey
             }
             if (auxiliaryScreen != sourceScreen) return@launch
             val latestPlayback = VoicePlaybackService.playbackState.value
@@ -277,7 +276,7 @@ internal fun MemberTimelineScreen(
                     memberKey = entry.memberKey,
                     screen = screen,
                     active = workActive && screen == auxiliaryScreen,
-                    versions = versions,
+                    messageChanges = messageChanges,
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
                     userNickname = userNickname,
@@ -324,7 +323,7 @@ internal fun MemberTimelineScreen(
                                 !initialTargetConsumed && effectiveQuery.isBlank() && !timeFilter.isActive
                             },
                             active = workActive && auxiliaryScreen == null,
-                            versions = versions,
+                            messageChanges = messageChanges,
                             playbackState = playbackState,
                             translationEnabled = translationEnabled,
                             userNickname = userNickname,
@@ -337,7 +336,7 @@ internal fun MemberTimelineScreen(
                                 }
                             },
                             onViewingLatest = { onViewingLatest(it && query.isBlank() && !timeFilter.isActive) },
-                            onRead = { sessionUnreadIds = sessionUnreadIds + it; onUnreadChanged(it) },
+                            onRead = { sessionUnreadIds = sessionUnreadIds + it },
                             onOpenMedia = openScopedMedia,
                             onPlayVoice = onPlayVoice,
                             onDownload = onDownload,
@@ -357,6 +356,7 @@ internal fun MemberTimelineScreen(
                         extraContent = { dismiss ->
                             FilterDrawerEntry(
                                 label = "媒体",
+                                testTag = UiTestTags.TIMELINE_MEDIA_ENTRY,
                                 icon = Icons.Rounded.PlayArrow,
                                 onClick = {
                                     dismiss {
@@ -368,6 +368,7 @@ internal fun MemberTimelineScreen(
                             Spacer(Modifier.height(10.dp))
                             FilterDrawerEntry(
                                 label = "收藏夹",
+                                testTag = UiTestTags.TIMELINE_FAVORITES_ENTRY,
                                 icon = Icons.Rounded.Star,
                                 onClick = {
                                     dismiss {
@@ -388,6 +389,7 @@ internal fun MemberTimelineScreen(
 @Composable
 private fun FilterDrawerEntry(
     label: String,
+    testTag: String,
     icon: ImageVector,
     onClick: () -> Unit,
 ) {
@@ -398,7 +400,7 @@ private fun FilterDrawerEntry(
         depth = GlassDepths.None,
         fillAlpha = 0.34f,
         blur = 14.dp,
-        modifier = Modifier.fillMaxWidth().height(GlassMetrics.ControlHeight),
+        modifier = Modifier.fillMaxWidth().height(GlassMetrics.ControlHeight).testTag(testTag),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -519,14 +521,14 @@ private suspend fun loadAuxiliaryPage(
     searchQuery: String,
     nickname: String,
 ): List<RelayMessage> = when (screen) {
-    MemberTimelineAuxiliary.FAVORITES -> AppGraph.database.favoriteMessagesForMember(
+    MemberTimelineAuxiliary.FAVORITES -> AppGraph.messages.favoriteMessagesForMember(
         memberKey,
         limit = AUXILIARY_PAGE_SIZE,
         offset = offset,
         searchQuery = searchQuery,
         nickname = nickname,
     )
-    MemberTimelineAuxiliary.MEDIA -> AppGraph.database.mediaMessagesForMember(
+    MemberTimelineAuxiliary.MEDIA -> AppGraph.messages.mediaMessagesForMember(
         memberKey,
         mediaCategory.type,
         limit = AUXILIARY_PAGE_SIZE,
@@ -581,7 +583,7 @@ private fun MemberTimelineAuxiliaryScreen(
     memberKey: String,
     screen: MemberTimelineAuxiliary,
     active: Boolean,
-    versions: DataVersions,
+    messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
     userNickname: String,
@@ -597,7 +599,7 @@ private fun MemberTimelineAuxiliaryScreen(
     val effectiveQuery = rememberSearchQuery(query, active)
     val request = remember(memberKey, screen, mediaCategory, effectiveQuery, userNickname) { Any() }
     val latestRequest by rememberUpdatedState(request)
-    val latestVersion by rememberUpdatedState(versions.messages)
+    val latestVersion by rememberUpdatedState(messageChanges.version)
     var messages by remember(request) { mutableStateOf<List<RelayMessage>>(emptyList()) }
     val gridRows = remember(messages) { memberMediaGridRows(messages) }
     var loading by remember(request) { mutableStateOf(true) }
@@ -629,7 +631,7 @@ private fun MemberTimelineAuxiliaryScreen(
         loadingMore = true
         val offset = messages.size
         val pageRequest = request
-        val pageVersion = versions.messages
+        val pageVersion = messageChanges.version
         moreJob = scope.launch {
             try {
                 val next = withContext(AppGraph.dispatchers.databaseRead) {
@@ -645,12 +647,12 @@ private fun MemberTimelineAuxiliaryScreen(
         }
     }
 
-    LaunchedEffect(request, versions.messages, active) {
+    LaunchedEffect(request, messageChanges.version, active) {
         moreJob?.cancel()
         moreJob = null
         loadingMore = false
         if (!active) return@LaunchedEffect
-        if (loadedVersion == versions.messages) return@LaunchedEffect
+        if (loadedVersion == messageChanges.version) return@LaunchedEffect
         loading = messages.isEmpty()
         // Keep the last known pagination state until the refreshed page arrives.
         // Resetting it here inserts a load-more row on markPlayed updates and
@@ -660,7 +662,7 @@ private fun MemberTimelineAuxiliaryScreen(
         }
         messages = loaded
         exhausted = loaded.size < AUXILIARY_PAGE_SIZE
-        loadedVersion = versions.messages
+        loadedVersion = messageChanges.version
         loading = false
     }
 
@@ -751,7 +753,7 @@ private fun MemberTimelineAuxiliaryScreen(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topPadding, bottom = bottomPadding),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag(UiTestTags.AUXILIARY_LIST),
                 ) {
                     gridItems(
                         gridRows,
@@ -805,7 +807,7 @@ private fun AuxiliaryMessageList(
         reverseLayout = reverseLayout,
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topContentPadding, bottom = bottomContentPadding),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().testTag(UiTestTags.AUXILIARY_LIST),
     ) {
         if (monthSeparators) {
             items(monthRows, key = MemberMediaRow::key, contentType = { it::class }) { row ->
@@ -1134,6 +1136,7 @@ private fun MemberTimelineHeader(
             contentDescription = "筛选与更多",
             enabled = active,
             tone = if (filterActive) GlassTone.Accent else GlassTone.Neutral,
+            modifier = Modifier.testTag(UiTestTags.TIMELINE_MORE),
         )
     }
 }
@@ -1176,7 +1179,7 @@ private fun MemberTimelineContent(
     filter: TimeFilter,
     initialTargetId: String?,
     active: Boolean,
-    versions: DataVersions,
+    messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
     userNickname: String,
@@ -1194,23 +1197,23 @@ private fun MemberTimelineContent(
 ) {
     val loader = remember(memberKey, query, filter, userNickname) {
         { cancellation: CancellationSignal -> MemberTimelineLoader(object : MemberTimelineSource {
-            override fun count() = AppGraph.database.countMessagesForMember(
+            override fun count() = AppGraph.messages.countMessagesForMember(
                 memberKey, query, filter.startMillis, filter.endMillisExclusive, userNickname, cancellation,
             )
-            override fun indexOf(messageId: String) = AppGraph.database.messageIndexForMember(
+            override fun indexOf(messageId: String) = AppGraph.messages.messageIndexForMember(
                 memberKey, messageId, query, filter.startMillis, filter.endMillisExclusive, userNickname, cancellation,
             )
-            override fun messages(offset: Int, limit: Int) = AppGraph.database.messagesForMember(
+            override fun messages(offset: Int, limit: Int) = AppGraph.messages.messagesForMember(
                 memberKey, query, filter.startMillis, filter.endMillisExclusive, limit, offset, userNickname, cancellation,
             )
             override fun at(id: String) = byIds(setOf(id)).firstOrNull()
-            override fun byIds(ids: Set<String>) = AppGraph.database.memberMessagesByIds(
+            override fun byIds(ids: Set<String>) = AppGraph.messages.memberMessagesByIds(
                 memberKey, ids, query, filter.startMillis, filter.endMillisExclusive, userNickname, cancellation,
             )
-            override fun olderThan(id: String, limit: Int) = AppGraph.database.memberMessagesRelativeTo(
+            override fun olderThan(id: String, limit: Int) = AppGraph.messages.memberMessagesRelativeTo(
                 memberKey, id, false, limit, query, filter.startMillis, filter.endMillisExclusive, userNickname, cancellation,
             )
-            override fun newerThan(id: String, limit: Int) = AppGraph.database.memberMessagesRelativeTo(
+            override fun newerThan(id: String, limit: Int) = AppGraph.messages.memberMessagesRelativeTo(
                 memberKey, id, true, limit, query, filter.startMillis, filter.endMillisExclusive, userNickname, cancellation,
             )
         }) }
@@ -1256,7 +1259,7 @@ private fun MemberTimelineContent(
         }
     }
 
-    LaunchedEffect(loader, versions.messages, active, retryKey) {
+    LaunchedEffect(loader, messageChanges.version, active, retryKey) {
         if (!active) return@LaunchedEffect
         mutex.withLock {
             busy = true
@@ -1266,7 +1269,7 @@ private fun MemberTimelineContent(
                 val previous = window
                 val loaded = readDatabase { cancellation ->
                     val reader = loader(cancellation)
-                    val changedIds = versions.messageIdsSince(loadedVersion)
+                    val changedIds = messageChanges.changedSince(loadedVersion)
                     when {
                         firstLoad -> reader.initial(initialTargetId)
                         query.isBlank() && changedIds != null -> reader.patch(previous, changedIds)
@@ -1276,7 +1279,7 @@ private fun MemberTimelineContent(
                 if (!currentActive) return@withLock
                 val keepFollowing = followLatest && atLatest && !listState.isScrollInProgress
                 window = loaded
-                loadedVersion = versions.messages
+                loadedVersion = messageChanges.version
                 initialized = true
                 loadError = false
                 if (firstLoad) {
@@ -1351,7 +1354,7 @@ private fun MemberTimelineContent(
         val ids = visibleUnreadIds
         // Once a visible batch is marked, deliver its badge update even if navigation closes it.
         withContext(NonCancellable) {
-            val updated = withContext(AppGraph.dispatchers.databaseWrite) { AppGraph.database.markMessagesReadByIds(ids) }
+            val updated = withContext(AppGraph.dispatchers.databaseWrite) { AppGraph.messages.markMessagesReadByIds(ids) }
             if (updated > 0) onRead(ids)
         }
     }
@@ -1362,7 +1365,7 @@ private fun MemberTimelineContent(
             reverseLayout = true,
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topContentPadding, bottom = bottomContentPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag(UiTestTags.MEMBER_TIMELINE),
         ) {
             item(key = "timeline-newer") {
                 TimelineBoundary(

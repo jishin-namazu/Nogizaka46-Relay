@@ -238,6 +238,7 @@ private fun MessageBubble(
         shape = shape,
         blur = GlassBubbleBlur.dp,
         fillAlpha = GlassColors.NeutralFillStrongAlpha,
+        staticMaterial = true,
         depth = GlassDepths.Low,
     ) {
         Column(Modifier.padding(contentPadding), content = content)
