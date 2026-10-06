@@ -171,6 +171,10 @@ internal class TextureVideoView(context: Context) : TextureView(context), Textur
         setTransform(Matrix().apply {
             setScale(videoWidth * fit / width, videoHeight * fit / height, width / 2f, height / 2f)
         })
+        // setTransform only invalidates the parent, which Compose's AndroidView
+        // holder ignores. Without a redraw of our own, a paused first frame keeps
+        // the identity (stretched) transform until the next video frame arrives.
+        invalidate()
     }
 
     private fun releasePlayer() {

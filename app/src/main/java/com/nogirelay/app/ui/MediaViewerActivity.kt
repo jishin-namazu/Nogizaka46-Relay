@@ -809,6 +809,14 @@ private fun VideoPlayer(
     var videoView by remember { mutableStateOf<TextureVideoView?>(null) }
     var videoPath by remember(message.id) { mutableStateOf<String?>(null) }
     var isPrepared by remember { mutableStateOf(false) }
+    var preparingSlowly by remember { mutableStateOf(false) }
+    LaunchedEffect(isPrepared) {
+        preparingSlowly = false
+        if (!isPrepared) {
+            delay(500)
+            preparingSlowly = true
+        }
+    }
     var videoFrameReady by remember(message.id) { mutableStateOf(false) }
     var videoPlaying by remember { mutableStateOf(false) }
     var isCompleted by remember { mutableStateOf(false) }
@@ -1038,10 +1046,16 @@ private fun VideoPlayer(
             )
         }
 
-        if (!isPrepared) {
+        // Cached videos usually prepare within a few frames behind the poster;
+        // only a genuinely slow load gets the spinner, and it fades in.
+        AnimatedVisibility(
+            visible = !isPrepared && preparingSlowly,
+            enter = fadeIn(animationSpec = tween(200)),
+            exit = fadeOut(animationSpec = tween(150)),
+            modifier = Modifier.align(Alignment.Center),
+        ) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.Center)
                     .size(56.dp)
                     .clip(GlassViewerShapes.Circle)
                     .background(Color.White.copy(alpha = 0.10f)),
