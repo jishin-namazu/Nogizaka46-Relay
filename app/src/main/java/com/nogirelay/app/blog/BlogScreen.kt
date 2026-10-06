@@ -935,6 +935,7 @@ private fun BlogDetail(
         withContext(NonCancellable + AppGraph.dispatchers.databaseWrite) {
             AppGraph.blogs.markBlogRead(blogId)
         }
+        BlogNotifier.cancel(context, blogId)
     }
     LaunchedEffect(detailState?.blog?.bodyHtml, detailState?.blog?.translationDone, isActive) {
         if (!isActive) return@LaunchedEffect

@@ -98,6 +98,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.repository.MessageChanges
 import com.nogirelay.app.data.MessageType
@@ -1355,6 +1356,7 @@ private fun MemberTimelineContent(
         // Once a visible batch is marked, deliver its badge update even if navigation closes it.
         withContext(NonCancellable) {
             val updated = withContext(AppGraph.dispatchers.databaseWrite) { AppGraph.messages.markMessagesReadByIds(ids) }
+            IncomingCallNotifier.cancel(context, ids)
             if (updated > 0) onRead(ids)
         }
     }
