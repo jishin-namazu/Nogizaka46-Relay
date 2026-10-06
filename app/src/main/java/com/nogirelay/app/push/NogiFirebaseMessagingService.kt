@@ -56,7 +56,8 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
             val previewBlog = runCatching { AppGraph.blogClient.fromPush(remoteMessage.data) }
                 .onFailure { Log.w(TAG, "Invalid BLOG push payload", it) }
                 .getOrNull() ?: return
-            if (AppGraph.blogs.upsertBlog(previewBlog, isUnread = !BlogReadTracker.isViewing(previewBlog.id))) {
+            val isViewingBlog = BlogReadTracker.isViewing(previewBlog.id)
+            if (AppGraph.blogs.upsertBlog(previewBlog, isUnread = !isViewingBlog) && !isViewingBlog) {
                 BlogNotifier.show(this, previewBlog)
             }
             fetchAndPrepareBlogInBackground(previewBlog)
@@ -64,16 +65,18 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
         }
         val result = runCatching { resolveMessage(remoteMessage.data) }
         val message = result.getOrNull() ?: return
+        val isViewing = MessageReadTracker.isViewing(message.memberKey)
         val isNew = AppGraph.messages.insert(
             message = message,
-            isUnread = !MessageReadTracker.isViewing(message.memberKey),
+            isUnread = !isViewing,
         )
         if (!isNew) return
 
         if (message.shouldRing) {
             startCallPreparation(message)
         } else {
-            IncomingCallNotifier.showMessage(this, message)
+            // Already on screen and stored as read: nothing would ever clear this notification.
+            if (!isViewing) IncomingCallNotifier.showMessage(this, message)
             Thread({
                 runCatching { MediaDownloader.enqueueIfNeeded(this, message) }
                     .onFailure { error -> Log.w(TAG, "Media prefetch failed for ${message.id}", error) }

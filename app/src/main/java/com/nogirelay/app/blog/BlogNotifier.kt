@@ -8,6 +8,7 @@ import android.content.Intent
 import com.nogirelay.app.MainActivity
 import com.nogirelay.app.R
 import com.nogirelay.app.data.BlogPost
+import com.nogirelay.app.data.db.Db
 import com.nogirelay.app.notification.NotificationChannels
 
 object BlogNotifier {
@@ -36,6 +37,14 @@ object BlogNotifier {
             .setContentIntent(pendingIntent)
             .build()
         context.getSystemService(NotificationManager::class.java)
-            .notify(20_000 + (blog.id.hashCode() and 0x0FFF_FFFF), notification)
+            .notify(notificationId(blog.id), notification)
     }
+
+    fun cancel(context: Context, blogId: String) {
+        context.getSystemService(NotificationManager::class.java).cancel(notificationId(blogId))
+    }
+
+    // Push and database ids may differ in leading zeros; key both on the canonical form.
+    private fun notificationId(blogId: String): Int =
+        20_000 + (Db.canonicalBlogId(blogId).hashCode() and 0x0FFF_FFFF)
 }

@@ -196,6 +196,12 @@ object IncomingCallNotifier {
         context.getSystemService(NotificationManager::class.java).cancel(notificationId(messageId))
     }
 
+    /** Clears the notifications of messages the user has now read in the app. */
+    fun cancel(context: Context, messageIds: Collection<String>) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        messageIds.forEach { manager.cancel(notificationId(it)) }
+    }
+
     private fun isAppInForeground(context: Context): Boolean {
         val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
         return manager.runningAppProcesses
