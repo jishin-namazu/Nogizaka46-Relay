@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -288,7 +289,8 @@ fun MessagesScreen(
                         .onGloballyPositioned { transitionContainerBounds = it.boundsInRoot() },
                 ) {
                     val progress = containerProgress::value
-                    val entry = shownEntry
+                    val transitionSettled by remember { derivedStateOf { containerProgress.value >= 1f } }
+                    val entry = selectedEntry ?: shownEntry
                     val timeline: @Composable () -> Unit = {
                         if (entry != null) {
                             key(entry) {
@@ -299,6 +301,7 @@ fun MessagesScreen(
                                     memberName = member?.name.orEmpty(),
                                     memberAvatarUrl = member?.avatarUrl,
                                     active = isActive && selectedEntry === entry,
+                                    transitionSettled = transitionSettled,
                                     messageChanges = messageChanges,
                                     playbackState = playbackState,
                                     translationEnabled = translationEnabled,

@@ -287,7 +287,6 @@ private fun MessageMediaPreview(
     onOpenMedia: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val videoHasAudioTrack by rememberVideoHasAudioTrack(message)
     val clipShape = GlassShapes.CardSmall
     Box(
         modifier.fillMaxWidth()
@@ -310,6 +309,7 @@ private fun MessageMediaPreview(
             placeholderColor = Color(0x228E93A6),
         )
         if (message.type == MessageType.VIDEO) {
+            val videoHasAudioTrack by rememberVideoHasAudioTrack(message)
             if (videoHasAudioTrack == false) {
                 Box(
                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp).size(32.dp)

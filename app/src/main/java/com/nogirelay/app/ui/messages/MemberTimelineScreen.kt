@@ -115,6 +115,7 @@ import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.clearSelectionOnTap
 import com.nogirelay.app.ui.glass.rememberGlassPress
 import com.nogirelay.app.ui.preloadRemoteImage
+import com.nogirelay.app.ui.primeCachedMessageAspectRatios
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
@@ -161,6 +162,7 @@ internal fun MemberTimelineScreen(
     memberAvatarUrl: String?,
     onContentReady: () -> Unit = {},
     active: Boolean,
+    transitionSettled: Boolean = true,
     messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
@@ -324,6 +326,7 @@ internal fun MemberTimelineScreen(
                                 !initialTargetConsumed && effectiveQuery.isBlank() && !timeFilter.isActive
                             },
                             active = workActive && auxiliaryScreen == null,
+                            transitionSettled = transitionSettled,
                             messageChanges = messageChanges,
                             playbackState = playbackState,
                             translationEnabled = translationEnabled,
@@ -1180,6 +1183,7 @@ private fun MemberTimelineContent(
     filter: TimeFilter,
     initialTargetId: String?,
     active: Boolean,
+    transitionSettled: Boolean,
     messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
@@ -1254,8 +1258,8 @@ private fun MemberTimelineContent(
         }
     }
 
-    LaunchedEffect(window.messages, active) {
-        if (active && window.messages.isNotEmpty()) {
+    LaunchedEffect(window.messages, active, transitionSettled) {
+        if (active && transitionSettled && window.messages.isNotEmpty()) {
             preloadMessageMedia(context, window.messages, targetWidth = 720)
         }
     }
@@ -1276,6 +1280,9 @@ private fun MemberTimelineContent(
                         query.isBlank() && changedIds != null -> reader.patch(previous, changedIds)
                         else -> reader.refresh(previous)
                     }
+                }
+                if (firstLoad) {
+                    primeCachedMessageAspectRatios(context, loaded.messages)
                 }
                 if (!currentActive) return@withLock
                 val keepFollowing = followLatest && atLatest && !listState.isScrollInProgress
@@ -1350,13 +1357,16 @@ private fun MemberTimelineContent(
             window.messages.filter { it.isUnread && "message:${it.id}" in visibleKeys }.map { it.id }.toSet()
         }
     }
-    LaunchedEffect(visibleUnreadIds, active) {
-        if (!active || visibleUnreadIds.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(visibleUnreadIds, active, transitionSettled) {
+        if (!active || !transitionSettled || visibleUnreadIds.isEmpty()) return@LaunchedEffect
         val ids = visibleUnreadIds
         // Once a visible batch is marked, deliver its badge update even if navigation closes it.
         withContext(NonCancellable) {
-            val updated = withContext(AppGraph.dispatchers.databaseWrite) { AppGraph.messages.markMessagesReadByIds(ids) }
-            IncomingCallNotifier.cancel(context, ids)
+            val updated = withContext(AppGraph.dispatchers.databaseWrite) {
+                val count = AppGraph.messages.markMessagesReadByIds(ids)
+                IncomingCallNotifier.cancel(context, ids)
+                count
+            }
             if (updated > 0) onRead(ids)
         }
     }

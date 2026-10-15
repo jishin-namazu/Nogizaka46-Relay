@@ -63,7 +63,7 @@ internal fun Modifier.glassControlShadow(
     press: GlassPress? = null,
     alpha: Float = 1f,
 ): Modifier {
-    if (depth.elevation <= 0.dp) return this
+    if (depth.elevation <= 0.dp || alpha <= 0f) return this
     val scale = (depth.elevation.value / 16f).coerceIn(0.5f, 1.35f)
     val compression = press?.shadowFactor ?: 1f
     val opacity = alpha.coerceIn(0f, 1f)
@@ -91,22 +91,27 @@ internal fun Modifier.glassControlFinish(
     tone: GlassTone,
     tint: Color?,
     strength: Float = 1f,
-): Modifier = drawWithCache {
-    val outline = shape.createOutline(size, layoutDirection, this)
-    val lighting = GlassControlLighting(tone, tint, strength, size.minDimension, density)
-    onDrawWithContent {
-        lighting.draw(this, outline)
-        drawContent()
+): Modifier {
+    var cachedLighting: GlassControlLighting? = null
+    return drawWithCache {
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val shortAxis = size.minDimension
+        val lighting = cachedLighting?.takeIf { it.matches(tone, tint, strength, shortAxis, density) }
+            ?: GlassControlLighting(tone, tint, strength, shortAxis, density).also { cachedLighting = it }
+        onDrawWithContent {
+            lighting.draw(this, outline)
+            drawContent()
+        }
     }
 }
 
 /** Cached lighting also used by moving progress fills, without rebuilding a blur layer. */
 internal class GlassControlLighting(
-    tone: GlassTone,
-    tint: Color?,
-    strength: Float,
+    private val tone: GlassTone,
+    private val tint: Color?,
+    private val strength: Float,
     shortAxis: Float,
-    density: Float,
+    private val density: Float,
 ) {
     private val colored = tone == GlassTone.Accent
     private val base = controlBodyColor(tone, tint)
@@ -119,7 +124,7 @@ internal class GlassControlLighting(
         0.70f to Color.Transparent,
         1f to rim.copy(alpha = if (colored) 0.16f else 0.10f),
     )
-    private val bevel = (shortAxis * 0.028f).coerceIn(0.8f * density, 2.2f * density)
+    private val bevel = bevelFor(shortAxis, density)
     private val softRims = (4 downTo 1).map { step ->
         val alpha = when (step) {
             4 -> 0.035f
@@ -142,9 +147,26 @@ internal class GlassControlLighting(
     )
     private val edgeStroke = Stroke(width = 1.2f * density)
 
+    fun matches(
+        otherTone: GlassTone,
+        otherTint: Color?,
+        otherStrength: Float,
+        otherShortAxis: Float,
+        otherDensity: Float,
+    ): Boolean = tone == otherTone &&
+        tint == otherTint &&
+        strength == otherStrength &&
+        density == otherDensity &&
+        bevel == bevelFor(otherShortAxis, otherDensity)
+
     fun draw(scope: DrawScope, outline: Outline) = with(scope) {
         drawOutline(outline, brush = surface)
         softRims.forEach { (brush, stroke) -> drawOutline(outline, brush = brush, style = stroke) }
         drawOutline(outline, brush = edge, style = edgeStroke)
+    }
+
+    companion object {
+        private fun bevelFor(shortAxis: Float, density: Float): Float =
+            (shortAxis * 0.028f).coerceIn(0.8f * density, 2.2f * density)
     }
 }
