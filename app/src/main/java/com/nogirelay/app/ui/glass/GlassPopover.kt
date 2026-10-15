@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -75,8 +76,26 @@ class GlassPopoverState {
         private set
     internal var exiting by mutableStateOf(false)
     internal var anchorBounds by mutableStateOf<IntRect?>(null)
+    private var anchorCoords: LayoutCoordinates? = null
+
+    internal fun updateAnchor(coords: LayoutCoordinates) {
+        anchorCoords = coords
+        if (expanded) refreshAnchorBounds()
+    }
+
+    private fun refreshAnchorBounds() {
+        val coords = anchorCoords?.takeIf { it.isAttached } ?: return
+        val b = coords.boundsInWindow()
+        anchorBounds = IntRect(
+            left = b.left.toInt(),
+            top = b.top.toInt(),
+            right = b.right.toInt(),
+            bottom = b.bottom.toInt(),
+        )
+    }
 
     fun open() {
+        refreshAnchorBounds()
         exiting = false
         expanded = true
     }
@@ -100,12 +119,7 @@ fun rememberGlassPopoverState(): GlassPopoverState = remember { GlassPopoverStat
 
 /** Records the anchor bounds so the popover can morph from the trigger. */
 fun Modifier.glassPopoverAnchor(state: GlassPopoverState): Modifier = onGloballyPositioned { coords ->
-    state.anchorBounds = IntRect(
-        left = coords.boundsInWindow().left.toInt(),
-        top = coords.boundsInWindow().top.toInt(),
-        right = coords.boundsInWindow().right.toInt(),
-        bottom = coords.boundsInWindow().bottom.toInt(),
-    )
+    state.updateAnchor(coords)
 }
 
 internal class GlassPopoverViewport {

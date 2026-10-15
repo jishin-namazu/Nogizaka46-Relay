@@ -2,12 +2,12 @@ package com.nogirelay.app.ui.glass
 
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.composed
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntRect
@@ -39,11 +39,51 @@ object GlassMediaTransition {
         internal val owner: Any,
     )
 
-    private val sources = mutableStateMapOf<String, Source>()
+    private class Entry(
+        val owner: Any,
+        val resolve: () -> Source?,
+    )
+
+    private val sources = HashMap<String, Entry>()
 
     /** Called by thumbnails while they are laid out and on screen. */
     fun publish(key: String, url: String, bounds: IntRect, cornerRadiusPx: Float, visibleBounds: IntRect, crop: Boolean, owner: Any) {
-        sources[key] = Source(url, bounds, cornerRadiusPx, visibleBounds, crop, owner)
+        val source = Source(url, bounds, cornerRadiusPx, visibleBounds, crop, owner)
+        sources[key] = Entry(owner) { source }
+    }
+
+    internal fun publishLive(
+        key: String,
+        url: String,
+        coords: LayoutCoordinates,
+        cornerRadiusPx: () -> Float,
+        crop: Boolean,
+        owner: Any,
+    ) {
+        sources[key] = Entry(owner) {
+            if (!coords.isAttached) return@Entry null
+            val b = coords.boundsInWindow()
+            val position = coords.localToWindow(Offset.Zero)
+            val end = coords.localToWindow(Offset(coords.size.width.toFloat(), coords.size.height.toFloat()))
+            Source(
+                url = url,
+                bounds = IntRect(
+                    left = position.x.toInt(),
+                    top = position.y.toInt(),
+                    right = end.x.toInt(),
+                    bottom = end.y.toInt(),
+                ),
+                cornerRadiusPx = cornerRadiusPx(),
+                visibleBounds = IntRect(
+                    left = b.left.toInt(),
+                    top = b.top.toInt(),
+                    right = b.right.toInt(),
+                    bottom = b.bottom.toInt(),
+                ),
+                crop = crop,
+                owner = owner,
+            )
+        }
     }
 
     fun unpublish(key: String, owner: Any) {
@@ -56,7 +96,7 @@ object GlassMediaTransition {
      * fade + scale).
      */
     fun visibleSource(key: String): Source? =
-        sources[key]?.takeIf { it.visibleBounds.width > 0 && it.visibleBounds.height > 0 }
+        sources[key]?.resolve()?.takeIf { it.visibleBounds.width > 0 && it.visibleBounds.height > 0 }
 
 }
 
@@ -78,25 +118,11 @@ fun Modifier.glassMediaSource(
             onDispose { GlassMediaTransition.unpublish(key, owner) }
         }
         onGloballyPositioned { coords ->
-            val b = coords.boundsInWindow()
-            val position = coords.localToWindow(Offset.Zero)
-            val end = coords.localToWindow(Offset(coords.size.width.toFloat(), coords.size.height.toFloat()))
-            GlassMediaTransition.publish(
+            GlassMediaTransition.publishLive(
                 key = key,
                 url = url,
-                bounds = IntRect(
-                    left = position.x.toInt(),
-                    top = position.y.toInt(),
-                    right = end.x.toInt(),
-                    bottom = end.y.toInt(),
-                ),
-                visibleBounds = IntRect(
-                    left = b.left.toInt(),
-                    top = b.top.toInt(),
-                    right = b.right.toInt(),
-                    bottom = b.bottom.toInt(),
-                ),
-                cornerRadiusPx = radius.value,
+                coords = coords,
+                cornerRadiusPx = { radius.value },
                 crop = crop,
                 owner = owner,
             )

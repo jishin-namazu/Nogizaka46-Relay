@@ -34,12 +34,14 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
@@ -95,12 +97,6 @@ private val MemberCardSpacing = 10.dp
 private val CardCornerRadius = 28.dp
 
 /**
- * Progress after which the opened page's backdrop (opaque from 0.25 on)
- * hides the card body completely, so its glass can be skipped unseen.
- */
-private const val GLASS_COVERED_PROGRESS = 0.32f
-
-/**
  * Member inbox, rebuilt as liquid glass: a horizontal constellation of
  * recent-contact droplets on top, then thread rows as floating glass
  * capsules over the shared milky backdrop.
@@ -118,7 +114,11 @@ fun MemberInbox(
     expansion: MemberCardExpansion? = null,
     header: (@Composable () -> Unit)? = null,
 ) {
-    val recede = recedeProgress?.let { Modifier.memberInboxRecede(it) } ?: Modifier
+    val latestRecedeProgress = rememberUpdatedState(recedeProgress)
+    val inboxCovered by remember {
+        derivedStateOf { latestRecedeProgress.value?.let { it() >= 1f } == true }
+    }
+    val recede = remember { Modifier.memberInboxRecede { inboxCovered } }
     LazyColumn(
         state = state,
         userScrollEnabled = recedeProgress == null,
@@ -206,8 +206,8 @@ fun MemberInbox(
  * receding look itself is a single veil drawn by the opened card; per-item
  * effects would show as separate bands at every item's bounds.
  */
-private fun Modifier.memberInboxRecede(progress: () -> Float): Modifier =
-    graphicsLayer { alpha = if (progress() >= 1f) 0f else 1f }
+private fun Modifier.memberInboxRecede(covered: () -> Boolean): Modifier =
+    graphicsLayer { alpha = if (covered()) 0f else 1f }
 
 /**
  * One uniform veil over the whole viewport, drawn from the opened card's slot
@@ -288,12 +288,6 @@ private fun ThreadCapsule(
     // One composition for both states, so opening never remounts the card face.
     var slotInRoot by remember { mutableStateOf(Rect.Zero) }
     val density = LocalDensity.current
-    // The progress changes every frame; it is read only in layout and draw.
-    // Composition sees just one flip: once the page backdrop fully covers
-    // the card body, its refractive glass is invisible and is switched off.
-    val covered by remember(expansion) {
-        derivedStateOf { (expansion?.progress?.invoke() ?: 0f) >= GLASS_COVERED_PROGRESS }
-    }
     val cardRadiusPx = with(density) { CardCornerRadius.toPx() }
     GlassPanel(
         onClick = if (expansion == null) onClick else null,
@@ -302,12 +296,16 @@ private fun ThreadCapsule(
         staticMaterial = true,
         // While opened, the shadow is drawn at the slot instead (see below).
         shadowAlpha = if (expansion == null) 1f else 0f,
-        blurEnabled = !covered,
         clipShape = expansion?.let { opened ->
             {
                 // Corners stay round for most of the way, then square off.
                 val p = opened.progress().coerceIn(0f, 1f)
-                RoundedCornerShape(cardRadiusPx * ((1f - p) / 0.3f).coerceIn(0f, 1f))
+                val cornerFraction = ((1f - p) / 0.3f).coerceIn(0f, 1f)
+                when {
+                    cornerFraction >= 1f -> GlassShapes.Card
+                    cornerFraction <= 0f -> RectangleShape
+                    else -> RoundedCornerShape(cardRadiusPx * cornerFraction)
+                }
             }
         },
         // The tap's release spring finishes while the card starts to grow.
@@ -354,34 +352,31 @@ private fun ThreadCapsule(
         if (expansion != null) {
             // The page is laid out at viewport size and scaled to the card's
             // current width from its top-left; it never sizes the card.
-            Box(Modifier.matchParentSize()) {
-                Box(
-                    Modifier
-                        .wrapContentSize(Alignment.TopStart, unbounded = true)
-                        .layout { measurable, _ ->
-                            val viewport = expansion.viewportInRoot()
-                            val placeable = measurable.measure(
-                                Constraints.fixed(viewport.width.roundToInt(), viewport.height.roundToInt()),
-                            )
-                            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-                        }
-                        .graphicsLayer {
-                            val progress = expansion.progress().coerceIn(0f, 1f)
-                            val viewportWidth = expansion.viewportInRoot().width
-                            val width = lerp(slotInRoot.width, viewportWidth, progress)
-                            val scale = if (viewportWidth > 0f) width / viewportWidth else 1f
-                            transformOrigin = TransformOrigin(0f, 0f)
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = ((progress - 0.06f) / 0.3f).coerceIn(0f, 1f)
-                        }
-                        .drawBehind {
-                            // The page backdrop covers the glass body early on.
-                            drawRect(GlassColors.Backdrop, alpha = (expansion.progress() / 0.25f).coerceIn(0f, 1f))
-                        },
-                ) {
-                    expansion.content()
-                }
+            Box(
+                Modifier
+                    .layout { measurable, _ ->
+                        val viewport = expansion.viewportInRoot()
+                        val placeable = measurable.measure(
+                            Constraints.fixed(viewport.width.roundToInt(), viewport.height.roundToInt()),
+                        )
+                        layout(0, 0) { placeable.place(0, 0) }
+                    }
+                    .graphicsLayer {
+                        val progress = expansion.progress().coerceIn(0f, 1f)
+                        val viewportWidth = expansion.viewportInRoot().width
+                        val width = lerp(slotInRoot.width, viewportWidth, progress)
+                        val scale = if (viewportWidth > 0f) width / viewportWidth else 1f
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = ((progress - 0.06f) / 0.3f).coerceIn(0f, 1f)
+                    }
+                    .drawBehind {
+                        // The page backdrop covers the glass body early on.
+                        drawRect(GlassColors.Backdrop, alpha = (expansion.progress() / 0.25f).coerceIn(0f, 1f))
+                    },
+            ) {
+                expansion.content()
             }
             expansion.onReopen?.let { reopen ->
                 // While collapsing, a tap anywhere on the card turns it around;

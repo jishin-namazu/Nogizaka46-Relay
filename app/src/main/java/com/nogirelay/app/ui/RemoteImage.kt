@@ -147,15 +147,48 @@ internal suspend fun preloadRemoteImage(
 /** Read only local image headers before publishing a blog page, never await the network. */
 internal suspend fun primeCachedImageAspectRatios(context: Context, urls: List<String>) {
     withContext(AppGraph.dispatchers.imageDecode) {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         urls.distinct().forEach { url ->
             if (ImageAspectRatioCache.get(url) == null) {
                 MediaDownloader.cachedFileForUrl(context, url, MessageType.IMAGE)?.let { file ->
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    bounds.outWidth = 0
+                    bounds.outHeight = 0
                     BitmapFactory.decodeFile(file.absolutePath, bounds)
                     if (bounds.outWidth > 0 && bounds.outHeight > 0) {
                         ImageAspectRatioCache.put(url, bounds.outWidth.toFloat() / bounds.outHeight)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Read local image and video thumbnail headers before publishing a timeline batch so cards lay out at their final height on the first frame. */
+internal suspend fun primeCachedMessageAspectRatios(context: Context, messages: List<RelayMessage>) {
+    if (messages.isEmpty()) return
+    withContext(AppGraph.dispatchers.imageDecode) {
+        val appContext = context.applicationContext
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        messages.forEach { message ->
+            val url = when (message.type) {
+                MessageType.IMAGE -> message.mediaUrl ?: message.thumbnailUrl
+                MessageType.VIDEO -> message.thumbnailUrl ?: message.mediaUrl
+                else -> null
+            }?.takeIf { it.isNotBlank() } ?: return@forEach
+            if (ImageAspectRatioCache.get(url) != null) return@forEach
+            val file = when (message.type) {
+                MessageType.IMAGE -> MediaDownloader.cachedFileForUrl(appContext, url, MessageType.IMAGE)
+                MessageType.VIDEO -> MediaDownloader.cachedVideoThumbnail(appContext, message)
+                    ?: message.thumbnailUrl?.takeIf { it.isNotBlank() }?.let {
+                        MediaDownloader.cachedFileForUrl(appContext, it, MessageType.IMAGE)
+                    }
+                else -> null
+            } ?: return@forEach
+            bounds.outWidth = 0
+            bounds.outHeight = 0
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                ImageAspectRatioCache.put(url, bounds.outWidth.toFloat() / bounds.outHeight)
             }
         }
     }
@@ -197,7 +230,7 @@ fun RemoteImage(
 
     var retryCount by remember(url) { mutableIntStateOf(0) }
     var refreshVersion by remember(url) { mutableIntStateOf(0) }
-    var isNotFound by remember(url) { mutableStateOf(MediaDownloader.isNotFound(context, url)) }
+    var isNotFound by remember(url) { mutableStateOf(MediaDownloader.isNotFound(null, url)) }
     var isError by remember(cacheKey) { mutableStateOf(false) }
 
     var knownAspectRatio by remember(url) {
@@ -213,7 +246,7 @@ fun RemoteImage(
 
     LaunchedEffect(cacheKey, active, retryCount, refreshVersion) {
         if (!active || targetWidth <= 0) return@LaunchedEffect
-        if (url != null && (isNotFound || MediaDownloader.isNotFound(context, url))) {
+        if (url != null && (isNotFound || MediaDownloader.isNotFound(null, url))) {
             bitmap = null
             animated = null
             isNotFound = true
@@ -222,9 +255,9 @@ fun RemoteImage(
         }
 
         if (animated != null) return@LaunchedEffect
-        val cachedBeforeLoad = url?.let {
-            MediaDownloader.cachedFileForUrl(context, it, messageType) != null
-        } == true
+        val cachedBeforeLoad = revalidateRemote && url != null && withContext(AppGraph.dispatchers.network) {
+            MediaDownloader.cachedFileForUrl(context, url, messageType) != null
+        }
         val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
         if (exactCached != null) {
             animated = null
