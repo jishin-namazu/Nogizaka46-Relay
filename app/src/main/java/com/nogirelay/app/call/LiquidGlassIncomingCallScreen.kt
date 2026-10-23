@@ -105,6 +105,7 @@ internal fun LiquidGlassIncomingCallScreen(
             isRinging -> "语音来电"
             currentPlayback == null -> "正在连接…"
             currentPlayback.isPlaying -> "通话中"
+            currentPlayback.positionMs == 0 && currentPlayback.durationMs == 0 -> "正在连接…"
             else -> "播放已暂停"
         },
         elapsedSeconds = (currentPlayback?.positionMs ?: 0).coerceAtLeast(0) / 1_000,

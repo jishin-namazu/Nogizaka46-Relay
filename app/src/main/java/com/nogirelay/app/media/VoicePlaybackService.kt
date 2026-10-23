@@ -3,12 +3,15 @@ package com.nogirelay.app.media
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes as PlatformAudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
+import androidx.core.app.ServiceCompat
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -52,6 +55,7 @@ class VoicePlaybackService : MediaSessionService() {
     private lateinit var player: ExoPlayer
     private lateinit var session: MediaSession
     private lateinit var audioManager: AudioManager
+    private var focusRequest: AudioFocusRequest? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var speakerOn = false
     private var markedPlayed = false
@@ -72,6 +76,13 @@ class VoicePlaybackService : MediaSessionService() {
             publishPlaybackState()
         }
 
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (playWhenReady && player.mediaItemCount > 0) {
+                requestAudioFocus()
+            }
+            publishPlaybackState()
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) = publishPlaybackState()
 
         override fun onPositionDiscontinuity(
@@ -82,6 +93,7 @@ class VoicePlaybackService : MediaSessionService() {
 
         override fun onPlayerError(error: PlaybackException) {
             Log.w(TAG, "Voice playback failed", error)
+            sendBroadcast(Intent(ACTION_PLAYBACK_FINISHED).setPackage(packageName))
             stopPlayback()
         }
     }
@@ -91,14 +103,15 @@ class VoicePlaybackService : MediaSessionService() {
         AppGraph.initialize(this)
         audioManager = getSystemService(AudioManager::class.java)
         player = ExoPlayer.Builder(this)
-            // Voice-call usage: earpiece routing and transient focus, which
-            // ExoPlayer requests and abandons around playback itself.
+            // Voice-call usage routes to the earpiece unless speakerphone is selected.
+            // Media3's AudioFocusManager rejects USAGE_VOICE_COMMUNICATION when
+            // handleAudioFocus is true, so transient focus is managed manually.
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_VOICE_COMMUNICATION)
                     .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
                     .build(),
-                /* handleAudioFocus = */ true,
+                /* handleAudioFocus = */ false,
             )
             .setHandleAudioBecomingNoisy(true)
             .build()
@@ -106,6 +119,7 @@ class VoicePlaybackService : MediaSessionService() {
         session = MediaSession.Builder(this, player)
             .setSessionActivity(openAppIntent(null))
             .build()
+        addSession(session)
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
                 .setChannelId(NotificationChannels.PLAYBACK)
@@ -118,6 +132,7 @@ class VoicePlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = session
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_STOP -> stopPlayback()
             ACTION_SET_SPEAKER -> {
@@ -136,13 +151,12 @@ class VoicePlaybackService : MediaSessionService() {
                 }
             }
             ACTION_PLAY -> intent.getStringExtra(EXTRA_MESSAGE_ID)?.let { id ->
+                val isCall = intent.getBooleanExtra(EXTRA_CALL, false)
                 // A simulated call has no pause button and routes to the
                 // earpiece anyway, so unplugging headphones must not pause it.
-                player.setHandleAudioBecomingNoisy(!intent.getBooleanExtra(EXTRA_CALL, false))
-                togglePlayback(id)
+                player.setHandleAudioBecomingNoisy(!isCall)
+                togglePlayback(id, isCall = isCall)
             }
-            // Media buttons and the session's own commands.
-            else -> return super.onStartCommand(intent, flags, startId)
         }
         return START_NOT_STICKY
     }
@@ -150,17 +164,23 @@ class VoicePlaybackService : MediaSessionService() {
     override fun onDestroy() {
         serviceScope.cancel()
         releasePlayer()
+        runCatching { removeSession(session) }
         session.release()
         player.removeListener(listener)
         player.release()
         super.onDestroy()
     }
 
-    private fun togglePlayback(messageId: String) {
+    private fun togglePlayback(messageId: String, isCall: Boolean = false) {
         loadJob?.cancel()
         loadJob = null
         if (currentMessageId == messageId && player.mediaItemCount > 0) {
-            if (player.isPlaying) player.pause() else player.play()
+            if (player.isPlaying && !isCall) {
+                player.pause()
+            } else {
+                requestAudioFocus()
+                player.play()
+            }
             publishPlaybackState()
             return
         }
@@ -174,6 +194,9 @@ class VoicePlaybackService : MediaSessionService() {
             }.getOrNull()
             if (!isActive) return@launch
             if (loaded == null) {
+                if (isCall) {
+                    sendBroadcast(Intent(ACTION_PLAYBACK_FINISHED).setPackage(packageName))
+                }
                 stopPlayback()
                 return@launch
             }
@@ -186,9 +209,9 @@ class VoicePlaybackService : MediaSessionService() {
         currentMessageId = message.id
         speakerOn = false
         markedPlayed = false
-        publishPlaybackState()
 
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        requestAudioFocus()
         setAudioOutput(speakerOn = false, fadeOnLegacyAndroid = false)
         player.volume = 1f
         player.setMediaItem(
@@ -207,6 +230,7 @@ class VoicePlaybackService : MediaSessionService() {
         session.setSessionActivity(openAppIntent(message.id))
         player.prepare()
         player.play()
+        publishPlaybackState()
     }
 
     private fun markCurrentPlayed() {
@@ -220,7 +244,32 @@ class VoicePlaybackService : MediaSessionService() {
         loadJob?.cancel()
         loadJob = null
         releasePlayer()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun requestAudioFocus() {
+        val request = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(
+                PlatformAudioAttributes.Builder()
+                    .setUsage(PlatformAudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(PlatformAudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            .setOnAudioFocusChangeListener { change ->
+                if (change <= AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                    if (::player.isInitialized) player.pause()
+                    publishPlaybackState()
+                }
+            }
+            .build()
+            .also { focusRequest = it }
+        audioManager.requestAudioFocus(request)
+    }
+
+    private fun abandonAudioFocus() {
+        focusRequest?.let(audioManager::abandonAudioFocusRequest)
+        focusRequest = null
     }
 
     private fun publishPlaybackState() {
@@ -266,6 +315,7 @@ class VoicePlaybackService : MediaSessionService() {
         }
         currentMessageId = null
         _playbackState.value = VoicePlaybackState()
+        abandonAudioFocus()
         if (audioManager.mode == AudioManager.MODE_IN_COMMUNICATION) {
             audioManager.mode = AudioManager.MODE_NORMAL
         }
