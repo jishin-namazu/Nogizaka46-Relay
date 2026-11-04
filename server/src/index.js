@@ -61,7 +61,8 @@ app.set('trust proxy', Number.isInteger(trustProxyHops) && trustProxyHops >= 0 ?
 // 速率限制
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 分钟
-  max: 100, // 限制 100 个请求
+  max: 5000, // 限制 5000 个请求
+  skip: (req) => req.path.includes('/media/'),
   message: 'Too many requests from this IP, please try again later.',
 });
 app.use('/v1/', limiter);
