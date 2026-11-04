@@ -18,13 +18,16 @@ class MessageService {
     );
 
     if (existing) {
-      // 为在本地媒体存储启用之前创建的行重试媒体归档。
+      // 为在本地媒体存储启用之前创建或迁移后本地文件缺失的行重试媒体归档。
+      const existingMedia = await mediaArchive.storedFile(existing.media_local_path);
+      const existingThumb = await mediaArchive.storedFile(existing.thumbnail_local_path);
+      const existingPhone = await mediaArchive.storedFile(existing.phone_image_local_path);
       const needsPhoneImage = message.type === 'audio'
         && message.incoming_call_from
         && message.phone_image_url
-        && !existing.phone_image_local_path;
-      if ((message.media_url && !existing.media_local_path)
-        || (message.thumbnail_url && !existing.thumbnail_local_path)
+        && !existingPhone;
+      if ((message.media_url && !existingMedia)
+        || (message.thumbnail_url && !existingThumb)
         || needsPhoneImage) {
         const archived = await mediaArchive.archiveMessage(message);
         if (archived.mediaLocalPath || archived.thumbnailLocalPath || archived.phoneImageLocalPath) {
@@ -32,10 +35,21 @@ class MessageService {
             `UPDATE messages
              SET media_local_path = COALESCE($1, media_local_path),
                  thumbnail_local_path = COALESCE($2, thumbnail_local_path),
-                 phone_image_local_path = COALESCE($3, phone_image_local_path)
-             WHERE id = $4
+                 phone_image_local_path = COALESCE($3, phone_image_local_path),
+                 media_url = COALESCE($4, media_url),
+                 thumbnail_url = COALESCE($5, thumbnail_url),
+                 phone_image_url = COALESCE($6, phone_image_url)
+             WHERE id = $7
              RETURNING *`,
-            [archived.mediaLocalPath, archived.thumbnailLocalPath, archived.phoneImageLocalPath, message.id],
+            [
+              archived.mediaLocalPath,
+              archived.thumbnailLocalPath,
+              archived.phoneImageLocalPath,
+              message.media_url || null,
+              message.thumbnail_url || null,
+              message.phone_image_url || null,
+              message.id,
+            ],
           );
           return { message: updated || existing, isNew: false };
         }
@@ -189,8 +203,16 @@ class MessageService {
    */
   async hasMessage(id) {
     if (!id) return false;
-    const row = await db.queryOne('SELECT id FROM messages WHERE id = $1', [id]);
-    return Boolean(row);
+    const row = await db.queryOne(
+      'SELECT id, type, media_url, media_local_path FROM messages WHERE id = $1',
+      [id],
+    );
+    if (!row) return false;
+    if (row.type !== 'text' && row.media_url) {
+      const stored = await mediaArchive.storedFile(row.media_local_path);
+      if (!stored) return false;
+    }
+    return true;
   }
 
   /**

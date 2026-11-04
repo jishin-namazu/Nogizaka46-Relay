@@ -77,7 +77,7 @@ router.get('/:id/media/:kind', authenticateClient, async (req, res) => {
       });
     }
 
-    // 本地未落盘时回退至原始远程直链
+    // 本地未落盘时仅回退至未过期的原始远程直链；若签名已过期则返回 404，避免客户端收到 CloudFront 403 而反复重试
     const message = await messageService.getMessage(req.params.id);
     const remoteUrl = {
       media: message?.media_url,
@@ -86,7 +86,15 @@ router.get('/:id/media/:kind', authenticateClient, async (req, res) => {
     }[req.params.kind];
 
     if (remoteUrl) {
-      return res.redirect(remoteUrl);
+      try {
+        const parsed = new URL(remoteUrl);
+        const expires = Number.parseInt(parsed.searchParams.get("Expires") || "", 10);
+        if (!Number.isFinite(expires) || expires * 1000 > Date.now() + 5000) {
+          return res.redirect(remoteUrl);
+        }
+      } catch {
+        // ignore invalid URL and fall through to 404
+      }
     }
 
     return res.status(404).json({ error: 'Media not found or archived' });
