@@ -8,6 +8,7 @@ import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.data.MediaRefIndex
 import com.nogirelay.app.data.MediaRefKind
 import com.nogirelay.app.data.RelayMessage
+import com.nogirelay.app.media.MediaContentDigests
 import com.nogirelay.app.media.MediaDownloader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -16,8 +17,7 @@ import org.json.JSONObject
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
-import java.security.MessageDigest
-import java.util.zip.CRC32
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
@@ -59,7 +59,6 @@ object DataExporter {
         val path: String,
         val file: File,
         val bytes: Long,
-        val crc: Long,
     )
 
     suspend fun estimate(
@@ -214,8 +213,31 @@ object DataExporter {
         val rawOutput = resolver.openOutputStream(outputUri) ?: error("无法写入所选文件")
 
         val job = coroutineContext[Job]
+
+        fun resolveCached(candidate: MediaCandidate): ResolvedMedia? {
+            val key = candidate.role + "|" + candidate.url
+            return if (resolvedByKey.containsKey(key)) {
+                resolvedByKey[key]
+            } else {
+                resolve(context, candidate).also { resolvedByKey[key] = it }
+            }
+        }
+
         try {
             ZipOutputStream(BufferedOutputStream(rawOutput, BUFFER)).use { zip ->
+                // With the media-ref index available, resolve every media file up front so each one reports progress.
+                if (refsByRecord != null) {
+                    val unique = refsByRecord.values.asSequence().flatten()
+                        .distinctBy { it.role + "|" + it.url }
+                        .toList()
+                    onProgress("校验媒体", 0, unique.size)
+                    unique.forEachIndexed { index, candidate ->
+                        if (job?.isActive != true) throw CancellationException("导出已取消")
+                        resolveCached(candidate)
+                        onProgress("校验媒体", index + 1, unique.size)
+                    }
+                }
+
                 zip.putNextEntry(ZipEntry(ExportFormat.MANIFEST_ENTRY))
                 zip.write(ExportFormat.manifestToJson(manifest).toString().toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
@@ -232,12 +254,7 @@ object DataExporter {
                         val recordRefs = refsByRecord?.get(recordId(request.kind, item))
                             ?: if (refsByRecord == null) candidates(request.kind, item) else emptyList()
                         recordRefs.forEach { candidate ->
-                            val key = candidate.role + "|" + candidate.url
-                            val media = if (resolvedByKey.containsKey(key)) {
-                                resolvedByKey[key]
-                            } else {
-                                resolve(context, candidate).also { resolvedByKey[key] = it }
-                            }
+                            val media = resolveCached(candidate)
                             if (media == null) {
                                 skipped += JSONObject().apply {
                                     put("kind", "media")
@@ -268,21 +285,26 @@ object DataExporter {
 
                     onProgress("读取记录", recordCount, totalRecords)
                 }
+                onProgress("读取记录", 0, totalRecords)
                 when (request.kind) {
                     ExportKind.MESSAGES -> AppGraph.messages.forEachMessageForMembers(request.memberKeys) { writeRecord(it) }
                     ExportKind.BLOGS -> AppGraph.blogs.forEachBlogForMembers(request.memberKeys) { writeRecord(it) }
                 }
                 zip.closeEntry()
 
+                // Media is already compressed; level 0 DEFLATE lets the zip stream compute CRC while copying.
+                zip.setLevel(Deflater.NO_COMPRESSION)
                 var mediaDone = 0
+                onProgress("打包媒体", 0, mediaPaths.size)
                 mediaPaths.values.forEach { media ->
                     coroutineContext.ensureActive()
-                    addStored(zip, media)
+                    addMedia(zip, media)
                     mediaDone += 1
                     onProgress("打包媒体", mediaDone, mediaPaths.size)
                 }
 
                 if (skipped.isNotEmpty()) {
+                    zip.setLevel(Deflater.DEFAULT_COMPRESSION)
                     zip.putNextEntry(ZipEntry(ExportFormat.SKIPPED_ENTRY))
                     skipped.forEach { zip.write((it.toString() + "\n").toByteArray(Charsets.UTF_8)) }
                     zip.closeEntry()
@@ -337,37 +359,17 @@ object DataExporter {
     private fun resolve(context: Context, candidate: MediaCandidate): ResolvedMedia? {
         val file = MediaDownloader.cachedFileForUrl(context, candidate.url, candidate.type) ?: return null
         val extension = file.name.substringAfterLast('.', "bin")
-        val digest = MessageDigest.getInstance("SHA-256")
-        val crc = CRC32()
-        var bytes = 0L
-        FileInputStream(file).use { input ->
-            val buffer = ByteArray(BUFFER)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                if (read == 0) continue
-                digest.update(buffer, 0, read)
-                crc.update(buffer, 0, read)
-                bytes += read
-            }
-        }
-        val sha = digest.digest().joinToString("") { "%02x".format(it) }
+        // Usually recorded at download time; only files cached before that need hashing here.
+        val sha = MediaContentDigests.getOrCompute(file)
         return ResolvedMedia(
             path = ExportFormat.mediaEntryName(sha, extension),
             file = file,
-            bytes = bytes,
-            crc = crc.value,
+            bytes = file.length(),
         )
     }
 
-    private fun addStored(zip: ZipOutputStream, media: ResolvedMedia) {
-        val entry = ZipEntry(media.path).apply {
-            method = ZipEntry.STORED
-            size = media.bytes
-            compressedSize = media.bytes
-            crc = media.crc
-        }
-        zip.putNextEntry(entry)
+    private fun addMedia(zip: ZipOutputStream, media: ResolvedMedia) {
+        zip.putNextEntry(ZipEntry(media.path))
         FileInputStream(media.file).use { input -> input.copyTo(zip, BUFFER) }
         zip.closeEntry()
     }

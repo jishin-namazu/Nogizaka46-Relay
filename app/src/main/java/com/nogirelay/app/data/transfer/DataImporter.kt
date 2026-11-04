@@ -266,7 +266,7 @@ object DataImporter {
 
                     var stored = 0
                     missing.forEach { (url, target) ->
-                        if (runCatching { copyInto(context, url, temp, target) }.isSuccess) {
+                        if (runCatching { copyInto(context, url, temp, target, actualSha) }.isSuccess) {
                             MediaDownloader.clearNotFound(context, url)
                             stored += 1
                         } else {
@@ -389,7 +389,9 @@ object DataImporter {
                         val target = MediaDownloader.cacheFileForUrl(context, url, extension)
                         if (target.isFile && target.length() > 0L) {
                             mediaReused += 1
-                        } else if (runCatching { copyInto(context, url, staged, target) }.isSuccess) {
+                        } else if (runCatching {
+                                copyInto(context, url, staged, target, bare.substringBeforeLast('.'))
+                            }.isSuccess) {
                             mediaStored += 1
                         } else {
                             mediaFailed += 1
@@ -420,17 +422,15 @@ object DataImporter {
         )
     }
 
-    private fun copyInto(context: Context, url: String, source: File, target: File) {
+    /** [sha] has already been verified against the archive entry's content. */
+    private fun copyInto(context: Context, url: String, source: File, target: File, sha: String) {
         val parent = target.parentFile
         if (parent != null && !parent.exists() && !parent.mkdirs()) {
             error("无法创建媒体缓存目录")
         }
         val temporary = File(parent, target.name + ".part-" + System.nanoTime())
         source.copyTo(temporary, overwrite = true)
-        if (!temporary.renameTo(target)) {
-            temporary.copyTo(target, overwrite = true)
-            temporary.delete()
-        }
+        MediaDownloader.replaceWithDigest(temporary, target, sha)
         MediaDownloader.notifyCacheChanged(context, url)
     }
 

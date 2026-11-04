@@ -23,6 +23,7 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.nio.file.Files
 import java.net.URL
+import java.security.DigestInputStream
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -251,6 +252,7 @@ object MediaDownloader {
                             markNotFound(appContext, url)
                             target.delete()
                             metadataFile(target).delete()
+                            MediaContentDigests.delete(target)
                             notifyCacheChanged(appContext, url)
                             changed = true
                         }
@@ -317,6 +319,7 @@ object MediaDownloader {
         try {
             val contentLength = connection.getHeaderFieldLong("Content-Length", -1L)
             if (contentLength > MAX_BYTES) error("媒体文件超过 100 MB 限制")
+            val digest = MediaContentDigests.newDigest()
             connection.inputStream.use { input ->
                 FileOutputStream(temp).use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -326,12 +329,13 @@ object MediaDownloader {
                         if (count < 0) break
                         total += count
                         if (total > MAX_BYTES) error("媒体文件超过 100 MB 限制")
+                        digest.update(buffer, 0, count)
                         output.write(buffer, 0, count)
                     }
                     output.fd.sync()
                 }
             }
-            replaceAtomically(temp, target)
+            replaceWithDigest(temp, target, MediaContentDigests.hex(digest))
             notifyCacheChanged(context, url)
         } finally {
             if (temp.exists()) temp.delete()
@@ -397,10 +401,11 @@ object MediaDownloader {
         if (!parent.exists() && !parent.mkdirs()) error("无法创建媒体目录")
         val temp = File(parent, "${target.name}.part-${System.nanoTime()}")
         return try {
+            val digest = MediaContentDigests.newDigest()
             context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(temp).use { output -> input.copyTo(output) }
+                FileOutputStream(temp).use { output -> DigestInputStream(input, digest).copyTo(output) }
             } ?: error("无法读取本地媒体")
-            replaceAtomically(temp, target)
+            replaceWithDigest(temp, target, MediaContentDigests.hex(digest))
             notifyCacheChanged(context, uri.toString())
             target
         } finally {
@@ -495,6 +500,13 @@ object MediaDownloader {
         else -> acceptType(type)
     }
 
+    /** Replaces [target] and records its content digest; the old sidecar is dropped first so it never outlives the old bytes. */
+    internal fun replaceWithDigest(temp: File, target: File, sha: String) {
+        MediaContentDigests.delete(target)
+        replaceAtomically(temp, target)
+        MediaContentDigests.store(target, sha)
+    }
+
     private fun replaceAtomically(temp: File, target: File) {
         if (!temp.renameTo(target)) {
             temp.copyTo(target, overwrite = true)
@@ -540,11 +552,14 @@ object MediaDownloader {
         if (target.isFile && target.length() > 0L) return false
         val parent = target.parentFile
         if (parent != null && !parent.exists() && !parent.mkdirs()) return false
+        val sourceSha = MediaContentDigests.cached(source)
+        MediaContentDigests.delete(target)
         val linked = runCatching { Files.createLink(target.toPath(), source.toPath()) }.isSuccess
         if (!linked && runCatching { source.copyTo(target, overwrite = true) }.isFailure) {
             runCatching { target.delete() }
             return false
         }
+        sourceSha?.let { MediaContentDigests.store(target, it) }
         clearNotFound(appContext, toUrl)
         notifyCacheChanged(appContext, toUrl)
         return true
