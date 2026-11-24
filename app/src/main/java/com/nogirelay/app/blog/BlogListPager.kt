@@ -78,6 +78,17 @@ internal fun List<BlogMonthSlot>.slotAt(index: Int): BlogMonthSlot? {
 }
 
 /**
+ * Scroll delta for `scrollBy` / `animateScrollBy` on the top-to-bottom blog list
+ * so the target card's top edge rests cleanly at [desiredTopOffset] below the
+ * status bar. Positive scrolls down the list (moving the card up); negative
+ * scrolls up toward index 0 (moving the card down).
+ */
+internal fun blogUnreadTargetScrollDelta(
+    itemOffset: Int,
+    desiredTopOffset: Int,
+): Float = (itemOffset - desiredTopOffset).toFloat()
+
+/**
  * Infinite blog list backed by offset chunks. Only chunks near the viewport
  * are read; a new query or data change swaps in counts, the month index and
  * the chunks around the anchor in one step.

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
@@ -40,10 +41,16 @@ class RelayAppViewModel(application: Application) : AndroidViewModel(application
     private val _shell = MutableStateFlow(RelayShellState())
     val shell: StateFlow<RelayShellState> = _shell.asStateFlow()
 
-    val unreadMessages: StateFlow<Int> = AppGraph.messageRepository.unreadCount
+    val unreadMessages: StateFlow<Int> = combine(
+        AppGraph.messageRepository.unreadCount,
+        AppGraph.settings.settings.map { it.messageUnreadHintEnabled }.distinctUntilChanged(),
+    ) { count, enabled -> if (enabled) count else 0 }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), 0)
 
-    val unreadBlogs: StateFlow<Int> = AppGraph.blogRepository.unreadCount
+    val unreadBlogs: StateFlow<Int> = combine(
+        AppGraph.blogRepository.unreadCount,
+        AppGraph.settings.settings.map { it.blogUnreadHintEnabled }.distinctUntilChanged(),
+    ) { count, enabled -> if (enabled) count else 0 }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), 0)
 
     val sync: StateFlow<SyncStatus> = AppGraph.sync.status

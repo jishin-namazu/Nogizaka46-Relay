@@ -143,6 +143,29 @@ internal fun timelineListIndex(rows: List<MessageTimelineRow>, messageId: String
     rows.indexOfFirst { it.key == "message:$messageId" }.takeIf { it >= 0 }?.plus(1)
 
 /**
+ * Scroll delta for `scrollBy` / `animateScrollBy` on a `reverseLayout = true`
+ * timeline so that the target item's top edge aligns just below [readingTopEdge]
+ * (with [topMarginPx] breathing room when it fits). Positive scrolls toward
+ * older messages (moving the item downward); negative scrolls toward newer
+ * messages (lifting the item upward toward the top header).
+ */
+internal fun unreadTargetScrollDelta(
+    itemOffset: Int,
+    itemSize: Int,
+    readingTopEdge: Int,
+    topMarginPx: Int = 0,
+): Float {
+    if (readingTopEdge <= 0) return 0f
+    val effectiveTop = if (itemSize + topMarginPx <= readingTopEdge) {
+        readingTopEdge - topMarginPx
+    } else {
+        readingTopEdge
+    }
+    val desiredOffset = effectiveTop - itemSize
+    return (itemOffset - desiredOffset).toFloat()
+}
+
+/**
  * Tiered list time: today shows the clock time, yesterday "昨天", this year
  * MM-dd and earlier years yyyy-MM-dd.
  */

@@ -58,7 +58,9 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nogirelay.app.R
-import com.nogirelay.app.UnreadTag
+import com.nogirelay.app.DEFAULT_MESSAGE_UNREAD_DWELL_MILLIS
+import com.nogirelay.app.DissolvingUnreadTag
+import com.nogirelay.app.UnreadTagState
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.MediaDownloader
@@ -99,6 +101,9 @@ fun MessageCard(
     message: RelayMessage,
     modifier: Modifier = Modifier,
     isUnread: Boolean = false,
+    unreadState: UnreadTagState = if (isUnread) UnreadTagState.UNREAD else UnreadTagState.HIDDEN,
+    unreadDissolveActive: Boolean = true,
+    onUnreadDissolved: () -> Unit = {},
     audioState: VoicePlaybackState?,
     translationEnabled: Boolean,
     userNickname: String,
@@ -221,7 +226,13 @@ fun MessageCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
-            if (isUnread) UnreadTag("未读")
+            DissolvingUnreadTag(
+                text = "未读",
+                state = unreadState,
+                onDissolved = onUnreadDissolved,
+                dissolveActive = unreadDissolveActive,
+                dwellMillis = DEFAULT_MESSAGE_UNREAD_DWELL_MILLIS,
+            )
         }
     }
 }

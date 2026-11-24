@@ -252,6 +252,23 @@ class MessageDao internal constructor(
         null,
     ).readCount()
 
+    fun earliestUnreadMessageIdForMember(
+        memberKey: String,
+        searchQuery: String = "",
+        startMillis: Long? = null,
+        endMillisExclusive: Long? = null,
+        nickname: String = "",
+        cancellationSignal: CancellationSignal? = null,
+    ): String? {
+        val filter = memberFilter(memberKey, searchQuery, startMillis, endMillisExclusive, nickname)
+        return readable.rawQuery(
+            "SELECT id FROM messages WHERE ${filter.selection} AND is_unread = 1 " +
+                "ORDER BY sent_at ASC, received_at ASC, id ASC LIMIT 1",
+            filter.arguments,
+            cancellationSignal,
+        ).use { if (it.moveToFirst()) it.getString(0) else null }
+    }
+
     fun markMessagesReadByIds(ids: Collection<String>): Int {
         if (ids.isEmpty()) return 0
         val values = ContentValues().apply { put("is_unread", 0) }

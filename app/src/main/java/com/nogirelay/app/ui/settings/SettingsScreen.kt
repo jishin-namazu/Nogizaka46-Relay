@@ -254,9 +254,34 @@ private fun SettingsIndex(
                 attentionIsError = syncStatus.failed,
                 onClick = { onOpen(SettingsPage.DATA) },
             )
+            UnreadHintsCard()
             AppearanceCard()
             Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
         }
+    }
+}
+
+/** Switches for showing message and blog unread indicators across the app. */
+@Composable
+private fun UnreadHintsCard() {
+    val settings by AppGraph.settings.settings.collectAsStateWithLifecycle()
+    SettingsCard(title = "未读提示") {
+        SettingsToggleRow(
+            title = "消息未读提示",
+            description = "开启后在导航栏、成员列表与消息流中显示未读数量和「未读」标签，并启用成员消息流点击底部「消息」动态定位最早未读。",
+            checked = settings.messageUnreadHintEnabled,
+            onCheckedChange = {
+                AppGraph.settings.save(AppGraph.settings.read().copy(messageUnreadHintEnabled = it))
+            },
+        )
+        SettingsToggleRow(
+            title = "博客未读提示",
+            description = "开启后在导航栏与博客列表中显示未读数量和「未读」标签，并启用博客列表点击底部「博客」动态定位最早未读。",
+            checked = settings.blogUnreadHintEnabled,
+            onCheckedChange = {
+                AppGraph.settings.save(AppGraph.settings.read().copy(blogUnreadHintEnabled = it))
+            },
+        )
     }
 }
 
@@ -273,13 +298,13 @@ private fun AppearanceCard() {
             onSelected = { AppGraph.settings.saveThemeMode(ThemeMode.entries[it]) },
             modifier = Modifier.fillMaxWidth(),
         )
-        AppearanceToggle(
+        SettingsToggleRow(
             title = "玻璃模糊",
             description = "关闭后卡片改用实色底，更省电，文字也更清晰。省电模式、低内存或设备过热时会自动关闭。",
             checked = blurEnabled,
             onCheckedChange = AppGraph.settings::saveGlassBlurEnabled,
         )
-        AppearanceToggle(
+        SettingsToggleRow(
             title = "减少动效",
             description = "去掉页面过渡、呼吸灯等装饰动画。系统关闭动画或省电模式时会自动减少。",
             checked = reduceMotion,
@@ -289,7 +314,7 @@ private fun AppearanceCard() {
 }
 
 @Composable
-private fun AppearanceToggle(
+private fun SettingsToggleRow(
     title: String,
     description: String,
     checked: Boolean,

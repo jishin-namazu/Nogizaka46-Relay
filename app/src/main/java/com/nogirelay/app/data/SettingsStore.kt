@@ -88,6 +88,8 @@ class SettingsStore(
             translateNewBlogs = prefs.getBoolean(KEY_TRANSLATE_NEW_BLOGS, true),
             messageFullTranslation = prefs.getBoolean(KEY_MESSAGE_FULL_TRANSLATION, false),
             blogFullTranslation = prefs.getBoolean(KEY_BLOG_FULL_TRANSLATION, false),
+            messageUnreadHintEnabled = prefs.getBoolean(KEY_MESSAGE_UNREAD_HINT, true),
+            blogUnreadHintEnabled = prefs.getBoolean(KEY_BLOG_UNREAD_HINT, true),
             userNickname = prefs.getString(KEY_USER_NICKNAME, "").orEmpty(),
             incomingCallStyle = readIncomingCallStyle(),
         )
@@ -109,6 +111,8 @@ class SettingsStore(
             putBoolean(KEY_TRANSLATE_NEW_BLOGS, settings.translateNewBlogs)
             putBoolean(KEY_MESSAGE_FULL_TRANSLATION, settings.messageFullTranslation)
             putBoolean(KEY_BLOG_FULL_TRANSLATION, settings.blogFullTranslation)
+            putBoolean(KEY_MESSAGE_UNREAD_HINT, settings.messageUnreadHintEnabled)
+            putBoolean(KEY_BLOG_UNREAD_HINT, settings.blogUnreadHintEnabled)
             putString(KEY_USER_NICKNAME, settings.userNickname.trim())
             putString(KEY_INCOMING_CALL_STYLE, settings.incomingCallStyle.name)
         }
@@ -254,6 +258,8 @@ class SettingsStore(
         const val KEY_TRANSLATE_NEW_BLOGS = "translate_new_blogs"
         const val KEY_MESSAGE_FULL_TRANSLATION = "message_full_translation"
         const val KEY_BLOG_FULL_TRANSLATION = "blog_full_translation"
+        const val KEY_MESSAGE_UNREAD_HINT = "message_unread_hint_enabled"
+        const val KEY_BLOG_UNREAD_HINT = "blog_unread_hint_enabled"
         const val KEY_USER_NICKNAME = "user_nickname"
         const val KEY_INCOMING_CALL_STYLE = "incoming_call_style"
         const val KEY_THEME_MODE = "theme_mode"

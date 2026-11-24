@@ -6,7 +6,9 @@ internal class MemberMessageEntry(
     val memberKey: String,
     playbackState: VoicePlaybackState,
     val notificationMessageId: String? = null,
+    val unreadTargetMessageId: String? = null,
 ) {
-    val targetMessageId: String? = notificationMessageId
+    val targetMessageId: String? = unreadTargetMessageId
+        ?: notificationMessageId
         ?: playbackState.messageId.takeIf { playbackState.isPlaying }
 }

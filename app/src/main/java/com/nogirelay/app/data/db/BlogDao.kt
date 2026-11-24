@@ -8,6 +8,7 @@ import com.nogirelay.app.data.BlogImportMerge
 import com.nogirelay.app.data.BlogPost
 import com.nogirelay.app.data.BlogSearchSource
 import com.nogirelay.app.data.BlogSummary
+import com.nogirelay.app.data.BlogUnreadLocation
 import com.nogirelay.app.data.DataChange
 import com.nogirelay.app.data.DataInvalidationTracker
 import com.nogirelay.app.data.MessageDatabase
@@ -310,6 +311,35 @@ class BlogDao internal constructor(
 
     fun countUnreadBlogs(): Int =
         readable.query("blog_posts", arrayOf("COUNT(*)"), "is_unread = 1", null, null, null, null).readCount()
+
+    fun earliestUnreadBlogLocation(
+        memberIds: Set<String>? = null,
+        searchQuery: String = "",
+        oldestFirst: Boolean = false,
+        startMillis: Long? = null,
+        endMillisExclusive: Long? = null,
+        cancellationSignal: CancellationSignal? = null,
+    ): BlogUnreadLocation? {
+        val filter = blogFilter(memberIds, searchQuery, startMillis, endMillisExclusive)
+        val earliest = readable.rawQuery(
+            "SELECT id, published_at FROM blog_posts WHERE ${filter.selection} AND is_unread = 1 " +
+                "ORDER BY published_at ASC, id ASC LIMIT 1",
+            filter.arguments,
+            cancellationSignal,
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) to cursor.getString(1) else null
+        } ?: return null
+
+        val (blogId, publishedAt) = earliest
+        val comparator = if (oldestFirst) "<" else ">"
+        val index = readable.rawQuery(
+            "SELECT COUNT(*) FROM blog_posts WHERE ${filter.selection} AND " +
+                "(published_at $comparator ? OR (published_at = ? AND id $comparator ?))",
+            filter.arguments + arrayOf(publishedAt, publishedAt, blogId),
+            cancellationSignal,
+        ).readCount()
+        return BlogUnreadLocation(id = blogId, index = index)
+    }
 
     fun markBlogRead(id: String): Int {
         val values = ContentValues().apply { put("is_unread", 0) }

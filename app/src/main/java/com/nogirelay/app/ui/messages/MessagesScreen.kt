@@ -27,9 +27,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -101,7 +103,11 @@ fun MessagesScreen(
 
     val threads = uiState.threads
     val translationEnabled = uiState.translationEnabled
+    val unreadHintEnabled = uiState.unreadHintEnabled
+    val currentUnreadHintEnabled by rememberUpdatedState(unreadHintEnabled)
     val userNickname = uiState.userNickname
+    var locateUnreadRequest by remember { mutableStateOf<Pair<MemberMessageEntry, Long>?>(null) }
+    var nextLocateToken by remember { mutableLongStateOf(0L) }
     val playbackFlow = remember(workActive) {
         if (workActive) VoicePlaybackService.playbackState else flowOf(VoicePlaybackService.playbackState.value)
     }
@@ -127,10 +133,19 @@ fun MessagesScreen(
         viewModel.openMember(memberKey, notificationMessageId)
     }
 
-    // Tapping the Messages tab again backs out of a conversation, then scrolls up.
+    // Tapping Messages inside a member timeline dynamically locates its earliest
+    // unread message; once everything is read (or unread hints are off), it backs
+    // out to the inbox, and tapping again scrolls the inbox to top.
     LaunchedEffect(reselected) {
         reselected.collect {
-            if (viewModel.openEntry.value != null) viewModel.close() else inboxListState.animateScrollToItem(0)
+            val open = viewModel.openEntry.value
+            if (open == null) {
+                inboxListState.animateScrollToItem(0)
+            } else if (currentUnreadHintEnabled) {
+                locateUnreadRequest = open to (++nextLocateToken)
+            } else {
+                viewModel.close(open)
+            }
         }
     }
 
@@ -305,9 +320,19 @@ fun MessagesScreen(
                                     messageChanges = messageChanges,
                                     playbackState = playbackState,
                                     translationEnabled = translationEnabled,
+                                    unreadHintEnabled = unreadHintEnabled,
                                     userNickname = userNickname,
+                                    locateUnreadToken = locateUnreadRequest?.takeIf { it.first === entry }?.second ?: 0L,
                                     backdropState = sheetBackdrop,
                                     onBack = {
+                                        if (selectedEntry === entry) {
+                                            if (initialMessageId != null && initialMessageId == entry.notificationMessageId) {
+                                                onInitialMessageHandled(initialMessageId)
+                                            }
+                                            viewModel.close(entry)
+                                        }
+                                    },
+                                    onNoUnreadToLocate = {
                                         if (selectedEntry === entry) {
                                             if (initialMessageId != null && initialMessageId == entry.notificationMessageId) {
                                                 onInitialMessageHandled(initialMessageId)

@@ -33,6 +33,11 @@ data class BlogSearchSource(
     val translation: String?,
 )
 
+data class BlogUnreadLocation(
+    val id: String,
+    val index: Int,
+)
+
 data class BlogMember(
     val id: String,
     val name: String,

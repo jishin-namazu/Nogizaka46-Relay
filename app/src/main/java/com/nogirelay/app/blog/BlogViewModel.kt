@@ -37,8 +37,15 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
     var timeFilter by mutableStateOf(TimeFilter())
         private set
 
-    /** List index to reveal once the list shows again (notification deep links). */
+    /** List index to reveal once the list shows again (notification deep links or unread jump). */
     var pendingScrollIndex by mutableStateOf<Int?>(null)
+
+    /** When set alongside [pendingScrollIndex], aligns this blog card cleanly below the status bar. */
+    var pendingScrollBlogId by mutableStateOf<String?>(null)
+
+    /** Blogs marked read in this session whose "未读" tag should dissolve upon returning to the list. */
+    var recentlyReadBlogIds by mutableStateOf<Set<String>>(emptySet())
+        private set
 
     internal val pager = BlogListPager(application, viewModelScope, BlogPrewarmer.cachedSnapshot)
 
@@ -48,6 +55,10 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
     val translationEnabled: StateFlow<Boolean> = AppGraph.settings.settings
         .map { it.translationEnabled }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppGraph.settings.settings.value.translationEnabled)
+
+    val unreadHintEnabled: StateFlow<Boolean> = AppGraph.settings.settings
+        .map { it.blogUnreadHintEnabled }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AppGraph.settings.settings.value.blogUnreadHintEnabled)
 
     /** Advances whenever the stored list may differ; the screen reloads the visible window. */
     val listRevision: StateFlow<Long> = AppGraph.blogRepository.listRevision
@@ -71,10 +82,32 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
         selectedBlogId = id
         // The list state keeps the exact item and pixel offset.
         pendingScrollIndex = null
+        pendingScrollBlogId = null
+    }
+
+    fun resetFiltersForUnreadLocate(index: Int, blogId: String) {
+        searchQuery = ""
+        selectedMemberIds = null
+        oldestFirst = false
+        timeFilter = TimeFilter()
+        pendingScrollIndex = index
+        pendingScrollBlogId = blogId
     }
 
     fun closeBlog() {
         selectedBlogId = null
+    }
+
+    fun markRecentlyRead(id: String) {
+        recentlyReadBlogIds = recentlyReadBlogIds + id
+    }
+
+    fun consumeRecentlyRead(id: String) {
+        recentlyReadBlogIds = recentlyReadBlogIds - id
+    }
+
+    fun clearRecentlyRead() {
+        recentlyReadBlogIds = emptySet()
     }
 
     fun applyFilter(memberIds: Set<String>, filter: TimeFilter, oldest: Boolean) {

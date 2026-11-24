@@ -30,6 +30,7 @@ data class MessagesUiState(
     val loading: Boolean = true,
     val threads: List<MemberThread> = emptyList(),
     val translationEnabled: Boolean = false,
+    val unreadHintEnabled: Boolean = true,
     val userNickname: String = "",
     /** Whether a sync server is set up; the empty inbox points to setup when not. */
     val relayConfigured: Boolean = true,
@@ -51,8 +52,11 @@ class MessagesViewModel : ViewModel() {
     val uiState: StateFlow<MessagesUiState> = combine(threads, AppGraph.settings.settings) { threads, settings ->
         MessagesUiState(
             loading = false,
-            threads = threads.sortedByDescending { it.latest.sentAt },
+            threads = threads
+                .sortedByDescending { it.latest.sentAt }
+                .map { if (settings.messageUnreadHintEnabled) it else it.copy(unreadCount = 0) },
             translationEnabled = settings.translationEnabled,
+            unreadHintEnabled = settings.messageUnreadHintEnabled,
             userNickname = settings.userNickname,
             relayConfigured = settings.relayUrl.isNotBlank() || com.nogirelay.app.data.api.ApiConfig.BASE_URL.isNotBlank(),
         )

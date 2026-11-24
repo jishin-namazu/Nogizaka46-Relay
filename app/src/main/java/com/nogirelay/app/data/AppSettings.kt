@@ -27,6 +27,8 @@ data class AppSettings(
     val translateNewBlogs: Boolean = true,
     val messageFullTranslation: Boolean = false,
     val blogFullTranslation: Boolean = false,
+    val messageUnreadHintEnabled: Boolean = true,
+    val blogUnreadHintEnabled: Boolean = true,
     val userNickname: String = "",
     val incomingCallStyle: IncomingCallStyle = IncomingCallStyle.CLASSIC,
 ) {

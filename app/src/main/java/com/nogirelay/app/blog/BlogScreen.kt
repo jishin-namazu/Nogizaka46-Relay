@@ -16,6 +16,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,8 +65,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,7 +90,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.nogirelay.app.BLOG_UNREAD_DISSOLVE_CLEANUP_MILLIS
 import com.nogirelay.app.NameWithUnreadTag
+import com.nogirelay.app.UnreadTagState
+import com.nogirelay.app.resolveUnreadTagState
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.BlogMember
 import com.nogirelay.app.data.BlogPost
@@ -121,6 +128,7 @@ import com.nogirelay.app.ui.glass.GlassSearchField
 import com.nogirelay.app.ui.glass.GlassSegmentedTabs
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassTone
+import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
 import com.nogirelay.app.ui.glass.glassMediaSource
 import com.nogirelay.app.translation.BlogTranslationLayout
 import com.nogirelay.app.translation.BlogTranslationManager
@@ -130,7 +138,10 @@ import com.nogirelay.app.ui.transfer.memberGroups
 import com.nogirelay.app.ui.transfer.preloadMemberAvatars
 import com.nogirelay.app.ui.primeCachedImageAspectRatios
 import com.nogirelay.app.ui.withoutTextPresentationSelector
+import kotlin.math.abs
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.withContext
@@ -141,6 +152,7 @@ import kotlinx.coroutines.flow.emptyFlow
 
 /** Header and search rows above the first post. */
 private const val BLOG_HEADER_ITEMS = 2
+private const val BLOG_UNREAD_ANIMATE_MAX_DISTANCE = 25
 
 /**
  * Blog list + detail, rebuilt as liquid glass. All data behavior is
@@ -165,8 +177,59 @@ fun BlogScreen(
     val blogListState = rememberLazyListState()
     val pager = viewModel.pager
     val translationEnabled by viewModel.translationEnabled.collectAsStateWithLifecycle()
+    val unreadHintEnabled by viewModel.unreadHintEnabled.collectAsStateWithLifecycle()
     val members by viewModel.members.collectAsStateWithLifecycle()
     val listRevision by viewModel.listRevision.collectAsStateWithLifecycle()
+    val density = LocalDensity.current
+    val statusBarTopPx = WindowInsets.statusBars.getTop(density)
+    val currentStatusBarTopPx by rememberUpdatedState(statusBarTopPx)
+    val currentUnreadHintEnabled by rememberUpdatedState(unreadHintEnabled)
+    val reducedMotion = LocalGlassReducedMotion.current
+    val currentReducedMotion by rememberUpdatedState(reducedMotion)
+
+    suspend fun alignBlogToReadingTop(blogId: String, targetListIndex: Int, animate: Boolean) {
+        val desiredTop = currentStatusBarTopPx + with(density) { 12.dp.roundToPx() }
+        val targetKey = "${pager.snapshot.generation}:$blogId"
+        val alreadyVisible = blogListState.layoutInfo.visibleItemsInfo.any { it.key == targetKey }
+        if (!alreadyVisible) {
+            if (animate) {
+                blogListState.animateScrollToItem(targetListIndex, 0)
+            } else {
+                blogListState.scrollToItem(targetListIndex, 0)
+            }
+            withFrameNanos { }
+        }
+        repeat(3) { pass ->
+            val currentKey = "${pager.snapshot.generation}:$blogId"
+            val item = blogListState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == currentKey }
+                ?: return@repeat
+            val delta = blogUnreadTargetScrollDelta(item.offset, desiredTop)
+            if (abs(delta) <= 4f) return@repeat
+            val consumed = if (pass == 0 && animate) {
+                blogListState.animateScrollBy(delta)
+            } else {
+                blogListState.scrollBy(delta)
+            }
+            withFrameNanos { }
+            if (abs(consumed) < 1f) return@repeat
+        }
+    }
+
+    LaunchedEffect(unreadHintEnabled) {
+        if (!unreadHintEnabled) {
+            viewModel.clearRecentlyRead()
+            if (viewModel.pendingScrollBlogId != null) {
+                viewModel.pendingScrollIndex = null
+                viewModel.pendingScrollBlogId = null
+            }
+        }
+    }
+    LaunchedEffect(listActive, viewModel.recentlyReadBlogIds) {
+        val pending = viewModel.recentlyReadBlogIds
+        if (!listActive || pending.isEmpty()) return@LaunchedEffect
+        delay(BLOG_UNREAD_DISSOLVE_CLEANUP_MILLIS)
+        pending.forEach(viewModel::consumeRecentlyRead)
+    }
 
     LaunchedEffect(initialBlogId, workActive) {
         if (!workActive) return@LaunchedEffect
@@ -182,12 +245,6 @@ fun BlogScreen(
         textToolbar.hide()
         if (selected != null) viewModel.closeBlog() else viewModel.searchQuery = ""
     }
-    // Tapping the Blog tab again closes the article, then scrolls to the top.
-    LaunchedEffect(reselected) {
-        reselected.collect {
-            if (viewModel.selectedBlogId != null) viewModel.closeBlog() else blogListState.animateScrollToItem(0)
-        }
-    }
     LaunchedEffect(members) { viewModel.pruneMemberSelection(members) }
 
     // Infinite list: counts, a month index and chunks near the viewport.
@@ -198,11 +255,69 @@ fun BlogScreen(
         viewModel.timeFilter,
         translationEnabled,
     )
+    val currentListQuery by rememberUpdatedState(listQuery)
+    // Tapping the Blog tab closes the article; on the list it dynamically locates
+    // the earliest unread blog when unread hints are enabled, or scrolls to top.
+    LaunchedEffect(reselected) {
+        reselected.collectLatest {
+            if (viewModel.selectedBlogId != null) {
+                viewModel.closeBlog()
+                return@collectLatest
+            }
+            if (!currentUnreadHintEnabled) {
+                blogListState.animateScrollToItem(0)
+                return@collectLatest
+            }
+            val query = currentListQuery
+            val inCurrentView = withContext(AppGraph.dispatchers.databaseRead) {
+                AppGraph.blogs.earliestUnreadBlogLocation(
+                    memberIds = query.memberIds,
+                    searchQuery = query.searchQuery,
+                    oldestFirst = query.oldestFirst,
+                    startMillis = query.timeFilter.startMillis,
+                    endMillisExclusive = query.timeFilter.endMillisExclusive,
+                )
+            }
+            if (inCurrentView != null) {
+                focusManager.clearFocus()
+                textToolbar.hide()
+                val loadedMatch = pager.snapshot.query == query &&
+                    pager.snapshot.item(inCurrentView.index)?.id == inCurrentView.id
+                if (!loadedMatch) {
+                    pager.load(
+                        query = query,
+                        anchorIndex = inCurrentView.index,
+                        radius = 1,
+                        changes = viewModel.rowChanges.value,
+                    )
+                    withFrameNanos { }
+                }
+                val targetListIndex = BLOG_HEADER_ITEMS + inCurrentView.index
+                val shouldAnimate = loadedMatch && !currentReducedMotion &&
+                    abs(targetListIndex - blogListState.firstVisibleItemIndex) <= BLOG_UNREAD_ANIMATE_MAX_DISTANCE
+                alignBlogToReadingTop(inCurrentView.id, targetListIndex, animate = shouldAnimate)
+                return@collectLatest
+            }
+            if (!query.isDefault) {
+                val globalUnread = withContext(AppGraph.dispatchers.databaseRead) {
+                    AppGraph.blogs.earliestUnreadBlogLocation()
+                }
+                if (globalUnread != null) {
+                    focusManager.clearFocus()
+                    textToolbar.hide()
+                    viewModel.resetFiltersForUnreadLocate(globalUnread.index, globalUnread.id)
+                    return@collectLatest
+                }
+            }
+            blogListState.animateScrollToItem(0)
+        }
+    }
     LaunchedEffect(listRevision, listActive, listQuery) {
         if (!listActive) return@LaunchedEffect
         val previousQuery = pager.snapshot.query
         val sameQuery = previousQuery == listQuery
         val pending = viewModel.pendingScrollIndex
+        val pendingBlogId = viewModel.pendingScrollBlogId
         val anchor = when {
             pending != null -> pending
             // A data refresh keeps the rows around the current position.
@@ -214,8 +329,15 @@ fun BlogScreen(
         pager.load(listQuery, anchor, radius = if (sameQuery) 3 else 1, changes = viewModel.rowChanges.value)
         when {
             pending != null -> {
-                blogListState.requestScrollToItem(BLOG_HEADER_ITEMS + pending)
+                val targetListIndex = BLOG_HEADER_ITEMS + pending
                 viewModel.pendingScrollIndex = null
+                viewModel.pendingScrollBlogId = null
+                if (pendingBlogId != null && currentUnreadHintEnabled) {
+                    withFrameNanos { }
+                    alignBlogToReadingTop(pendingBlogId, targetListIndex, animate = false)
+                } else {
+                    blogListState.requestScrollToItem(targetListIndex)
+                }
             }
             // A new query keeps the search controls in place when they are
             // on screen; from further down the list it returns to the top.
@@ -301,6 +423,7 @@ fun BlogScreen(
                         blogId = selectedId,
                         isActive = workActive && selectedId == selected,
                         onBack = viewModel::closeBlog,
+                        onMarkedRead = { if (unreadHintEnabled) viewModel.markRecentlyRead(it) },
                         onRetranslate = viewModel::retranslate,
                     )
                     LaunchedEffect(selectedId, initialBlogId) {
@@ -414,6 +537,13 @@ fun BlogScreen(
                                         searchQuery = snapshot.query?.searchQuery.orEmpty(),
                                         bodyPreviews = snapshot.previews[blog.id].orEmpty(),
                                         translationEnabled = translationEnabled,
+                                        unreadState = resolveUnreadTagState(
+                                            hintEnabled = unreadHintEnabled,
+                                            isUnread = blog.isUnread,
+                                            isDissolving = blog.id in viewModel.recentlyReadBlogIds,
+                                        ),
+                                        unreadDissolveActive = listActive,
+                                        onUnreadDissolved = { viewModel.consumeRecentlyRead(blog.id) },
                                         onClick = { viewModel.openBlog(blog.id) },
                                         onDownload = {
                                             context.startActivity(BlogImageDownloadActivity.intent(context, blog.id))
@@ -666,6 +796,9 @@ private fun BlogSummaryCard(
     searchQuery: String,
     bodyPreviews: List<BlogSearchPreview>,
     translationEnabled: Boolean,
+    unreadState: UnreadTagState,
+    unreadDissolveActive: Boolean,
+    onUnreadDissolved: () -> Unit,
     onClick: () -> Unit,
     onDownload: () -> Unit,
     onRetranslate: () -> Unit,
@@ -701,7 +834,10 @@ private fun BlogSummaryCard(
                 Column(Modifier.weight(1f)) {
                     NameWithUnreadTag(
                         name = highlightMatches(blog.memberName, searchQuery, highlightBackground, highlightText),
-                        isUnread = blog.isUnread,
+                        isUnread = unreadState != UnreadTagState.HIDDEN,
+                        unreadState = unreadState,
+                        dissolveActive = unreadDissolveActive,
+                        onUnreadDissolved = onUnreadDissolved,
                         style = GlassType.Headline.copy(fontWeight = FontWeight.Bold, color = GlassColors.Ink),
                         searchQuery = searchQuery,
                         highlightBackground = highlightBackground,
@@ -884,6 +1020,7 @@ private fun BlogDetail(
     blogId: String,
     isActive: Boolean = true,
     onBack: () -> Unit,
+    onMarkedRead: (String) -> Unit,
     onRetranslate: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -932,9 +1069,10 @@ private fun BlogDetail(
     LaunchedEffect(blogId, isActive) {
         if (!isActive) return@LaunchedEffect
 
-        withContext(NonCancellable + AppGraph.dispatchers.databaseWrite) {
-            AppGraph.blogs.markBlogRead(blogId)
+        val markedRead = withContext(NonCancellable + AppGraph.dispatchers.databaseWrite) {
+            AppGraph.blogs.markBlogRead(blogId) > 0
         }
+        if (markedRead) onMarkedRead(blogId)
         BlogNotifier.cancel(context, blogId)
     }
     LaunchedEffect(detailState?.blog?.bodyHtml, detailState?.blog?.translationDone, isActive) {

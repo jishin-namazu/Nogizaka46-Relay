@@ -16,6 +16,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -82,6 +84,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,7 +101,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.nogirelay.app.MESSAGE_UNREAD_DISSOLVE_CLEANUP_MILLIS
 import com.nogirelay.app.call.IncomingCallNotifier
+import com.nogirelay.app.resolveUnreadTagState
 import com.nogirelay.app.data.AppGraph
 import com.nogirelay.app.data.repository.MessageChanges
 import com.nogirelay.app.data.MessageType
@@ -131,6 +136,7 @@ import com.nogirelay.app.ui.glass.LocalGlassHazeState
 import com.nogirelay.app.ui.glass.progressiveGlassHeader
 import com.nogirelay.app.ui.glass.rememberGlassHazeState
 import com.nogirelay.app.ui.glass.glassMediaSource
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +145,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -166,9 +173,12 @@ internal fun MemberTimelineScreen(
     messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
+    unreadHintEnabled: Boolean = true,
     userNickname: String,
+    locateUnreadToken: Long = 0L,
     backdropState: RelaySheetBackdropState,
     onBack: () -> Unit,
+    onNoUnreadToLocate: () -> Unit = onBack,
     onInitialMessageHandled: (String) -> Unit,
     onViewingLatest: (Boolean) -> Unit,
     onOpenMedia: (RelayMessage, String) -> Unit,
@@ -187,9 +197,42 @@ internal fun MemberTimelineScreen(
     var timeFilter by remember(entry) { mutableStateOf(TimeFilter()) }
     var showFilter by remember(entry) { mutableStateOf(false) }
     var initialTargetConsumed by remember(timelineEntry) { mutableStateOf(false) }
-    var sessionUnreadIds by remember(entry) { mutableStateOf(emptySet<String>()) }
+    var dissolvingUnreadIds by remember(entry) { mutableStateOf(emptySet<String>()) }
+    var contentLocateToken by remember(entry) { mutableLongStateOf(0L) }
+    val latestOnNoUnreadToLocate by rememberUpdatedState(onNoUnreadToLocate)
     val focusManager = LocalFocusManager.current
     val textToolbar = LocalTextToolbar.current
+
+    LaunchedEffect(unreadHintEnabled) {
+        if (!unreadHintEnabled) dissolvingUnreadIds = emptySet()
+    }
+
+    LaunchedEffect(locateUnreadToken) {
+        if (locateUnreadToken == 0L || !active || !unreadHintEnabled) return@LaunchedEffect
+        focusManager.clearFocus()
+        textToolbar.hide()
+        showFilter = false
+        if (auxiliaryScreen != null || query.isNotBlank() || timeFilter.isActive) {
+            val earliestId = withContext(AppGraph.dispatchers.databaseRead) {
+                AppGraph.messages.earliestUnreadMessageIdForMember(entry.memberKey)
+            }
+            if (earliestId == null) {
+                latestOnNoUnreadToLocate()
+                return@LaunchedEffect
+            }
+            timelineEntry = MemberMessageEntry(
+                memberKey = entry.memberKey,
+                playbackState = VoicePlaybackService.playbackState.value,
+                unreadTargetMessageId = earliestId,
+            )
+            query = ""
+            searchOpen = false
+            timeFilter = TimeFilter()
+            auxiliaryScreen = null
+        } else {
+            contentLocateToken = locateUnreadToken
+        }
+    }
 
     fun toggleFavorite(message: RelayMessage) {
         screenScope.launch {
@@ -282,6 +325,7 @@ internal fun MemberTimelineScreen(
                     messageChanges = messageChanges,
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
+                    unreadHintEnabled = unreadHintEnabled,
                     userNickname = userNickname,
                     onBack = ::returnToTimeline,
                     onOpenMedia = openScopedMedia,
@@ -325,13 +369,16 @@ internal fun MemberTimelineScreen(
                             initialTargetId = timelineEntry.targetMessageId.takeIf {
                                 !initialTargetConsumed && effectiveQuery.isBlank() && !timeFilter.isActive
                             },
+                            alignInitialTargetToTop = timelineEntry.unreadTargetMessageId != null,
+                            locateUnreadToken = contentLocateToken,
                             active = workActive && auxiliaryScreen == null,
                             transitionSettled = transitionSettled,
                             messageChanges = messageChanges,
                             playbackState = playbackState,
                             translationEnabled = translationEnabled,
+                            unreadHintEnabled = unreadHintEnabled,
                             userNickname = userNickname,
-                            sessionUnreadIds = sessionUnreadIds,
+                            dissolvingUnreadIds = dissolvingUnreadIds,
                             onInitialLoaded = {
                                 onContentReady()
                                 if (!initialTargetConsumed) {
@@ -339,8 +386,18 @@ internal fun MemberTimelineScreen(
                                     timelineEntry.notificationMessageId?.let(onInitialMessageHandled)
                                 }
                             },
+                            onNoUnreadToLocate = latestOnNoUnreadToLocate,
                             onViewingLatest = { onViewingLatest(it && query.isBlank() && !timeFilter.isActive) },
-                            onRead = { sessionUnreadIds = sessionUnreadIds + it },
+                            onRead = { ids ->
+                                if (unreadHintEnabled) {
+                                    dissolvingUnreadIds = dissolvingUnreadIds + ids
+                                    screenScope.launch {
+                                        delay(MESSAGE_UNREAD_DISSOLVE_CLEANUP_MILLIS)
+                                        dissolvingUnreadIds = dissolvingUnreadIds - ids
+                                    }
+                                }
+                            },
+                            onUnreadDissolved = { id -> dissolvingUnreadIds = dissolvingUnreadIds - id },
                             onOpenMedia = openScopedMedia,
                             onPlayVoice = onPlayVoice,
                             onDownload = onDownload,
@@ -590,6 +647,7 @@ private fun MemberTimelineAuxiliaryScreen(
     messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
+    unreadHintEnabled: Boolean = true,
     userNickname: String,
     onBack: () -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
@@ -727,6 +785,7 @@ private fun MemberTimelineAuxiliaryScreen(
                     onLoadMore = ::more,
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
+                    unreadHintEnabled = unreadHintEnabled,
                     userNickname = userNickname,
                     onOpenMedia = onOpenMedia,
                     onPlayVoice = onPlayVoice,
@@ -744,6 +803,7 @@ private fun MemberTimelineAuxiliaryScreen(
                     onLoadMore = ::more,
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
+                    unreadHintEnabled = unreadHintEnabled,
                     userNickname = userNickname,
                     onOpenMedia = onOpenMedia,
                     onPlayVoice = onPlayVoice,
@@ -799,6 +859,7 @@ private fun AuxiliaryMessageList(
     onLoadMore: () -> Unit,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
+    unreadHintEnabled: Boolean = true,
     userNickname: String,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
@@ -821,6 +882,7 @@ private fun AuxiliaryMessageList(
                         searchQuery = searchQuery,
                         playbackState = playbackState,
                         translationEnabled = translationEnabled,
+                        unreadHintEnabled = unreadHintEnabled,
                         userNickname = userNickname,
                         onOpenMedia = onOpenMedia,
                         onPlayVoice = onPlayVoice,
@@ -839,6 +901,7 @@ private fun AuxiliaryMessageList(
                     searchQuery = searchQuery,
                     playbackState = playbackState,
                     translationEnabled = translationEnabled,
+                    unreadHintEnabled = unreadHintEnabled,
                     userNickname = userNickname,
                     onOpenMedia = onOpenMedia,
                     onPlayVoice = onPlayVoice,
@@ -862,6 +925,7 @@ private fun AuxiliaryMessageCard(
     searchQuery: String,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
+    unreadHintEnabled: Boolean = true,
     userNickname: String,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
@@ -872,7 +936,7 @@ private fun AuxiliaryMessageCard(
     MessageCard(
         message = message,
         modifier = Modifier.fillMaxWidth(),
-        isUnread = message.isUnread,
+        isUnread = unreadHintEnabled && message.isUnread,
         audioState = playbackState.takeIf { it.messageId == message.id },
         translationEnabled = translationEnabled,
         userNickname = userNickname,
@@ -1176,22 +1240,30 @@ private fun MemberTimelineIdentity(name: String, avatarUrl: String?) {
 
 private enum class TimelineEdge { NEWER, OLDER }
 
+private const val UNREAD_NEWER_CONTEXT_MIN = 6
+private const val UNREAD_ANIMATE_MAX_DISTANCE = 30
+
 @Composable
 private fun MemberTimelineContent(
     memberKey: String,
     query: String,
     filter: TimeFilter,
     initialTargetId: String?,
+    alignInitialTargetToTop: Boolean,
+    locateUnreadToken: Long,
     active: Boolean,
     transitionSettled: Boolean,
     messageChanges: MessageChanges,
     playbackState: VoicePlaybackState,
     translationEnabled: Boolean,
+    unreadHintEnabled: Boolean = true,
     userNickname: String,
-    sessionUnreadIds: Set<String>,
+    dissolvingUnreadIds: Set<String>,
     onInitialLoaded: () -> Unit,
+    onNoUnreadToLocate: () -> Unit,
     onViewingLatest: (Boolean) -> Unit,
     onRead: (Set<String>) -> Unit,
+    onUnreadDissolved: (String) -> Unit,
     onOpenMedia: (RelayMessage) -> Unit,
     onPlayVoice: (RelayMessage) -> Unit,
     onDownload: (RelayMessage) -> Unit,
@@ -1247,14 +1319,46 @@ private fun MemberTimelineContent(
     var loadingEdge by remember { mutableStateOf<TimelineEdge?>(null) }
     var loadError by remember { mutableStateOf(false) }
     var retryKey by remember { mutableIntStateOf(0) }
+    var locatingUnread by remember { mutableStateOf(false) }
     val currentActive by rememberUpdatedState(active)
+    val currentUnreadHintEnabled by rememberUpdatedState(unreadHintEnabled)
     val latestInitialLoaded by rememberUpdatedState(onInitialLoaded)
+    val latestOnNoUnreadToLocate by rememberUpdatedState(onNoUnreadToLocate)
+    val reducedMotion = LocalGlassReducedMotion.current
     val rows by remember { derivedStateOf { messageTimelineRows(window.messages) } }
     val context = LocalContext.current
     val atLatest by remember {
         derivedStateOf {
             initialized && !window.hasNewer && listState.firstVisibleItemIndex <= 1 &&
                 listState.firstVisibleItemScrollOffset == 0
+        }
+    }
+
+    suspend fun alignTargetToReadingTop(targetId: String, targetListIndex: Int, animate: Boolean) {
+        val targetKey = "message:$targetId"
+        val topMarginPx = with(density) { 8.dp.roundToPx() }
+        val alreadyVisible = listState.layoutInfo.visibleItemsInfo.any { it.key == targetKey }
+        if (!alreadyVisible) {
+            if (animate) {
+                listState.animateScrollToItem(targetListIndex, 0)
+            } else {
+                listState.scrollToItem(targetListIndex, 0)
+            }
+            withFrameNanos { }
+        }
+        repeat(3) { pass ->
+            val layout = listState.layoutInfo
+            val item = layout.visibleItemsInfo.firstOrNull { it.key == targetKey } ?: return@repeat
+            val readingTopEdge = layout.viewportEndOffset - layout.afterContentPadding
+            val delta = unreadTargetScrollDelta(item.offset, item.size, readingTopEdge, topMarginPx)
+            if (abs(delta) <= 4f) return@repeat
+            val consumed = if (pass == 0 && animate) {
+                listState.animateScrollBy(delta)
+            } else {
+                listState.scrollBy(delta)
+            }
+            withFrameNanos { }
+            if (abs(consumed) < 1f) return@repeat
         }
     }
 
@@ -1292,7 +1396,17 @@ private fun MemberTimelineContent(
                 loadError = false
                 if (firstLoad) {
                     val target = initialTargetId?.let { timelineListIndex(messageTimelineRows(loaded.messages), it) }
-                    listState.requestScrollToItem(target ?: 0)
+                    if (alignInitialTargetToTop && initialTargetId != null && target != null) {
+                        locatingUnread = true
+                        try {
+                            withFrameNanos { }
+                            alignTargetToReadingTop(initialTargetId, target, animate = false)
+                        } finally {
+                            locatingUnread = false
+                        }
+                    } else {
+                        listState.requestScrollToItem(target ?: 0)
+                    }
                     latestInitialLoaded()
                 } else if (keepFollowing && previous.messages.firstOrNull()?.id != loaded.messages.firstOrNull()?.id) {
                     listState.requestScrollToItem(0)
@@ -1304,6 +1418,52 @@ private fun MemberTimelineContent(
             } finally {
                 busy = false
             }
+        }
+    }
+
+    LaunchedEffect(locateUnreadToken) {
+        if (locateUnreadToken == 0L || !currentActive || !currentUnreadHintEnabled) return@LaunchedEffect
+        locatingUnread = true
+        try {
+            mutex.withLock {
+                if (!currentActive) return@withLock
+                val targetId = readDatabase { cancellation ->
+                    AppGraph.messages.earliestUnreadMessageIdForMember(
+                        memberKey, query, filter.startMillis, filter.endMillisExclusive, userNickname, cancellation,
+                    )
+                }
+                if (targetId == null) {
+                    if (currentActive) latestOnNoUnreadToLocate()
+                    return@withLock
+                }
+                val existingIndex = window.messages.indexOfFirst { it.id == targetId }
+                val needsReload = !initialized ||
+                    existingIndex < 0 ||
+                    (window.hasNewer && existingIndex < UNREAD_NEWER_CONTEXT_MIN)
+                val targetRows = if (needsReload) {
+                    val loaded = readDatabase { cancellation -> loader(cancellation).initial(targetId) }
+                    primeCachedMessageAspectRatios(context, loaded.messages)
+                    if (!currentActive) return@withLock
+                    window = loaded
+                    loadedVersion = messageChanges.version
+                    initialized = true
+                    loadError = false
+                    withFrameNanos { }
+                    messageTimelineRows(loaded.messages)
+                } else {
+                    messageTimelineRows(window.messages)
+                }
+                val targetListIndex = timelineListIndex(targetRows, targetId) ?: return@withLock
+                val shouldAnimate = !needsReload && !reducedMotion &&
+                    abs(targetListIndex - listState.firstVisibleItemIndex) <= UNREAD_ANIMATE_MAX_DISTANCE
+                alignTargetToReadingTop(targetId, targetListIndex, animate = shouldAnimate)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Keep current scroll position if interrupted.
+        } finally {
+            locatingUnread = false
         }
     }
     LaunchedEffect(atLatest, active) { onViewingLatest(active && atLatest) }
@@ -1357,8 +1517,8 @@ private fun MemberTimelineContent(
             window.messages.filter { it.isUnread && "message:${it.id}" in visibleKeys }.map { it.id }.toSet()
         }
     }
-    LaunchedEffect(visibleUnreadIds, active, transitionSettled) {
-        if (!active || !transitionSettled || visibleUnreadIds.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(visibleUnreadIds, active, transitionSettled, locatingUnread) {
+        if (!active || !transitionSettled || locatingUnread || visibleUnreadIds.isEmpty()) return@LaunchedEffect
         val ids = visibleUnreadIds
         // Once a visible batch is marked, deliver its badge update even if navigation closes it.
         withContext(NonCancellable) {
@@ -1397,7 +1557,13 @@ private fun MemberTimelineContent(
                             placementSpec = null,
                             fadeOutSpec = tween(120),
                         ),
-                        isUnread = row.message.isUnread || row.message.id in sessionUnreadIds,
+                        unreadState = resolveUnreadTagState(
+                            hintEnabled = unreadHintEnabled,
+                            isUnread = row.message.isUnread,
+                            isDissolving = row.message.id in dissolvingUnreadIds,
+                        ),
+                        unreadDissolveActive = active && transitionSettled && !locatingUnread,
+                        onUnreadDissolved = { onUnreadDissolved(row.message.id) },
                         audioState = playbackState.takeIf { it.messageId == row.message.id },
                         translationEnabled = translationEnabled,
                         userNickname = userNickname,
