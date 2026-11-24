@@ -3,7 +3,7 @@
 /**
  * 将浏览器会话上传到 Nogi Relay 服务器
  * Usage: node upload-session.js <session-file> <server-url> <access-token>
- * Example: node upload-session.js ./nogi-browser-state.json https://nogi-relay.fly.dev YOUR_TOKEN
+ * Example: node upload-session.js ./nogi-browser-state.json https://relay.example.com YOUR_TOKEN
  */
 
 import fs from 'fs/promises';
@@ -119,10 +119,10 @@ Usage:
 
 Examples:
   # Upload session file
-  node upload-session.js ./nogi-browser-state.json https://nogi-relay.fly.dev YOUR_TOKEN
+  node upload-session.js ./nogi-browser-state.json https://relay.example.com YOUR_TOKEN
 
   # Check current session status
-  node upload-session.js --status https://nogi-relay.fly.dev YOUR_TOKEN
+  node upload-session.js --status https://relay.example.com YOUR_TOKEN
 
 Arguments:
   session-file   Path to nogi-browser-state.json file

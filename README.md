@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/PostgreSQL-15+-336791?logo=postgresql&logoColor=white" alt="PostgreSQL" />
   <img src="https://img.shields.io/badge/Android-Kotlin%20%7C%20Compose-3DDC84?logo=android&logoColor=white" alt="Android" />
   <img src="https://img.shields.io/badge/Firebase-FCM%20High%20Priority-FFCA28?logo=firebase&logoColor=black" alt="Firebase" />
-  <img src="https://img.shields.io/badge/Fly.io-Production%20Ready-24185B?logo=flydotio&logoColor=white" alt="Fly.io" />
+  <img src="https://img.shields.io/badge/Self--Hosted-Linux%20VPS%20%7C%20Docker-2496ED?logo=docker&logoColor=white" alt="Self-Hosted" />
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License" />
 </p>
 
@@ -19,7 +19,7 @@
 
 | 文档 | 核心用途与内容 |
 | :--- | :--- |
-| 🚀 **[DEPLOYMENT.md](DEPLOYMENT.md)** | **生产部署与运维指南**：在 Fly.io 等在线服务器上一键部署、配置密钥、上传会话与推送验收 |
+| 🚀 **[DEPLOYMENT.md](DEPLOYMENT.md)** | **生产部署与运维指南**：在任意 Linux VPS（systemd + Nginx）或 Docker 环境部署、配置密钥、上传会话与推送验收 |
 | 🖥️ **[server/README.md](server/README.md)** | **服务端运维与命令指南**：会话管理、REST API 操作、媒体下载、推送测试与排障命令 |
 
 ---
@@ -64,9 +64,9 @@
 ### 5. 多大模型上下文感知翻译 (AI Translation System)
 - **11 家主流模型支持**：覆盖 OpenAI、Kimi (Moonshot)、Claude (Anthropic)、DeepSeek、智谱 GLM、Google Gemini、通义千问 Qwen、xAI Grok、MiniMax、小米 MiMo、腾讯混元；支持 `MESSAGES`、`RESPONSES`、`GEMINI_GENERATE_CONTENT` 三类协议标准。
 - **结构化输出与校验**：客户端按供应商和所选模型选择结构化输出策略，设置页显示「JSON Schema」「JSON 模式」或「提示词约束」。OpenAI、Claude、Kimi、Gemini、通义千问均有相应适配，具体能力取决于模型；所有结果都由 `IndexedSegmentTranslations` 校验片段数量与索引。
-- **推理与超时策略**：按模型分别设置思考开关、推理强度或预算，部分模型保留低强度推理；网络连接超时为 15 秒，读取超时为 120 秒。
+- **阶梯式思考重试与超时策略**：按模型分别映射 `none → low → high` 三档思考强度/预算（不支持关闭思考的模型自动从 `low → high` 起步）；首轮输出解析、片段校验失败或低档思考参数被拒时自动逐级提升思考强度重试，鉴权/额度/限流/网络异常直接止损。网络连接超时 15 秒，常规读取超时 120 秒，`high` 思考档位读取超时 240 秒。
 - **格式还原**：采用 `TranslationLayout` 本地骨架回填算法，大模型仅翻译纯文本片段，译文严格还原原文的手动换行、空行与空格排版；昵称占位符 `%%%` 替换为用户自定义昵称。
-- **翻译范围**：AI 翻译默认关闭，配置供应商、API Key 与模型后启用。「消息全量翻译」和「博客全量翻译」可分别开启；关闭全量翻译时，新消息自动翻译，历史消息需手动触发，博客在新发布或打开阅读时翻译。「重新翻译全部」会清空本机消息与博客的译文后重新处理。
+- **翻译范围与全量翻译**：AI 翻译默认关闭，配置供应商、API Key 与模型后启用。「翻译范围」可独立开关「翻译新发布的消息」与「翻译新发布的博客」（默认开启；关闭后新消息需手动触发，博客仅在点开阅读或手动点击时翻译）；「全量翻译」独立成卡，可分别开启「消息全量翻译」「博客全量翻译」补齐所有未翻译内容，并支持「重新翻译全部」清空本机译文后重新处理。
 - **失败提示**：API Key 无效、额度不足或模型不可用时，翻译整体暂停并在「设置」→「翻译」顶部说明原因与处理方法，修改配置或点「重试翻译」后自动继续；请求过于频繁时暂停 1 分钟；网络或服务器的连续失败也会提示，失败内容按退避自动重试。
 
 ### 6. BLOG 监控、离线检索与多媒体管理器
@@ -151,7 +151,6 @@ Nogizaka46-Relay/
 │   ├── start-all.sh            # 生产双进程编排启动脚本
 │   └── package.json            # 服务端依赖配置
 ├── Dockerfile                  # 基于 Node.js Slim 的生产镜像定义
-├── fly.toml.example            # Fly.io 生产配置模板 
 ├── local.properties.example    # Android 本地 SDK 路径与预填参数配置模板
 └── DEPLOYMENT.md               # 生产部署与运维文档
 ```
@@ -160,12 +159,12 @@ Nogizaka46-Relay/
 
 ## 🚀 快速上手
 
-### 1. 服务端云端在线部署 (推荐)
+### 1. 服务端生产部署 (推荐)
 
-若需要 7×24 小时稳定运行并为手机提供即时推送服务，推荐将服务端部署至云端容器平台（如 **Fly.io**）。
+若需要 7×24 小时稳定运行并为手机提供即时推送服务，推荐将服务端部署至任意 **Linux VPS / 云主机（systemd + PostgreSQL + Nginx HTTPS）** 或 **Docker 容器环境**。
 
-部署流程（创建应用、设置密钥、部署镜像、初始化数据库、上传会话与手机端验证），具体请直接查阅：
-👉 **[生产部署与运维指南 (DEPLOYMENT.md)](DEPLOYMENT.md)**
+完整部署流程（环境准备、配置 `.env`、托管服务与 HTTPS 反向代理、初始化数据库、上传会话与手机端验证），请查阅：
+👉 **[通用生产部署指南 (DEPLOYMENT.md)](DEPLOYMENT.md)**
 
 > [!TIP]
 > **多端冲突运维提示**：若因在其他设备登录 Web 版导致云端提示 `[NOGI_SESSION_UPDATE_REQUIRED]`，请查阅 [多端冲突恢复指引](#1-官网会话托管与生命周期状态机) 或 [server/README.md](server/README.md#2-官网会话管理与热更新) 进行两步热更新，无需重启服务。

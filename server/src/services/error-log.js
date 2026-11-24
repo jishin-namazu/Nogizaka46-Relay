@@ -81,11 +81,11 @@ function safeContext(value) {
 }
 
 function processGroup() {
-  return process.env.FLY_PROCESS_GROUP || process.env.PROCESS_GROUP || 'unknown';
+  return process.env.PROCESS_GROUP || 'unknown';
 }
 
 function machineId() {
-  return process.env.FLY_MACHINE_ID || process.env.HOSTNAME || os.hostname();
+  return process.env.HOSTNAME || os.hostname();
 }
 
 function buildEntry(level, scope, error, context) {

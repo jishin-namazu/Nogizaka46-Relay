@@ -1,4 +1,4 @@
-# Dockerfile for Fly.io deployment
+# Dockerfile for Nogi Relay server & monitor deployment
 
 FROM node:20-slim
 

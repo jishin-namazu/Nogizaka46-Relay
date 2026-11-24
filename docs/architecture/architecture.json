@@ -317,7 +317,7 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "Fly.io · nrt · 单容器双 Node 进程",
+      "label": "云服务器 · 单实例双 Node 进程",
       "wraps": [
         "monitorProcess",
         "apiProcess"

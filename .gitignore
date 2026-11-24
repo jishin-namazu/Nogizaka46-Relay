@@ -3,7 +3,6 @@
 **/local.properties
 **/build/
 app/google-services.json
-fly.toml
 **/.env
 
 # Runtime credentials and session files written by the monitor

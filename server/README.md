@@ -24,8 +24,8 @@
 
 ### 环境变量替换说明
 在下文所有的 curl 与命令行示例中，请根据实际部署替换以下变量：
-- `<SERVER_URL>`：服务端地址，例如本地为 `http://127.0.0.1:3000`，云端为 `https://<YOUR_APP_NAME>.fly.dev`
-- `<MEDIA_URL>`：独立受保护媒体流地址，例如本地为 `http://127.0.0.1:8081`，云端为 `https://<YOUR_APP_NAME>.fly.dev:8081`（通过主 API 地址亦可访问）
+- `<SERVER_URL>`：服务端地址，例如本地为 `http://127.0.0.1:3000`，生产环境为 `https://relay.example.com`
+- `<MEDIA_URL>`：受保护媒体流地址，例如本地为 `http://127.0.0.1:8081`，生产环境经反向代理合并后通常与 `<SERVER_URL>` 相同（或独立端口 `https://relay.example.com:8081`）
 - `<ADMIN_TOKEN>`：服务端配置的全权限管理员凭据
 
 服务端支持两种权限：`ADMIN_TOKEN` 可访问所有受保护的 API 与 8081 媒体流；`CLIENT_TOKEN` 可注册设备（`POST /v1/devices`），读取消息列表、详情、统计及媒体（含 8081 媒体流）。设备列表、修改、删除、服务端消息“标记已播放”接口、推送测试及管理员接口仍需管理员 token。Android 客户端的播放状态保存在本地数据库，不调用服务端“标记已播放”接口。两种 token 必须使用不同的值。旧 `ACCESS_TOKEN`/`API_KEY` 不再用于服务端鉴权。
@@ -39,13 +39,13 @@
 为了方便在终端连续执行，可预先在终端定义临时变量：
 ```bash
 # Linux / macOS / Git Bash
-export SERVER="https://<YOUR_APP_NAME>.fly.dev"
-export MEDIA="https://<YOUR_APP_NAME>.fly.dev:8081"
+export SERVER="https://relay.example.com"
+export MEDIA="https://relay.example.com"
 export TOKEN="你的ADMIN_TOKEN"
 
 # Windows PowerShell
-$SERVER = "https://<YOUR_APP_NAME>.fly.dev"
-$MEDIA = "https://<YOUR_APP_NAME>.fly.dev:8081"
+$SERVER = "https://relay.example.com"
+$MEDIA = "https://relay.example.com"
 $TOKEN = "你的ADMIN_TOKEN"
 ```
 
@@ -142,7 +142,7 @@ Monitor 进程每轮轮询时检查当前 Access Token 的有效期：
 
 服务端内置轻量化响应式图形管理控制台，直接访问根路径下的 `/admin` 即可使用，无需额外安装前端构建工具。
 
-- **访问地址**：`https://<YOUR_APP_NAME>.fly.dev/admin`（本地为 `http://127.0.0.1:3000/admin`）
+- **访问地址**：`https://relay.example.com/admin`（本地为 `http://127.0.0.1:3000/admin`）
 - **身份认证**：管理内容会在服务端验证 `ADMIN_TOKEN` 后显示。首次打开时输入令牌；凭据保存在当前浏览器中。
 
 ### 3.1 控制台核心功能模块
@@ -357,7 +357,7 @@ Relay 服务端将抓取到的所有语音、图片、视频和来电全屏写�
   - `thumbnail`：缩略图
   - `phone_image`：语音来电时的全屏高清写真
 
-主 API 与独立媒体服务均提供该路由。Fly 容器内对应端口为 `8080` 和 `8081`，本地默认端口为 `3000` 和 `8081`。
+主 API 与独立媒体服务均提供该路由。生产反代/容器内通常监听 `8080` 和 `8081`，本地默认端口为 `3000` 和 `8081`。
 
 ### 6.2 下载并保存语音文件 (音频流)
 ```bash
@@ -400,20 +400,21 @@ done
 echo "下载完成！"
 ```
 
-### 6.6 云端存储卷排查与用量检查 (Fly.io)
-进入云端容器控制台检查磁盘：
+### 6.6 服务端存储目录排查与用量检查
+登录服务器（SSH 或 Docker 容器）检查持久化存储目录：
 ```bash
-# 登录容器
-fly ssh console
+# 登录 Linux 服务器（若使用 Docker 则执行 docker exec -it nogi-relay sh）
+ssh user@your-server
 
-# 1. 检查持久化挂载卷用量
+# 1. 检查持久化目录所在磁盘用量
 df -h /data
 
-# 2. 检查媒体文件去重对象池
+# 2. 检查媒体文件去重对象池与增量来电封面目录
 ls -lh /data/nogi-media/objects/ | head -n 20
+find /data/nogi-media/phone-images/ -type f -ls
 
 # 3. 统计已归档的媒体文件总数与总大小
-du -sh /data/nogi-media/objects/
+du -sh /data/nogi-media/objects/ /data/nogi-media/phone-images/
 ls -1 /data/nogi-media/objects/ | wc -l
 ```
 
@@ -499,7 +500,7 @@ curl -X DELETE "$SERVER/v1/devices/<DEVICE_ID>" \
 ## 8. 数据库初始化与健康检查
 
 ### 8.1 主服务探活探针 (无鉴权)
-用于 Fly.io / Kubernetes 健康检查探针：
+用于 Nginx / Docker / Kubernetes 等健康检查探针：
 ```bash
 curl -i "$SERVER/health"
 ```

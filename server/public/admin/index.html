@@ -319,8 +319,8 @@
               <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" id="sysBootBadge">在线</span>
             </div>
             <div class="flex items-baseline gap-2">
-              <span class="text-2xl font-bold" id="sysInstanceSpec">1024 MB</span>
-              <span class="text-xs text-[var(--muted-foreground)]">1 vCPU (Fly.io)</span>
+              <span class="text-2xl font-bold" id="sysInstanceSpec">-</span>
+              <span class="text-xs text-[var(--muted-foreground)]" id="sysInstanceCpu">Node.js 实例</span>
             </div>
             <p class="text-[11px] text-[var(--muted-foreground)]" id="sysUptime">运行时长: - ｜ 最近24h错误: 0 次</p>
             <p class="text-[11px] text-[var(--muted-foreground)]" id="sysBootTime">当次部署时间: -</p>
@@ -1260,17 +1260,22 @@
         const rssMb = d.system.memoryRssMb || 0;
         const heapMb = d.system.memoryHeapMb || 0;
         const heapTotalMb = d.system.memoryHeapTotalMb || 0;
-        const memPercent = Math.min(100, Math.round((rssMb / 1024) * 100));
+        const totalMemMb = d.system.totalMemoryMb || 1024;
+        const memPercent = Math.min(100, Math.round((rssMb / totalMemMb) * 100));
         document.getElementById('sysMemUsage').innerText = `${rssMb} MB`;
-        document.getElementById('sysMemPercent').innerText = `/ 1024 MB (${memPercent}%)`;
+        document.getElementById('sysMemPercent').innerText = `/ ${totalMemMb} MB (${memPercent}%)`;
         const memBar = document.getElementById('sysMemBar');
         memBar.style.width = `${memPercent}%`;
         memBar.className = memBar.className.replace(/bg-\w+-500/g, '');
         memBar.classList.add(memPercent > 85 ? 'bg-rose-500' : memPercent > 60 ? 'bg-amber-500' : 'bg-emerald-500');
         document.getElementById('sysMemDetails').innerHTML = `<div>常驻内存 (RSS): ${rssMb} MB ｜ Node: ${d.system.nodeVersion}</div><div>堆已用: ${heapMb} MB ｜ 堆总量: ${heapTotalMb} MB</div>`;
-        // 顶部内存指标
+        // 顶部内存指标与实例规格
         const topMem = document.getElementById('topMemUsage');
-        if (topMem) topMem.innerText = `${rssMb} / 1024 MB`;
+        if (topMem) topMem.innerText = `${rssMb} / ${totalMemMb} MB`;
+        const instSpec = document.getElementById('sysInstanceSpec');
+        if (instSpec) instSpec.innerText = `${totalMemMb} MB`;
+        const instCpu = document.getElementById('sysInstanceCpu');
+        if (instCpu) instCpu.innerText = `${d.system.cpuCount || 1} vCPU (${d.system.platform || 'linux'})`;
 
         // 消息统计
         document.getElementById('sysTotalMessages').innerText = Number(d.messages.total).toLocaleString();
