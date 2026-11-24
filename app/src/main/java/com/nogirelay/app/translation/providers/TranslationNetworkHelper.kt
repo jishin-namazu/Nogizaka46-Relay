@@ -3,6 +3,7 @@ package com.nogirelay.app.translation.providers
 import com.nogirelay.app.data.HttpStatusException
 import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProvider
+import com.nogirelay.app.translation.ThinkingLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
@@ -13,6 +14,7 @@ object TranslationNetworkHelper {
     private const val CONNECT_TIMEOUT_MS = 15_000
 
     private const val READ_TIMEOUT_MS = 120_000
+    private const val HIGH_THINKING_READ_TIMEOUT_MS = 240_000
 
     suspend fun fetchModels(provider: AIProvider, apiKey: String): Result<List<AIModel>> = withContext(Dispatchers.IO) {
         runCatching {
@@ -44,7 +46,8 @@ object TranslationNetworkHelper {
         apiKey: String,
         model: String,
         text: String,
-        endpoint: String
+        endpoint: String,
+        thinking: ThinkingLevel = ThinkingLevel.NONE,
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val url = URL(endpoint)
@@ -52,13 +55,17 @@ object TranslationNetworkHelper {
             connection.requestMethod = "POST"
             connection.doOutput = true
             connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
+            connection.readTimeout = if (thinking == ThinkingLevel.HIGH) {
+                HIGH_THINKING_READ_TIMEOUT_MS
+            } else {
+                READ_TIMEOUT_MS
+            }
 
             provider.buildHeaders(apiKey).forEach { (key, value) ->
                 connection.setRequestProperty(key, value)
             }
 
-            val requestBody = provider.buildTranslateRequest(model, text)
+            val requestBody = provider.buildTranslateRequest(model, text, thinking)
             connection.outputStream.use { os ->
                 os.write(requestBody.toByteArray(StandardCharsets.UTF_8))
             }

@@ -286,6 +286,8 @@ internal fun TranslationSettingsPage(
     var aiModel by remember { mutableStateOf(initial.aiModel) }
     var modelOptions by remember { mutableStateOf(initial.cachedAiModels) }
     var translationEnabled by remember { mutableStateOf(initial.translationEnabled) }
+    var translateNewMessages by remember { mutableStateOf(initial.translateNewMessages) }
+    var translateNewBlogs by remember { mutableStateOf(initial.translateNewBlogs) }
     var messageFullTranslation by remember { mutableStateOf(initial.messageFullTranslation) }
     var blogFullTranslation by remember { mutableStateOf(initial.blogFullTranslation) }
     val providerPopover = rememberGlassPopoverState()
@@ -313,6 +315,8 @@ internal fun TranslationSettingsPage(
         aiModel = aiModel,
         cachedAiModels = modelOptions,
         translationEnabled = translationEnabled,
+        translateNewMessages = translateNewMessages,
+        translateNewBlogs = translateNewBlogs,
         messageFullTranslation = messageFullTranslation,
         blogFullTranslation = blogFullTranslation,
     )
@@ -399,7 +403,7 @@ internal fun TranslationSettingsPage(
             ) {
                 if (!translationEnabled) {
                     Text(
-                        "开启后，消息与博客会按所选模型自动翻译为中文。",
+                        "开启后，消息与博客可按所选模型自动或手动翻译为中文。",
                         style = GlassType.Footnote,
                         color = GlassColors.InkSecondary,
                     )
@@ -597,9 +601,31 @@ internal fun TranslationSettingsPage(
         if (translationEnabled) {
             item(key = "translation-scope", contentType = "settings-card") {
                 SettingsCard(title = "翻译范围") {
-                    FullTranslationToggle(
+                    TranslationToggle(
+                        title = "翻译新发布的消息",
+                        description = "开启后，收到推送或同步到新消息时自动翻译；关闭且未开启全量翻译时，需在消息菜单中手动点击翻译。",
+                        checked = translateNewMessages,
+                        onCheckedChange = {
+                            translateNewMessages = it
+                            AppGraph.settings.save(AppGraph.settings.read().copy(translateNewMessages = it))
+                        },
+                    )
+                    TranslationToggle(
+                        title = "翻译新发布的博客",
+                        description = "开启后，官网发布或同步到新博客时自动翻译；关闭且未开启全量翻译时，仅在点开阅读或手动点击时翻译。",
+                        checked = translateNewBlogs,
+                        onCheckedChange = {
+                            translateNewBlogs = it
+                            AppGraph.settings.save(AppGraph.settings.read().copy(translateNewBlogs = it))
+                        },
+                    )
+                }
+            }
+            item(key = "translation-full", contentType = "settings-card") {
+                SettingsCard(title = "全量翻译") {
+                    TranslationToggle(
                         title = "消息全量翻译",
-                        description = "开启后自动翻译所有历史未翻译的消息；关闭时只自动翻译新收到的消息，查看历史消息需要手动点击翻译。",
+                        description = "开启后，后台自动翻译全部未翻译的消息（包含历史消息）；关闭时仅按上方翻译范围处理。",
                         checked = messageFullTranslation,
                         onCheckedChange = {
                             messageFullTranslation = it
@@ -607,9 +633,9 @@ internal fun TranslationSettingsPage(
                             refreshTranslationWorkers()
                         },
                     )
-                    FullTranslationToggle(
+                    TranslationToggle(
                         title = "博客全量翻译",
-                        description = "开启后自动翻译所有历史未翻译的博客；关闭时只自动翻译新发布的博客和点开阅读的博客。",
+                        description = "开启后，后台自动翻译全部未翻译的博客（包含历史博客）；关闭时仅按上方翻译范围处理。",
                         checked = blogFullTranslation,
                         onCheckedChange = {
                             blogFullTranslation = it
@@ -932,7 +958,7 @@ internal fun fullScreenPermissionHint(): String =
     }
 
 @Composable
-private fun FullTranslationToggle(
+private fun TranslationToggle(
     title: String,
     description: String,
     checked: Boolean,

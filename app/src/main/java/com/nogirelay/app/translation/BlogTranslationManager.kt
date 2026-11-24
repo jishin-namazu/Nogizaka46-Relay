@@ -5,6 +5,7 @@ import android.util.Log
 import com.nogirelay.app.blog.BlogContentParser
 import com.nogirelay.app.data.AppGraph
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,6 +25,7 @@ object BlogTranslationManager {
 
     private data class Work(val context: Context, val id: String, val force: Boolean, val retryFailures: Boolean)
     private var bulkJob: kotlinx.coroutines.Job? = null
+    private var bulkJobManual = false
     private val queue = com.nogirelay.app.performance.BoundedWorkQueue<Work>(
         scope, parallelism = 3, capacity = 24, key = { it.id },
         onFailure = { work, error ->
@@ -48,13 +50,27 @@ object BlogTranslationManager {
 
     fun enqueuePending(context: Context) = enqueueAfterSync(context)
 
-    fun enqueueAfterSync(context: Context, newIds: Collection<String> = emptyList()) {
+    fun enqueueAfterSync(
+        context: Context,
+        newIds: Collection<String> = emptyList(),
+        forceNew: Boolean = false,
+    ) {
         val appContext = context.applicationContext
         AppGraph.initialize(appContext)
-        if (newIds.isNotEmpty()) scope.launch {
-            if (isConfigured(AppGraph.settings.read())) newIds.forEach { schedule(appContext, it, false, true) }
+        val settings = AppGraph.settings.read()
+        if (newIds.isNotEmpty() && settings.shouldAutoTranslateNewBlogs) {
+            scope.launch {
+                val current = AppGraph.settings.read()
+                if (isConfigured(current) && current.shouldAutoTranslateNewBlogs) {
+                    newIds.forEach { schedule(appContext, it, forceNew, retryFailures = true) }
+                }
+            }
         }
-        if (AppGraph.settings.read().blogFullTranslation) enqueueBacklog(appContext, manual = false)
+        if (settings.blogFullTranslation) {
+            enqueueBacklog(appContext, manual = false)
+        } else {
+            cancelAutoBacklog()
+        }
     }
 
     fun enqueueAllPending(context: Context, limit: Int = Int.MAX_VALUE) =
@@ -66,6 +82,7 @@ object BlogTranslationManager {
             if (!manual) return
             bulkJob?.cancel()
         }
+        bulkJobManual = manual
         bulkJob = scope.launch {
             AppGraph.initialize(context)
             var afterId: String? = null
@@ -79,6 +96,13 @@ object BlogTranslationManager {
                 afterId = ids.last()
                 remaining -= ids.size
             }
+        }
+    }
+
+    @Synchronized
+    private fun cancelAutoBacklog() {
+        if (!bulkJobManual && bulkJob?.isActive == true) {
+            bulkJob?.cancel()
         }
     }
 
@@ -142,13 +166,27 @@ object BlogTranslationManager {
                 }
                 val layout = BlogTranslationLayout.from(source)
                 val provider = AIProviderFactory.getProvider(settings.aiProvider)
-                val translation = provider.translate(
-                    settings.aiApiKey,
-                    settings.aiModel.trim(),
-                    layout.requestPayload,
-                ).mapCatching(layout::validateAndSerialize)
-                    .onFailure { TranslationHealth.recordFailure(it, settings) }
-                    .getOrThrow()
+                val translation = try {
+                    TieredTranslation.execute(
+                        provider = provider,
+                        apiKey = settings.aiApiKey,
+                        model = settings.aiModel.trim(),
+                        requestPayload = layout.requestPayload,
+                        onEscalate = { from, to, error ->
+                            Log.w(
+                                TAG,
+                                "BLOG $blogId translation failed at thinking=${from.wireValue}, retrying with ${to.wireValue}",
+                                error,
+                            )
+                        },
+                        parseOutput = layout::validateAndSerialize,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    TranslationHealth.recordFailure(error, settings)
+                    throw error
+                }
                 AppGraph.blogs.saveBlogTranslation(blogId, translation)
                 TranslationHealth.recordSuccess()
             }

@@ -2,7 +2,10 @@ package com.nogirelay.app.translation.providers
 
 import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProviderType
+import com.nogirelay.app.translation.HIGH_THINKING_BUDGET_TOKENS
 import com.nogirelay.app.translation.JsonOutputSupport
+import com.nogirelay.app.translation.LOW_THINKING_BUDGET_TOKENS
+import com.nogirelay.app.translation.ThinkingLevel
 import org.json.JSONObject
 
 class ClaudeProvider : AnthropicMessagesProvider() {
@@ -18,16 +21,39 @@ class ClaudeProvider : AnthropicMessagesProvider() {
         "Content-Type" to "application/json",
     )
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl? {
         val id = model.lowercase()
-        when {
+        return when {
             id.contains("fable") || id.contains("mythos") -> {
-                request.put("output_config", JSONObject().put("effort", "low"))
+                val effort = when (thinking) {
+                    ThinkingLevel.NONE, ThinkingLevel.LOW -> "low"
+                    ThinkingLevel.HIGH -> "high"
+                }
+                AnthropicReasoningControl(effort = effort)
             }
-            Regex("claude-(opus|sonnet)-5").containsMatchIn(id) -> {
-                request.put("thinking", JSONObject().put("type", "disabled"))
-                request.put("output_config", JSONObject().put("effort", "low"))
+            Regex("claude-(opus|sonnet)-5").containsMatchIn(id) -> when (thinking) {
+                ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled", effort = "low")
+                ThinkingLevel.LOW -> AnthropicReasoningControl(thinkingType = "adaptive", effort = "low")
+                ThinkingLevel.HIGH -> AnthropicReasoningControl(thinkingType = "adaptive", effort = "high")
             }
+            Regex("claude-(opus|sonnet)-4-[6-9]").containsMatchIn(id) -> when (thinking) {
+                ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+                ThinkingLevel.LOW -> AnthropicReasoningControl(thinkingType = "adaptive", effort = "low")
+                ThinkingLevel.HIGH -> AnthropicReasoningControl(thinkingType = "adaptive", effort = "high")
+            }
+            Regex("claude-(opus|sonnet|haiku)-4-5|claude-(opus|sonnet)-4(-|$)|claude-3-7-sonnet").containsMatchIn(id) ->
+                when (thinking) {
+                    ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+                    ThinkingLevel.LOW -> AnthropicReasoningControl(
+                        thinkingType = "enabled",
+                        budgetTokens = LOW_THINKING_BUDGET_TOKENS,
+                    )
+                    ThinkingLevel.HIGH -> AnthropicReasoningControl(
+                        thinkingType = "enabled",
+                        budgetTokens = HIGH_THINKING_BUDGET_TOKENS,
+                    )
+                }
+            else -> null
         }
     }
 

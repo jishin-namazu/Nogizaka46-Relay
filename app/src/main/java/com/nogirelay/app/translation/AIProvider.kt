@@ -8,6 +8,30 @@ data class AIModel(
 )
 
 const val TRANSLATION_MAX_OUTPUT_TOKENS = 32768
+internal const val LOW_THINKING_BUDGET_TOKENS = 1024
+internal const val HIGH_THINKING_BUDGET_TOKENS = 8192
+
+enum class ThinkingLevel(val wireValue: String) {
+    NONE("none"),
+    LOW("low"),
+    HIGH("high");
+
+    companion object {
+        val RETRY_ORDER: List<ThinkingLevel> = listOf(NONE, LOW, HIGH)
+    }
+}
+
+internal fun resolveThinkingLevels(controlFor: (ThinkingLevel) -> Any?): List<ThinkingLevel> {
+    val none = controlFor(ThinkingLevel.NONE)
+    val low = controlFor(ThinkingLevel.LOW)
+    val high = controlFor(ThinkingLevel.HIGH)
+    return when {
+        none == low && low == high -> listOf(ThinkingLevel.NONE)
+        none == low -> listOf(ThinkingLevel.LOW, ThinkingLevel.HIGH)
+        low == high -> listOf(ThinkingLevel.NONE, ThinkingLevel.HIGH)
+        else -> ThinkingLevel.RETRY_ORDER
+    }
+}
 
 enum class AIProtocol {
     MESSAGES,
@@ -47,17 +71,29 @@ interface AIProvider {
     val modelsEndpoint: String
 
     suspend fun fetchModels(apiKey: String): Result<List<AIModel>>
-    suspend fun translate(apiKey: String, model: String, text: String): Result<String>
+    suspend fun translate(
+        apiKey: String,
+        model: String,
+        text: String,
+        thinking: ThinkingLevel = ThinkingLevel.NONE,
+    ): Result<String>
 
     fun buildModelHeaders(apiKey: String): Map<String, String>
     fun buildHeaders(apiKey: String): Map<String, String>
-    fun buildTranslateRequest(model: String, text: String): String
+    fun buildTranslateRequest(
+        model: String,
+        text: String,
+        thinking: ThinkingLevel = ThinkingLevel.NONE,
+    ): String
     fun parseTranslateResponse(response: String): String
     fun parseModelsResponse(response: String): List<AIModel>
     fun filterChatModels(models: List<AIModel>): List<AIModel>
 
     @Suppress("UNUSED_PARAMETER")
     fun jsonOutputSupport(model: String): JsonOutputSupport = JsonOutputSupport.NONE
+
+    @Suppress("UNUSED_PARAMETER")
+    fun thinkingLevelsFor(model: String): List<ThinkingLevel> = listOf(ThinkingLevel.NONE)
 }
 
 abstract class BaseAIProvider : AIProvider {
@@ -65,6 +101,12 @@ abstract class BaseAIProvider : AIProvider {
 
     @Suppress("UNUSED_PARAMETER")
     protected open fun applyJsonOutputControls(request: JSONObject, model: String) = Unit
+
+    protected fun mergeOutputEffort(request: JSONObject, effort: String) {
+        val outputConfig = request.optJSONObject("output_config") ?: JSONObject()
+        outputConfig.put("effort", effort)
+        request.put("output_config", outputConfig)
+    }
 
     protected fun mergeJsonOutputFormat(request: JSONObject) {
         val outputConfig = request.optJSONObject("output_config") ?: JSONObject()

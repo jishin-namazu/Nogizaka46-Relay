@@ -84,6 +84,8 @@ class SettingsStore(
             aiModel = modelFor(provider),
             cachedAiModels = cachedModelsFor(provider),
             translationEnabled = prefs.getBoolean(KEY_TRANSLATION_ENABLED, false),
+            translateNewMessages = prefs.getBoolean(KEY_TRANSLATE_NEW_MESSAGES, true),
+            translateNewBlogs = prefs.getBoolean(KEY_TRANSLATE_NEW_BLOGS, true),
             messageFullTranslation = prefs.getBoolean(KEY_MESSAGE_FULL_TRANSLATION, false),
             blogFullTranslation = prefs.getBoolean(KEY_BLOG_FULL_TRANSLATION, false),
             userNickname = prefs.getString(KEY_USER_NICKNAME, "").orEmpty(),
@@ -103,6 +105,8 @@ class SettingsStore(
             putString(modelKey(settings.aiProvider), settings.aiModel.trim())
             putString(modelsKey(settings.aiProvider), serializeModels(settings.cachedAiModels))
             putBoolean(KEY_TRANSLATION_ENABLED, settings.translationEnabled)
+            putBoolean(KEY_TRANSLATE_NEW_MESSAGES, settings.translateNewMessages)
+            putBoolean(KEY_TRANSLATE_NEW_BLOGS, settings.translateNewBlogs)
             putBoolean(KEY_MESSAGE_FULL_TRANSLATION, settings.messageFullTranslation)
             putBoolean(KEY_BLOG_FULL_TRANSLATION, settings.blogFullTranslation)
             putString(KEY_USER_NICKNAME, settings.userNickname.trim())
@@ -246,6 +250,8 @@ class SettingsStore(
         const val KEY_ACCESS_TOKEN = "access_token"
         const val KEY_AI_PROVIDER = "ai_provider"
         const val KEY_TRANSLATION_ENABLED = "translation_enabled"
+        const val KEY_TRANSLATE_NEW_MESSAGES = "translate_new_messages"
+        const val KEY_TRANSLATE_NEW_BLOGS = "translate_new_blogs"
         const val KEY_MESSAGE_FULL_TRANSLATION = "message_full_translation"
         const val KEY_BLOG_FULL_TRANSLATION = "blog_full_translation"
         const val KEY_USER_NICKNAME = "user_nickname"

@@ -23,10 +23,16 @@ data class AppSettings(
     val aiModel: String = "",
     val cachedAiModels: List<AIModel> = emptyList(),
     val translationEnabled: Boolean = false,
-
+    val translateNewMessages: Boolean = true,
+    val translateNewBlogs: Boolean = true,
     val messageFullTranslation: Boolean = false,
-
     val blogFullTranslation: Boolean = false,
     val userNickname: String = "",
     val incomingCallStyle: IncomingCallStyle = IncomingCallStyle.CLASSIC,
-)
+) {
+    val shouldAutoTranslateNewMessages: Boolean
+        get() = translationEnabled && (translateNewMessages || messageFullTranslation)
+
+    val shouldAutoTranslateNewBlogs: Boolean
+        get() = translationEnabled && (translateNewBlogs || blogFullTranslation)
+}

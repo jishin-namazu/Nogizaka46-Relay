@@ -2,7 +2,10 @@ package com.nogirelay.app.translation.providers
 
 import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProviderType
+import com.nogirelay.app.translation.HIGH_THINKING_BUDGET_TOKENS
 import com.nogirelay.app.translation.JsonOutputSupport
+import com.nogirelay.app.translation.LOW_THINKING_BUDGET_TOKENS
+import com.nogirelay.app.translation.ThinkingLevel
 import org.json.JSONObject
 
 class DeepSeekProvider : AnthropicMessagesProvider() {
@@ -11,12 +14,20 @@ class DeepSeekProvider : AnthropicMessagesProvider() {
     override val modelsEndpoint = "/models"
     override val messagesEndpoint = "$baseUrl/anthropic/v1/messages"
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl {
         val id = model.lowercase()
-        if (id.contains("reasoner") || id.contains("thinking") || id.contains("r1")) {
-            request.put("output_config", JSONObject().put("effort", "low"))
+        return if (id.contains("reasoner") || id.contains("thinking") || id.contains("r1")) {
+            val effort = when (thinking) {
+                ThinkingLevel.NONE, ThinkingLevel.LOW -> "low"
+                ThinkingLevel.HIGH -> "high"
+            }
+            AnthropicReasoningControl(effort = effort)
         } else {
-            request.put("thinking", JSONObject().put("type", "disabled"))
+            when (thinking) {
+                ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+                ThinkingLevel.LOW -> AnthropicReasoningControl(thinkingType = "enabled", effort = "low")
+                ThinkingLevel.HIGH -> AnthropicReasoningControl(thinkingType = "enabled", effort = "high")
+            }
         }
     }
 
@@ -32,16 +43,28 @@ class GLMProvider : AnthropicMessagesProvider() {
     override val modelsEndpoint = "/api/paas/v4/models"
     override val messagesEndpoint = "$baseUrl/api/anthropic/v1/messages"
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl? {
         val id = model.lowercase()
-        when {
+        return when {
             id.startsWith("glm-5.3") -> {
-                request.put("thinking", JSONObject().put("type", "enabled"))
-                request.put("output_config", JSONObject().put("effort", "low"))
+                val effort = when (thinking) {
+                    ThinkingLevel.NONE, ThinkingLevel.LOW -> "low"
+                    ThinkingLevel.HIGH -> "high"
+                }
+                AnthropicReasoningControl(thinkingType = "enabled", effort = effort)
             }
-            Regex("^glm-(4\\.[5-9]|[5-9])").containsMatchIn(id) -> {
-                request.put("thinking", JSONObject().put("type", "disabled"))
+            Regex("^glm-(4\\.[5-9]|[5-9])").containsMatchIn(id) -> when (thinking) {
+                ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+                ThinkingLevel.LOW -> AnthropicReasoningControl(
+                    thinkingType = "enabled",
+                    budgetTokens = LOW_THINKING_BUDGET_TOKENS,
+                )
+                ThinkingLevel.HIGH -> AnthropicReasoningControl(
+                    thinkingType = "enabled",
+                    budgetTokens = HIGH_THINKING_BUDGET_TOKENS,
+                )
             }
+            else -> null
         }
     }
 
@@ -58,15 +81,35 @@ class QwenProvider : AnthropicMessagesProvider() {
     override val modelsEndpoint = "/compatible-mode/v1/models"
     override val messagesEndpoint = "$baseUrl/apps/anthropic/v1/messages"
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl? {
         val id = model.lowercase()
-
+        val alwaysThinking = id.contains("thinking")
         val configurable = (
             (id.startsWith("qwen3") && !id.contains("coder")) ||
                 id.startsWith("qwen-plus") ||
                 id.startsWith("qwen-flash")
-            ) && !id.contains("thinking")
-        if (configurable) request.put("thinking", JSONObject().put("type", "disabled"))
+            ) && !alwaysThinking
+        return when {
+            alwaysThinking -> AnthropicReasoningControl(
+                thinkingType = "enabled",
+                budgetTokens = when (thinking) {
+                    ThinkingLevel.NONE, ThinkingLevel.LOW -> LOW_THINKING_BUDGET_TOKENS
+                    ThinkingLevel.HIGH -> HIGH_THINKING_BUDGET_TOKENS
+                },
+            )
+            configurable -> when (thinking) {
+                ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+                ThinkingLevel.LOW -> AnthropicReasoningControl(
+                    thinkingType = "enabled",
+                    budgetTokens = LOW_THINKING_BUDGET_TOKENS,
+                )
+                ThinkingLevel.HIGH -> AnthropicReasoningControl(
+                    thinkingType = "enabled",
+                    budgetTokens = HIGH_THINKING_BUDGET_TOKENS,
+                )
+            }
+            else -> null
+        }
     }
 
     override fun jsonOutputSupport(model: String): JsonOutputSupport {
@@ -96,9 +139,18 @@ class MiniMaxProvider : AnthropicMessagesProvider() {
     override val modelsEndpoint = "/v1/models"
     override val messagesEndpoint = "$baseUrl/anthropic/v1/messages"
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
-        if (model.contains("MiniMax-M3", ignoreCase = true)) {
-            request.put("thinking", JSONObject().put("type", "disabled"))
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl? {
+        if (!model.contains("MiniMax-M3", ignoreCase = true)) return null
+        return when (thinking) {
+            ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+            ThinkingLevel.LOW -> AnthropicReasoningControl(
+                thinkingType = "enabled",
+                budgetTokens = LOW_THINKING_BUDGET_TOKENS,
+            )
+            ThinkingLevel.HIGH -> AnthropicReasoningControl(
+                thinkingType = "enabled",
+                budgetTokens = HIGH_THINKING_BUDGET_TOKENS,
+            )
         }
     }
 
@@ -119,9 +171,18 @@ class MiMoProvider : AnthropicMessagesProvider() {
 
     override fun buildHeaders(apiKey: String) = buildModelHeaders(apiKey)
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
-        request.put("thinking", JSONObject().put("type", "disabled"))
-    }
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl =
+        when (thinking) {
+            ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+            ThinkingLevel.LOW -> AnthropicReasoningControl(
+                thinkingType = "enabled",
+                budgetTokens = LOW_THINKING_BUDGET_TOKENS,
+            )
+            ThinkingLevel.HIGH -> AnthropicReasoningControl(
+                thinkingType = "enabled",
+                budgetTokens = HIGH_THINKING_BUDGET_TOKENS,
+            )
+        }
 
     override fun filterChatModels(models: List<AIModel>): List<AIModel> = models.filter { model ->
         val id = model.id.lowercase()
@@ -135,9 +196,18 @@ class HunYuanProvider : AnthropicMessagesProvider() {
     override val modelsEndpoint = "/v1/models"
     override val messagesEndpoint = "$baseUrl/v1/messages"
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
-        request.put("thinking", JSONObject().put("type", "disabled"))
-    }
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl =
+        when (thinking) {
+            ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+            ThinkingLevel.LOW -> AnthropicReasoningControl(
+                thinkingType = "enabled",
+                budgetTokens = LOW_THINKING_BUDGET_TOKENS,
+            )
+            ThinkingLevel.HIGH -> AnthropicReasoningControl(
+                thinkingType = "enabled",
+                budgetTokens = HIGH_THINKING_BUDGET_TOKENS,
+            )
+        }
 
     override fun filterChatModels(models: List<AIModel>): List<AIModel> = models.filter { model ->
         val id = model.id.lowercase()

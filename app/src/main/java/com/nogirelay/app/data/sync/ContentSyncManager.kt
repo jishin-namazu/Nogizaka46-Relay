@@ -38,7 +38,7 @@ object ContentSyncManager {
         return try {
             syncBlogPages(context, newBlogIds)
         } finally {
-            if (newBlogIds.isNotEmpty()) BlogTranslationManager.enqueueAfterSync(context, newBlogIds)
+            BlogTranslationManager.enqueueAfterSync(context, newBlogIds)
         }
     }
 

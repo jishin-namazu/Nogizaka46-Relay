@@ -57,7 +57,18 @@ class RelayAppViewModel(application: Application) : AndroidViewModel(application
         // Changed credentials, model or scope resume translation work.
         viewModelScope.launch {
             AppGraph.settings.settings
-                .map { listOf(it.translationEnabled, it.aiProvider, it.aiApiKey, it.aiModel, it.messageFullTranslation, it.blogFullTranslation) }
+                .map {
+                    listOf(
+                        it.translationEnabled,
+                        it.aiProvider,
+                        it.aiApiKey,
+                        it.aiModel,
+                        it.translateNewMessages,
+                        it.translateNewBlogs,
+                        it.messageFullTranslation,
+                        it.blogFullTranslation,
+                    )
+                }
                 .distinctUntilChanged()
                 .drop(1)
                 .collect {

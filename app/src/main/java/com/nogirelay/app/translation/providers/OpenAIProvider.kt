@@ -4,6 +4,7 @@ import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProviderType
 import com.nogirelay.app.translation.IndexedSegmentTranslations
 import com.nogirelay.app.translation.JsonOutputSupport
+import com.nogirelay.app.translation.ThinkingLevel
 import org.json.JSONObject
 
 class OpenAIProvider : OpenAIResponsesProvider() {
@@ -12,15 +13,25 @@ class OpenAIProvider : OpenAIResponsesProvider() {
     override val modelsEndpoint = "/v1/models"
     override val responsesEndpoint = "$baseUrl/v1/responses"
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
+    override fun reasoningEffortFor(model: String, thinking: ThinkingLevel): String? {
         val id = model.lowercase()
-        val effort = when {
-            id.startsWith("gpt-6") || Regex("^gpt-5\\.[1-9]").containsMatchIn(id) -> "none"
-            id.startsWith("gpt-5") -> "minimal"
-            Regex("^o\\d").containsMatchIn(id) -> "low"
+        return when {
+            id.startsWith("gpt-6") || Regex("^gpt-5\\.[1-9]").containsMatchIn(id) -> when (thinking) {
+                ThinkingLevel.NONE -> "none"
+                ThinkingLevel.LOW -> "low"
+                ThinkingLevel.HIGH -> "high"
+            }
+            id.startsWith("gpt-5") -> when (thinking) {
+                ThinkingLevel.NONE -> "minimal"
+                ThinkingLevel.LOW -> "low"
+                ThinkingLevel.HIGH -> "high"
+            }
+            Regex("^o\\d").containsMatchIn(id) -> when (thinking) {
+                ThinkingLevel.NONE, ThinkingLevel.LOW -> "low"
+                ThinkingLevel.HIGH -> "high"
+            }
             else -> null
         }
-        effort?.let { request.put("reasoning", JSONObject().put("effort", it)) }
     }
 
     override fun jsonOutputSupport(model: String): JsonOutputSupport =

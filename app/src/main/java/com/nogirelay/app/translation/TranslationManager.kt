@@ -20,6 +20,7 @@ object TranslationManager {
     private val deferred = ConcurrentHashMap.newKeySet<String>()
 
     private var bulkJob: kotlinx.coroutines.Job? = null
+    private var bulkJobManual = false
     private val queue = com.nogirelay.app.performance.BoundedWorkQueue<String>(
         scope, parallelism = 3, capacity = 24, key = { it },
         onFailure = { id, error ->
@@ -38,9 +39,23 @@ object TranslationManager {
                 val text = message.text.orEmpty()
                 val translation = if (shouldTranslate(text)) {
                     val layout = TranslationLayout.from(text)
-                    AIProviderFactory.getProvider(settings.aiProvider)
-                        .translate(settings.aiApiKey, settings.aiModel.trim(), layout.requestPayload)
-                        .mapCatching(layout::restore).getOrThrow().takeIf(String::isNotBlank)
+                    val provider = AIProviderFactory.getProvider(settings.aiProvider)
+                    TieredTranslation.execute(
+                        provider = provider,
+                        apiKey = settings.aiApiKey,
+                        model = settings.aiModel.trim(),
+                        requestPayload = layout.requestPayload,
+                        onEscalate = { from, to, error ->
+                            Log.w(
+                                TAG,
+                                "Message $id translation failed at thinking=${from.wireValue}, retrying with ${to.wireValue}",
+                                error,
+                            )
+                        },
+                    ) { raw ->
+                        layout.restore(raw).takeIf(String::isNotBlank)
+                            ?: throw IllegalStateException("翻译结果为空")
+                    }
                 } else null
                 AppGraph.messages.saveTranslation(id, translation)
                 if (translation != null) TranslationHealth.recordSuccess()
@@ -54,8 +69,15 @@ object TranslationManager {
 
     fun enqueueAfterSync(context: Context, newIds: Collection<String> = emptyList()) {
         AppGraph.initialize(context.applicationContext)
-        enqueueIds(context, newIds)
-        if (AppGraph.settings.read().messageFullTranslation) enqueueBacklog(manual = false)
+        val settings = AppGraph.settings.read()
+        if (newIds.isNotEmpty() && settings.shouldAutoTranslateNewMessages) {
+            enqueueIds(context, newIds)
+        }
+        if (settings.messageFullTranslation) {
+            enqueueBacklog(manual = false)
+        } else {
+            cancelAutoBacklog()
+        }
     }
 
     fun enqueueIds(context: Context, ids: Collection<String>) {
@@ -75,6 +97,7 @@ object TranslationManager {
             if (!manual) return
             bulkJob?.cancel()
         }
+        bulkJobManual = manual
         bulkJob = scope.launch {
             var afterId: String? = null
             while (true) {
@@ -87,6 +110,13 @@ object TranslationManager {
                 }
                 afterId = ids.last()
             }
+        }
+    }
+
+    @Synchronized
+    private fun cancelAutoBacklog() {
+        if (!bulkJobManual && bulkJob?.isActive == true) {
+            bulkJob?.cancel()
         }
     }
 

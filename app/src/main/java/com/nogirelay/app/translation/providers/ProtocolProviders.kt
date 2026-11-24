@@ -4,14 +4,43 @@ import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProtocol
 import com.nogirelay.app.translation.BaseAIProvider
 import com.nogirelay.app.translation.TRANSLATION_MAX_OUTPUT_TOKENS
+import com.nogirelay.app.translation.ThinkingLevel
+import com.nogirelay.app.translation.resolveThinkingLevels
 import org.json.JSONArray
 import org.json.JSONObject
+
+internal data class AnthropicReasoningControl(
+    val thinkingType: String? = null,
+    val budgetTokens: Int? = null,
+    val effort: String? = null,
+)
 
 abstract class AnthropicMessagesProvider : BaseAIProvider() {
     final override val protocol = AIProtocol.MESSAGES
     protected abstract val messagesEndpoint: String
     protected open val includeAnthropicVersion = true
-    protected open fun applyReasoningControls(request: JSONObject, model: String) = Unit
+
+    internal open fun reasoningControlFor(
+        model: String,
+        thinking: ThinkingLevel,
+    ): AnthropicReasoningControl? = null
+
+    override fun thinkingLevelsFor(model: String): List<ThinkingLevel> =
+        resolveThinkingLevels { reasoningControlFor(model, it) }
+
+    protected open fun applyReasoningControls(
+        request: JSONObject,
+        model: String,
+        thinking: ThinkingLevel,
+    ) {
+        val control = reasoningControlFor(model, thinking) ?: return
+        control.thinkingType?.let { type ->
+            val thinkingObj = JSONObject().put("type", type)
+            control.budgetTokens?.let { thinkingObj.put("budget_tokens", it) }
+            request.put("thinking", thinkingObj)
+        }
+        control.effort?.let { mergeOutputEffort(request, it) }
+    }
 
     override fun buildModelHeaders(apiKey: String) = mapOf(
         "Authorization" to "Bearer $apiKey",
@@ -24,7 +53,7 @@ abstract class AnthropicMessagesProvider : BaseAIProvider() {
         if (includeAnthropicVersion) put("anthropic-version", "2023-06-01")
     }
 
-    override fun buildTranslateRequest(model: String, text: String): String =
+    override fun buildTranslateRequest(model: String, text: String, thinking: ThinkingLevel): String =
         JSONObject().apply {
             put("model", model)
             put("max_tokens", TRANSLATION_MAX_OUTPUT_TOKENS)
@@ -34,7 +63,7 @@ abstract class AnthropicMessagesProvider : BaseAIProvider() {
                     put("content", createPrompt(text))
                 })
             })
-            applyReasoningControls(this, model)
+            applyReasoningControls(this, model, thinking)
             applyJsonOutputControls(this, model)
         }.toString()
 
@@ -57,31 +86,47 @@ abstract class AnthropicMessagesProvider : BaseAIProvider() {
         apiKey: String,
         model: String,
         text: String,
+        thinking: ThinkingLevel,
     ): Result<String> = TranslationNetworkHelper.translate(
         this,
         apiKey,
         model,
         text,
         messagesEndpoint,
+        thinking,
     )
 }
 
 abstract class OpenAIResponsesProvider : BaseAIProvider() {
     final override val protocol = AIProtocol.RESPONSES
     protected abstract val responsesEndpoint: String
-    protected open fun applyReasoningControls(request: JSONObject, model: String) = Unit
+
+    internal open fun reasoningEffortFor(model: String, thinking: ThinkingLevel): String? = null
+
+    override fun thinkingLevelsFor(model: String): List<ThinkingLevel> =
+        resolveThinkingLevels { reasoningEffortFor(model, it) }
+
+    protected open fun applyReasoningControls(
+        request: JSONObject,
+        model: String,
+        thinking: ThinkingLevel,
+    ) {
+        reasoningEffortFor(model, thinking)?.let {
+            request.put("reasoning", JSONObject().put("effort", it))
+        }
+    }
 
     override fun buildHeaders(apiKey: String) = mapOf(
         "Authorization" to "Bearer $apiKey",
         "Content-Type" to "application/json",
     )
 
-    override fun buildTranslateRequest(model: String, text: String): String =
+    override fun buildTranslateRequest(model: String, text: String, thinking: ThinkingLevel): String =
         JSONObject().apply {
             put("model", model)
             put("input", createPrompt(text))
             put("max_output_tokens", TRANSLATION_MAX_OUTPUT_TOKENS)
-            applyReasoningControls(this, model)
+            applyReasoningControls(this, model, thinking)
             applyJsonOutputControls(this, model)
         }.toString()
 
@@ -116,12 +161,14 @@ abstract class OpenAIResponsesProvider : BaseAIProvider() {
         apiKey: String,
         model: String,
         text: String,
+        thinking: ThinkingLevel,
     ): Result<String> = TranslationNetworkHelper.translate(
         this,
         apiKey,
         model,
         text,
         responsesEndpoint,
+        thinking,
     )
 }
 

@@ -113,7 +113,7 @@ class NogiFirebaseMessagingService : FirebaseMessagingService() {
                     Log.d(TAG, "Successfully fetched full blog ${fullBlog.id}, updating database and cache")
                     AppGraph.blogs.upsertBlog(fullBlog, isUnread = !BlogReadTracker.isViewing(fullBlog.id))
                     BlogMediaDownloader.enqueue(this, fullBlog)
-                    BlogTranslationManager.enqueue(this, fullBlog.id, force = true)
+                    BlogTranslationManager.enqueueAfterSync(this, listOf(fullBlog.id), forceNew = true)
                 } else {
                     Log.w(TAG, "Could not fetch full blog body for ${previewBlog.id}; enqueueing pending")
                     BlogTranslationManager.enqueuePending(this)

@@ -2,7 +2,10 @@ package com.nogirelay.app.translation.providers
 
 import com.nogirelay.app.translation.AIModel
 import com.nogirelay.app.translation.AIProviderType
+import com.nogirelay.app.translation.HIGH_THINKING_BUDGET_TOKENS
 import com.nogirelay.app.translation.JsonOutputSupport
+import com.nogirelay.app.translation.LOW_THINKING_BUDGET_TOKENS
+import com.nogirelay.app.translation.ThinkingLevel
 import org.json.JSONObject
 
 class KimiProvider : AnthropicMessagesProvider() {
@@ -21,13 +24,26 @@ class KimiProvider : AnthropicMessagesProvider() {
 
     override fun buildHeaders(apiKey: String) = buildMessagesHeaders(apiKey)
 
-    override fun applyReasoningControls(request: JSONObject, model: String) {
+    override fun reasoningControlFor(model: String, thinking: ThinkingLevel): AnthropicReasoningControl {
         val id = model.lowercase()
-        if (id.contains("thinking") || id.startsWith("kimi-k3")) {
-
-            request.put("output_config", JSONObject().put("effort", "low"))
+        return if (id.contains("thinking") || id.startsWith("kimi-k3")) {
+            val effort = when (thinking) {
+                ThinkingLevel.NONE, ThinkingLevel.LOW -> "low"
+                ThinkingLevel.HIGH -> "high"
+            }
+            AnthropicReasoningControl(effort = effort)
         } else {
-            request.put("thinking", JSONObject().put("type", "disabled"))
+            when (thinking) {
+                ThinkingLevel.NONE -> AnthropicReasoningControl(thinkingType = "disabled")
+                ThinkingLevel.LOW -> AnthropicReasoningControl(
+                    thinkingType = "enabled",
+                    budgetTokens = LOW_THINKING_BUDGET_TOKENS,
+                )
+                ThinkingLevel.HIGH -> AnthropicReasoningControl(
+                    thinkingType = "enabled",
+                    budgetTokens = HIGH_THINKING_BUDGET_TOKENS,
+                )
+            }
         }
     }
 
