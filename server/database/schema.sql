@@ -117,6 +117,28 @@ CREATE TABLE IF NOT EXISTS members (
 CREATE INDEX idx_members_name ON members(name);
 CREATE INDEX idx_members_generation ON members(generation);
 
+-- 成员来电封面图增量历史表：保留每张历史封面，is_latest = true 指向来电展示的最新一张
+CREATE TABLE IF NOT EXISTS member_phone_images (
+    id BIGSERIAL PRIMARY KEY,
+    member_id VARCHAR(255) NOT NULL,
+    member_name VARCHAR(255),
+    source_url TEXT NOT NULL,
+    local_path TEXT NOT NULL,
+    sha256 VARCHAR(64) NOT NULL,
+    file_size BIGINT,
+    is_latest BOOLEAN NOT NULL DEFAULT false,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (member_id, sha256)
+);
+
+CREATE INDEX IF NOT EXISTS idx_member_phone_images_member_latest
+    ON member_phone_images (member_id, is_latest DESC, last_seen_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_member_phone_images_member_url
+    ON member_phone_images (member_id, source_url);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_member_phone_images_one_latest
+    ON member_phone_images (member_id) WHERE is_latest = true;
+
 -- 公开 BLOG 只保存推送去重所需的元数据；正文由 Android 直接从官网同步。
 CREATE TABLE IF NOT EXISTS blog_posts (
     id VARCHAR(255) PRIMARY KEY,

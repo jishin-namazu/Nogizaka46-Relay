@@ -1,5 +1,6 @@
 import express from 'express';
 import fs from 'fs/promises';
+import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { readPersistedErrorLogs, recordError } from '../services/error-log.js';
 import {
@@ -21,6 +22,7 @@ import {
   touchAccountSignal,
 } from '../services/account-service.js';
 import { queryOne, queryAll } from '../db/index.js';
+import phoneImageService from '../services/phone-image.js';
 
 const router = express.Router();
 const SERVER_BOOT_TIME = new Date(Date.now() - Math.floor(process.uptime()) * 1000).toISOString();
@@ -296,6 +298,8 @@ router.get('/overview', async (req, res) => {
           memoryRssMb: Math.round(mem.rss / 1024 / 1024),
           memoryHeapMb: Math.round(mem.heapUsed / 1024 / 1024),
           memoryHeapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+          totalMemoryMb: Math.round(os.totalmem() / 1024 / 1024),
+          cpuCount: os.cpus().length,
           nodeVersion: process.version,
           platform: process.platform,
         },
@@ -668,6 +672,20 @@ router.get('/messages', async (req, res) => {
     `;
 
     const messages = await queryAll(selectSql, params);
+    const audioMemberIds = messages
+      .filter(m => m.type === 'audio' && m.member_id)
+      .map(m => m.member_id);
+    const latestCoversByMember = await phoneImageService.getLatestByMemberIds(audioMemberIds);
+    const enrichedMessages = messages.map(m => {
+      if (m.type !== 'audio') return m;
+      const latestCover = latestCoversByMember.get(String(m.member_id));
+      if (!latestCover) return m;
+      return {
+        ...m,
+        phone_image_url: latestCover.source_url || m.phone_image_url,
+        phone_image_local_path: latestCover.local_path || m.phone_image_local_path,
+      };
+    });
 
     res.json({
       success: true,
@@ -675,11 +693,32 @@ router.get('/messages', async (req, res) => {
         total: totalCount,
         limit,
         offset,
-        messages,
+        messages: enrichedMessages,
       },
     });
   } catch (error) {
     await recordError('server.admin.messages', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /v1/admin/members/:memberId/phone-images
+ * 查看某位成员在服务器增量归档的全部来电封面历史记录
+ */
+router.get('/members/:memberId/phone-images', async (req, res) => {
+  try {
+    const images = await phoneImageService.listMemberPhoneImages(req.params.memberId);
+    res.json({
+      success: true,
+      data: {
+        member_id: req.params.memberId,
+        count: images.length,
+        images,
+      },
+    });
+  } catch (error) {
+    await recordError('server.admin.member_phone_images', error, { member_id: req.params.memberId });
     res.status(500).json({ success: false, error: error.message });
   }
 });

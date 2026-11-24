@@ -41,9 +41,21 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
+function matchesIfNoneMatch(headerValue, etag) {
+  if (!headerValue || !etag) return false;
+  return String(headerValue)
+    .split(',')
+    .map(token => token.trim())
+    .some(token => token === '*' || token === etag || token === `W/${etag}`);
+}
+
 class NogiMediaServer {
-  constructor({ port = Number.parseInt(process.env.NOGI_MEDIA_PORT || `${DEFAULT_PORT}`, 10) } = {}) {
+  constructor({
+    port = Number.parseInt(process.env.NOGI_MEDIA_PORT || `${DEFAULT_PORT}`, 10),
+    messageStore = messageService,
+  } = {}) {
     this.port = Number.isInteger(port) && port > 0 ? port : DEFAULT_PORT;
+    this.messageStore = messageStore;
     this.server = null;
   }
 
@@ -102,15 +114,32 @@ class NogiMediaServer {
     if (!target) return sendJson(response, 404, { error: 'Not found' });
 
     const { messageId, kind } = target;
-    const filePath = await messageService.getStoredMediaPath(messageId, kind);
+    const mediaInfo = typeof this.messageStore.getStoredMediaInfo === 'function'
+      ? await this.messageStore.getStoredMediaInfo(messageId, kind)
+      : { filePath: await this.messageStore.getStoredMediaPath(messageId, kind), sha256: null };
+    const filePath = mediaInfo?.filePath || null;
     if (!filePath) return sendJson(response, 404, { error: 'Media not archived' });
 
     const stat = await fsp.stat(filePath);
     if (!stat.isFile() || stat.size <= 0) return sendJson(response, 404, { error: 'Media not archived' });
 
+    const etag = mediaInfo?.sha256
+      ? `"${mediaInfo.sha256}"`
+      : `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`;
+    response.setHeader('ETag', etag);
+    response.setHeader('Last-Modified', stat.mtime.toUTCString());
+    response.setHeader(
+      'Cache-Control',
+      kind === 'phone_image' ? 'private, no-cache' : 'private, max-age=86400',
+    );
+    if (matchesIfNoneMatch(request.headers['if-none-match'], etag)) {
+      response.statusCode = 304;
+      response.end();
+      return;
+    }
+
     const extension = path.extname(filePath).slice(1).toLowerCase();
     response.statusCode = 200;
-    response.setHeader('Cache-Control', 'private, max-age=86400');
     response.setHeader('Content-Type', MIME_BY_EXTENSION[extension] || 'application/octet-stream');
     response.setHeader('Content-Length', String(stat.size));
     fs.createReadStream(filePath).on('error', error => {

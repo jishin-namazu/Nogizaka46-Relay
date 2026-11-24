@@ -121,6 +121,7 @@ internal fun LiquidGlassIncomingCallScreen(
                     modifier = Modifier.fillMaxSize().clearAndSetSemantics { },
                     contentScale = ContentScale.Crop,
                     loadCachedImmediately = true,
+                    revalidateRemote = true,
                     placeholderColor = Color.Transparent,
                 )
             }

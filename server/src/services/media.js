@@ -12,8 +12,20 @@ const MAX_MEDIA_BYTES = Number.parseInt(process.env.MEDIA_MAX_BYTES || `${100 * 
 // 在多通来电中复用同一张通话图片，因此相同字节只存
 // 一份，每条消息记录都指向那个共享对象。
 const OBJECTS_DIR = 'objects';
+const PHONE_IMAGES_DIR = 'phone-images';
 const TEMP_DIR = '.tmp';
 const URL_CACHE_LIMIT = 1000;
+
+function sanitizePathSegment(value, fallback = 'unknown') {
+  const cleaned = String(value ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '_');
+  return cleaned || fallback;
+}
+
+function utcTimestampStamp(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}`
+    + `-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
+}
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -67,12 +79,20 @@ class MediaArchive {
     return path.join(this.storageDir, OBJECTS_DIR, `${digest}.${extension}`);
   }
 
-  async download(url, kind, type) {
+  memberPhoneImagePath(memberId, digest, extension, date = new Date()) {
+    const safeMemberId = sanitizePathSegment(memberId, 'unknown');
+    const shortDigest = String(digest).slice(0, 12);
+    return path.join(
+      this.storageDir,
+      PHONE_IMAGES_DIR,
+      safeMemberId,
+      `${utcTimestampStamp(date)}-${shortDigest}.${extension}`,
+    );
+  }
+
+  async downloadToTemp(url, kind, type) {
     if (!url || !url.startsWith('https://')) throw new Error('media URL must use HTTPS');
     await this.ensureStorage();
-
-    const cachedUrl = this.urlObjects.get(url);
-    if (cachedUrl && await this.storedFile(cachedUrl)) return cachedUrl;
 
     const tempDir = path.join(this.storageDir, TEMP_DIR);
     await fsp.mkdir(tempDir, { recursive: true });
@@ -113,8 +133,31 @@ class MediaArchive {
 
       const extension = (isImageKind(kind, type) ? await this.sniffImageExtension(tempPath) : null)
         || extensionFor(url, kind, type);
-      const objectPath = this.objectPath(digest.digest('hex'), extension);
+      return {
+        tempPath,
+        sha256: digest.digest('hex'),
+        fileSize: total,
+        extension,
+      };
+    } catch (error) {
+      output?.destroy();
+      await fsp.rm(tempPath, { force: true }).catch(() => {});
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
+  async download(url, kind, type) {
+    if (!url || !url.startsWith('https://')) throw new Error('media URL must use HTTPS');
+    await this.ensureStorage();
+
+    const cachedUrl = this.urlObjects.get(url);
+    if (cachedUrl && await this.storedFile(cachedUrl)) return cachedUrl;
+
+    const { tempPath, sha256, extension } = await this.downloadToTemp(url, kind, type);
+    const objectPath = this.objectPath(sha256, extension);
+    try {
       if (await this.storedFile(objectPath)) {
         await fsp.rm(tempPath, { force: true });
       } else {
@@ -126,11 +169,54 @@ class MediaArchive {
       this.urlObjects.set(url, objectPath);
       return objectPath;
     } catch (error) {
-      output?.destroy();
       await fsp.rm(tempPath, { force: true }).catch(() => {});
       throw error;
-    } finally {
-      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * 增量归档成员来电封面图：每个新内容（不同 sha256）在
+   * phone-images/<memberId>/ 下保存为独立文件，永不覆盖历史封面。
+   */
+  async downloadMemberPhoneImage(url, memberId, { resolveExistingPath = null } = {}) {
+    const { tempPath, sha256, fileSize, extension } = await this.downloadToTemp(url, 'phone_image', 'image');
+    try {
+      const existingPath = resolveExistingPath ? await resolveExistingPath(sha256) : null;
+      if (existingPath && await this.storedFile(existingPath)) {
+        await fsp.rm(tempPath, { force: true });
+        return {
+          localPath: existingPath,
+          sha256,
+          fileSize,
+          extension,
+          isNewFile: false,
+        };
+      }
+
+      const targetPath = this.memberPhoneImagePath(memberId, sha256, extension);
+      if (await this.storedFile(targetPath)) {
+        await fsp.rm(tempPath, { force: true });
+        return {
+          localPath: targetPath,
+          sha256,
+          fileSize,
+          extension,
+          isNewFile: false,
+        };
+      }
+
+      await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+      await fsp.rename(tempPath, targetPath);
+      return {
+        localPath: targetPath,
+        sha256,
+        fileSize,
+        extension,
+        isNewFile: true,
+      };
+    } catch (error) {
+      await fsp.rm(tempPath, { force: true }).catch(() => {});
+      throw error;
     }
   }
 
@@ -159,7 +245,9 @@ class MediaArchive {
       result.thumbnailLocalPath = await this.archiveOne(message.thumbnail_url, 'thumbnail', message.type, message.id);
     }
     if (message.type === 'audio' && message.incoming_call_from && message.phone_image_url) {
-      result.phoneImageLocalPath = await this.archiveOne(message.phone_image_url, 'phone_image', 'image', message.id);
+      const existingPhonePath = await this.storedFile(message.phone_image_local_path);
+      result.phoneImageLocalPath = existingPhonePath
+        || await this.archiveOne(message.phone_image_url, 'phone_image', 'image', message.id);
     }
     return result;
   }
@@ -173,13 +261,14 @@ class MediaArchive {
     }
   }
 
-  publicUrl(messageId, kind = 'media') {
+  publicUrl(messageId, kind = 'media', version = null) {
     const baseUrl = (
       process.env.PUBLIC_MEDIA_BASE_URL
       || process.env.PUBLIC_BASE_URL
-      || 'https://nogi-relay.fly.dev'
+      || `http://127.0.0.1:${process.env.NOGI_MEDIA_PORT || 8081}`
     ).replace(/\/$/, '');
-    return `${baseUrl}/v1/messages/${encodeURIComponent(messageId)}/media/${kind}`;
+    const url = `${baseUrl}/v1/messages/${encodeURIComponent(messageId)}/media/${kind}`;
+    return version ? `${url}?v=${encodeURIComponent(String(version))}` : url;
   }
 
   isSafeStoredPath(filePath) {

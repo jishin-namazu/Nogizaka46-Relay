@@ -11,6 +11,7 @@ import {
   readBrowserSession,
 } from '../services/account-service.js';
 import { recordError } from '../services/error-log.js';
+import phoneImageService from '../services/phone-image.js';
 import { NogiBrowserMonitor } from './nogi-browser.js';
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -38,6 +39,7 @@ class AccountManager {
 
     try {
       await ensureAccountsSchema();
+      await phoneImageService.ensureSchema();
       await this.loadAndStartAccounts();
       await this.startSignalWatcher();
       await this.startLegacyWatcher();

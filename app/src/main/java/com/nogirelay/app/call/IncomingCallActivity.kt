@@ -443,6 +443,7 @@ private fun IncomingCallScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
                     loadCachedImmediately = true,
+                    revalidateRemote = true,
                     placeholderResId = R.drawable.ic_person_official,
                 )
             }

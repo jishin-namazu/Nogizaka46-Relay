@@ -2,6 +2,7 @@ import admin from 'firebase-admin';
 import { readFileSync } from 'fs';
 import dotenv from 'dotenv';
 import mediaArchive from './media.js';
+import { phoneImageVersionTag } from './phone-image.js';
 import { recordError } from './error-log.js';
 
 dotenv.config();
@@ -15,9 +16,12 @@ export function pushPayload(message) {
   const thumbnailUrl = message.thumbnail_local_path
     ? mediaArchive.publicUrl(message.id, 'thumbnail')
     : message.thumbnail_url;
-  const phoneImageUrl = message.phone_image_local_path
-    ? mediaArchive.publicUrl(message.id, 'phone_image')
-    : message.phone_image_url;
+  const phoneImageVersion = phoneImageVersionTag(message.phone_image_sha256);
+  const phoneImageUrl = message.type === 'audio'
+    ? (message.phone_image_local_path
+      ? mediaArchive.publicUrl(message.id, 'phone_image', phoneImageVersion)
+      : message.phone_image_url)
+    : null;
 
   return {
     id: message.id,
@@ -94,7 +98,7 @@ export function initializeFirebase() {
   try {
     let serviceAccount;
 
-    // 支持 Base64 编码的密钥（用于 Fly.io 等平台）
+    // 支持 Base64 编码的密钥（便于容器/环境变量注入）
     if (process.env.FIREBASE_PRIVATE_KEY_BASE64) {
       console.log('Using Firebase key from FIREBASE_PRIVATE_KEY_BASE64 env variable');
       const base64Key = process.env.FIREBASE_PRIVATE_KEY_BASE64;

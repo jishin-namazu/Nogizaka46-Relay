@@ -1,6 +1,7 @@
 import express from 'express';
 import messageService from '../services/message.js';
 import mediaArchive from '../services/media.js';
+import phoneImageService, { phoneImageVersionTag } from '../services/phone-image.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { authenticate, authenticateClient } from '../middleware/auth.js';
@@ -14,6 +15,22 @@ function mediaUrl(message, field, kind) {
     phone_image: 'phone_image_local_path',
   }[kind];
   return (message[field] || message[localField]) ? mediaArchive.publicUrl(message.id, kind) : null;
+}
+
+function phoneImagePublicUrl(message, latestCover = null) {
+  if (message.type !== 'audio') return null;
+  if (latestCover && (latestCover.local_path || latestCover.source_url)) {
+    return mediaArchive.publicUrl(message.id, 'phone_image', phoneImageVersionTag(latestCover));
+  }
+  return mediaUrl(message, 'phone_image_url', 'phone_image');
+}
+
+function matchesIfNoneMatch(headerValue, etag) {
+  if (!headerValue || !etag) return false;
+  return String(headerValue)
+    .split(',')
+    .map(token => token.trim())
+    .some(token => token === '*' || token === etag || token === `W/${etag}`);
 }
 
 const router = express.Router();
@@ -34,13 +51,17 @@ router.get('/:id', authenticateClient, async (req, res) => {
       });
     }
 
+    const latestCover = message.type === 'audio' && message.member_id
+      ? await phoneImageService.getLatestForMember(message.member_id)
+      : null;
+
     // 返回客户端期望的格式
     res.json({
       id: message.id,
       member_id: message.member_id,
       member_name: message.member_name,
       member_avatar_url: message.member_avatar_url,
-      phone_image_url: mediaUrl(message, 'phone_image_url', 'phone_image'),
+      phone_image_url: phoneImagePublicUrl(message, latestCover),
       type: message.type,
       text: message.text,
       media_url: mediaUrl(message, 'media_url', 'media'),
@@ -69,9 +90,23 @@ router.get('/:id/media/:kind', authenticateClient, async (req, res) => {
     if (!['media', 'thumbnail', 'phone_image'].includes(req.params.kind)) {
       return res.status(400).json({ error: 'Invalid media kind' });
     }
-    const filePath = await messageService.getStoredMediaPath(req.params.id, req.params.kind);
+    const mediaInfo = await messageService.getStoredMediaInfo(req.params.id, req.params.kind);
+    const filePath = mediaInfo?.filePath || null;
     if (filePath && fs.existsSync(filePath)) {
-      res.setHeader('Cache-Control', 'private, max-age=86400');
+      if (req.params.kind === 'phone_image') {
+        const stat = fs.statSync(filePath);
+        const etag = mediaInfo.sha256
+          ? `"${mediaInfo.sha256}"`
+          : `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`;
+        res.setHeader('Cache-Control', 'private, no-cache');
+        res.setHeader('ETag', etag);
+        res.setHeader('Last-Modified', stat.mtime.toUTCString());
+        if (matchesIfNoneMatch(req.headers['if-none-match'], etag)) {
+          return res.status(304).end();
+        }
+      } else {
+        res.setHeader('Cache-Control', 'private, max-age=86400');
+      }
       return res.sendFile(path.resolve(filePath), {
         acceptRanges: true,
       });
@@ -79,11 +114,16 @@ router.get('/:id/media/:kind', authenticateClient, async (req, res) => {
 
     // 本地未落盘时仅回退至未过期的原始远程直链；若签名已过期则返回 404，避免客户端收到 CloudFront 403 而反复重试
     const message = await messageService.getMessage(req.params.id);
-    const remoteUrl = {
+    let remoteUrl = {
       media: message?.media_url,
       thumbnail: message?.thumbnail_url,
       phone_image: message?.phone_image_url,
     }[req.params.kind];
+
+    if (req.params.kind === 'phone_image' && message?.member_id) {
+      const latestCover = await phoneImageService.getLatestForMember(message.member_id);
+      if (latestCover?.source_url) remoteUrl = latestCover.source_url;
+    }
 
     if (remoteUrl) {
       try {
@@ -122,6 +162,11 @@ router.get('/', authenticateClient, async (req, res) => {
       memberId,
     });
 
+    const audioMemberIds = messages
+      .filter(m => m.type === 'audio' && m.member_id)
+      .map(m => m.member_id);
+    const latestCoversByMember = await phoneImageService.getLatestByMemberIds(audioMemberIds);
+
     res.json({
       success: true,
       messages: messages.map(m => ({
@@ -129,7 +174,7 @@ router.get('/', authenticateClient, async (req, res) => {
         member_id: m.member_id,
         member_name: m.member_name,
         member_avatar_url: m.member_avatar_url,
-        phone_image_url: mediaUrl(m, 'phone_image_url', 'phone_image'),
+        phone_image_url: phoneImagePublicUrl(m, latestCoversByMember.get(String(m.member_id)) || null),
         type: m.type,
         text: m.text,
         media_url: mediaUrl(m, 'media_url', 'media'),

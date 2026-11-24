@@ -1,5 +1,6 @@
 import db from '../db/index.js';
 import mediaArchive from './media.js';
+import phoneImageService from './phone-image.js';
 
 const NON_TEST_MESSAGE = "id !~ '^test[-_]'";
 
@@ -7,6 +8,39 @@ const NON_TEST_MESSAGE = "id !~ '^test[-_]'";
  * 消息存储服务
  */
 class MessageService {
+  async resolveAudioPhoneImage(message) {
+    if (message.type !== 'audio' || !message.incoming_call_from || !message.phone_image_url) {
+      return { localPath: null, sha256: null, sourceUrl: message.phone_image_url || null };
+    }
+
+    const preArchivedPath = await mediaArchive.storedFile(message.phone_image_local_path);
+    if (preArchivedPath) {
+      let sha256 = message.phone_image_sha256 || null;
+      if (!sha256 && message.member_id) {
+        const latest = await phoneImageService.getLatestForMember(message.member_id);
+        if (latest?.local_path === preArchivedPath) sha256 = latest.sha256 || null;
+      }
+      return { localPath: preArchivedPath, sha256, sourceUrl: message.phone_image_url };
+    }
+
+    if (message.member_id) {
+      const archived = await phoneImageService.recordMemberPhoneImage({
+        memberId: message.member_id,
+        memberName: message.member_name || null,
+        sourceUrl: message.phone_image_url,
+      });
+      if (archived?.record) {
+        return {
+          localPath: archived.record.local_path || null,
+          sha256: archived.record.sha256 || null,
+          sourceUrl: archived.record.source_url || message.phone_image_url,
+        };
+      }
+    }
+
+    return { localPath: null, sha256: null, sourceUrl: message.phone_image_url };
+  }
+
   /**
    * 保存消息（带去重）
    */
@@ -18,19 +52,36 @@ class MessageService {
     );
 
     if (existing) {
-      // 为在本地媒体存储启用之前创建或迁移后本地文件缺失的行重试媒体归档。
+      // 为在本地媒体存储启用之前创建或迁移后本地文件缺失的行重试媒体归档，
+      // 并在成员来电封面更新后同步最新封面引用。
       const existingMedia = await mediaArchive.storedFile(existing.media_local_path);
       const existingThumb = await mediaArchive.storedFile(existing.thumbnail_local_path);
       const existingPhone = await mediaArchive.storedFile(existing.phone_image_local_path);
+      const resolvedPhone = await this.resolveAudioPhoneImage(message);
+      const targetPhoneUrl = resolvedPhone.sourceUrl || message.phone_image_url || null;
       const needsPhoneImage = message.type === 'audio'
-        && message.incoming_call_from
-        && message.phone_image_url
-        && !existingPhone;
+        && Boolean(message.incoming_call_from)
+        && Boolean(targetPhoneUrl)
+        && (
+          !existingPhone
+          || existing.phone_image_url !== targetPhoneUrl
+          || (resolvedPhone.localPath && existing.phone_image_local_path !== resolvedPhone.localPath)
+        );
       if ((message.media_url && !existingMedia)
         || (message.thumbnail_url && !existingThumb)
         || needsPhoneImage) {
-        const archived = await mediaArchive.archiveMessage(message);
-        if (archived.mediaLocalPath || archived.thumbnailLocalPath || archived.phoneImageLocalPath) {
+        const messageForArchive = {
+          ...message,
+          media_url: existingMedia ? null : message.media_url,
+          thumbnail_url: existingThumb ? null : message.thumbnail_url,
+          phone_image_url: needsPhoneImage ? targetPhoneUrl : null,
+          phone_image_local_path: needsPhoneImage
+            ? (resolvedPhone.localPath || message.phone_image_local_path || null)
+            : null,
+        };
+        const archived = await mediaArchive.archiveMessage(messageForArchive);
+        const nextPhoneLocalPath = resolvedPhone.localPath || archived.phoneImageLocalPath;
+        if (archived.mediaLocalPath || archived.thumbnailLocalPath || nextPhoneLocalPath || needsPhoneImage) {
           const updated = await db.queryOne(
             `UPDATE messages
              SET media_local_path = COALESCE($1, media_local_path),
@@ -44,14 +95,19 @@ class MessageService {
             [
               archived.mediaLocalPath,
               archived.thumbnailLocalPath,
-              archived.phoneImageLocalPath,
+              nextPhoneLocalPath,
               message.media_url || null,
               message.thumbnail_url || null,
-              message.phone_image_url || null,
+              targetPhoneUrl,
               message.id,
             ],
           );
-          return { message: updated || existing, isNew: false };
+          if (message.source_account_id) {
+            await this.addSourceAccount(message.id, message.source_account_id);
+          }
+          const finalMessage = updated || existing;
+          if (resolvedPhone.sha256) finalMessage.phone_image_sha256 = resolvedPhone.sha256;
+          return { message: finalMessage, isNew: false };
         }
       }
       if (message.source_account_id) {
@@ -61,7 +117,14 @@ class MessageService {
       return { message: existing, isNew: false, duplicate: true };
     }
 
-    const archived = await mediaArchive.archiveMessage(message);
+    const resolvedPhone = await this.resolveAudioPhoneImage(message);
+    const targetPhoneUrl = resolvedPhone.sourceUrl || message.phone_image_url || null;
+    const archived = await mediaArchive.archiveMessage({
+      ...message,
+      phone_image_url: targetPhoneUrl,
+      phone_image_local_path: resolvedPhone.localPath || message.phone_image_local_path || null,
+    });
+    const finalPhoneLocalPath = resolvedPhone.localPath || archived.phoneImageLocalPath;
     const sourceAccount = message.source_account_id ? [String(message.source_account_id)] : [];
     const sourceAccountsJson = JSON.stringify(sourceAccount);
 
@@ -85,7 +148,7 @@ class MessageService {
         message.member_id || null,
         message.member_name,
         message.member_avatar_url || null,
-        message.phone_image_url || null,
+        targetPhoneUrl,
         message.type,
         message.text || null,
         message.media_url || null,
@@ -98,7 +161,7 @@ class MessageService {
         JSON.stringify(message.original_data || {}),
         archived.mediaLocalPath,
         archived.thumbnailLocalPath,
-        archived.phoneImageLocalPath,
+        finalPhoneLocalPath,
         sourceAccountsJson,
       ]
     );
@@ -106,6 +169,7 @@ class MessageService {
     if (result) {
       const isNew = Boolean(result.is_new_insert);
       delete result.is_new_insert;
+      if (resolvedPhone.sha256) result.phone_image_sha256 = resolvedPhone.sha256;
       return { message: result, isNew };
     }
 
@@ -113,18 +177,51 @@ class MessageService {
       'SELECT * FROM messages WHERE id = $1',
       [message.id],
     );
-    return { message: racedMessage || message, isNew: false };
+    const finalMessage = racedMessage || message;
+    if (resolvedPhone.sha256) finalMessage.phone_image_sha256 = resolvedPhone.sha256;
+    return { message: finalMessage, isNew: false };
   }
 
-  async getStoredMediaPath(messageId, kind) {
+  async getStoredMediaInfo(messageId, kind) {
     const message = await this.getMessage(messageId);
     if (!message) return null;
+
+    if (kind === 'phone_image') {
+      if (message.member_id) {
+        const latest = await phoneImageService.getLatestStoredFileForMember(message.member_id);
+        if (latest?.filePath) {
+          return {
+            filePath: latest.filePath,
+            sha256: latest.sha256 || null,
+            sourceUrl: latest.sourceUrl || message.phone_image_url || null,
+          };
+        }
+      }
+      const fallbackPath = await mediaArchive.storedFile(message.phone_image_local_path);
+      if (!fallbackPath) return null;
+      return {
+        filePath: fallbackPath,
+        sha256: null,
+        sourceUrl: message.phone_image_url || null,
+      };
+    }
+
     const localPath = {
       media: message.media_local_path,
       thumbnail: message.thumbnail_local_path,
-      phone_image: message.phone_image_local_path,
     }[kind];
-    return mediaArchive.storedFile(localPath);
+    const storedPath = await mediaArchive.storedFile(localPath);
+    if (!storedPath) return null;
+    return {
+      filePath: storedPath,
+      sha256: null,
+      sourceUrl: kind === 'media' ? message.media_url : message.thumbnail_url,
+    };
+  }
+
+  async getStoredMediaPath(messageId, kind) {
+    const info = await this.getStoredMediaInfo(messageId, kind);
+    return info?.filePath || null;
   }
 
   /**
@@ -204,13 +301,26 @@ class MessageService {
   async hasMessage(id) {
     if (!id) return false;
     const row = await db.queryOne(
-      'SELECT id, type, media_url, media_local_path FROM messages WHERE id = $1',
+      'SELECT id, type, member_id, media_url, media_local_path, phone_image_url, phone_image_local_path FROM messages WHERE id = $1',
       [id],
     );
     if (!row) return false;
     if (row.type !== 'text' && row.media_url) {
       const stored = await mediaArchive.storedFile(row.media_local_path);
       if (!stored) return false;
+    }
+    if (row.type === 'audio') {
+      const latest = row.member_id ? await phoneImageService.getLatestForMember(row.member_id) : null;
+      if (latest) {
+        const latestStored = await mediaArchive.storedFile(latest.local_path);
+        if (!latestStored) return false;
+        if (row.phone_image_url !== latest.source_url || row.phone_image_local_path !== latest.local_path) {
+          return false;
+        }
+      } else if (row.phone_image_url) {
+        const storedPhone = await mediaArchive.storedFile(row.phone_image_local_path);
+        if (!storedPhone) return false;
+      }
     }
     return true;
   }

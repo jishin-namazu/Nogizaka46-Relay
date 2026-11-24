@@ -16,6 +16,7 @@ import { pool, query as dbQuery } from './db/index.js';
 import mediaArchive from './services/media.js';
 import { recordError } from './services/error-log.js';
 import { ensureAccountsSchema } from './services/account-service.js';
+import phoneImageService, { MEMBER_PHONE_IMAGES_SCHEMA_SQL } from './services/phone-image.js';
 
 dotenv.config();
 configuredTokens();
@@ -51,7 +52,7 @@ app.get(['/admin', '/admin/*'], (req, res, next) => {
   next();
 });
 
-// 部署在 Fly.io 边缘代理之后：代理会终止 TLS 并附加 X-Forwarded-For。
+// 部署在 Nginx / Caddy 等反向代理之后：代理会终止 TLS 并附加 X-Forwarded-For。
 // 信任最近的一跳，让 req.ip 取到代理写入的真实客户端 IP，而不是所有请求
 // 共用的代理地址；用数字而非 true，避免客户端伪造该头绕过 IP 限流。
 // 若将来在前面再叠加一层代理（如 Cloudflare），调大 TRUST_PROXY_HOPS 即可。
@@ -144,7 +145,7 @@ app.post('/init-db', authenticate, async (req, res) => {
       CREATE INDEX IF NOT EXISTS idx_push_logs_status ON push_logs(status);
       CREATE INDEX IF NOT EXISTS idx_push_logs_created_at ON push_logs(created_at DESC);
 
-      -- 持久化结构化错误日志，便于在 Fly 日志轮转后追查故障
+      -- 持久化结构化错误日志，便于在系统日志轮转后追查故障
       CREATE TABLE IF NOT EXISTS error_logs (
           id BIGSERIAL PRIMARY KEY,
           created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -222,6 +223,7 @@ app.post('/init-db', authenticate, async (req, res) => {
     `;
 
     await dbQuery(schemaSQL);
+    await dbQuery(MEMBER_PHONE_IMAGES_SCHEMA_SQL);
 
     res.json({
       success: true,
@@ -296,6 +298,7 @@ async function ensureMessageMediaColumns() {
 
 await ensureMessageMediaColumns();
 await ensureAccountsSchema();
+await phoneImageService.ensureSchema().catch(error => recordError('server.database_migration', error));
 
 // 移除旧版测试调用实现写入的行，以免它们在重启后被
 // 历史同步返回或被计为真实消息。

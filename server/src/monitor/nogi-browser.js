@@ -4,6 +4,7 @@ import { watch, existsSync } from 'node:fs';
 import path from 'node:path';
 import messageService from '../services/message.js';
 import pushService from '../services/push.js';
+import phoneImageService from '../services/phone-image.js';
 import { recordError } from '../services/error-log.js';
 import {
   atomicWritePrivateFile,
@@ -23,6 +24,7 @@ const DEFAULT_APP_ID = 'jp.co.sonymusic.communication.nogizaka 2.5';
 const DEFAULT_PLATFORM = 'web';
 const DEFAULT_ORGANIZATION_ID = '1';
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
+const DEFAULT_MEMBER_SYNC_INTERVAL_MS = 30 * 60_000;
 const DEFAULT_BROWSER_STATE_FILE = (process.platform === 'win32' || !existsSync('/data'))
   ? (existsSync('./nogi-browser-state.json') ? './nogi-browser-state.json' : (existsSync('./server/nogi-browser-state.json') ? './server/nogi-browser-state.json' : './nogi-browser-state.json'))
   : '/data/nogi-browser-state.json';
@@ -83,6 +85,7 @@ class NogiBrowserMonitor {
   constructor({
     messageStore = messageService,
     pusher = pushService,
+    phoneImageStore = phoneImageService,
     accountId = null,
     accountName = null,
     sessionCookie = '',
@@ -91,6 +94,7 @@ class NogiBrowserMonitor {
   } = {}) {
     this.messageStore = messageStore;
     this.pusher = pusher;
+    this.phoneImageStore = phoneImageStore;
     this.accountId = accountId;
     this.accountName = accountName || (accountId ? `Account ${accountId}` : '主订阅账号');
     this.onStateChange = onStateChange;
@@ -104,6 +108,10 @@ class NogiBrowserMonitor {
       Number.parseInt(process.env.NOGI_POLL_INTERVAL_SECONDS || '60', 10) * 1000,
       15_000,
     ) || DEFAULT_POLL_INTERVAL_MS;
+    this.memberSyncIntervalMs = Math.max(
+      Number.parseInt(process.env.NOGI_MEMBER_SYNC_INTERVAL_SECONDS || '1800', 10) * 1000,
+      60_000,
+    ) || DEFAULT_MEMBER_SYNC_INTERVAL_MS;
     this.backfillOnStart = parseBoolean(process.env.NOGI_BACKFILL_ON_START, true);
     this.storageStateFile = process.env.NOGI_BROWSER_STATE_FILE || DEFAULT_BROWSER_STATE_FILE;
     this.accessTokenStateFile = process.env.NOGI_ACCESS_TOKEN_STATE_FILE
@@ -126,6 +134,8 @@ class NogiBrowserMonitor {
     this.historyBackfillReason = 'startup';
     this.groupMessageIds = new Map();
     this.groups = new Map();
+    this.groupMembersCache = new Map(); // groupId -> { members: Map<string, member>, fetchedAt: number }
+    this.membersCache = new Map(); // memberId -> { member, fetchedAt: number }
 
     // 循环控制与并发管理
     this.isRunning = false;
@@ -169,9 +179,10 @@ class NogiBrowserMonitor {
     return this.assertAuthAllowed(options);
   }
 
-  normalizeMessage(rawMessage, group) {
+  normalizeMessage(rawMessage, group, member = null, latestPhoneImage = null) {
     const type = normalizeType(rawMessage.type || rawMessage.content_type);
-    const memberName = firstNonEmpty(rawMessage.member_name, rawMessage.memberName, group.name, '乃木坂46');
+    const memberId = String(firstNonEmpty(rawMessage.member_id, rawMessage.memberId, member?.id, group.id));
+    const memberName = firstNonEmpty(rawMessage.member_name, rawMessage.memberName, member?.name, group.name, '乃木坂46');
     const sentAt = firstNonEmpty(
       rawMessage.published_at,
       rawMessage.sent_at,
@@ -181,13 +192,34 @@ class NogiBrowserMonitor {
     if (!id || !sentAt) return null;
 
     const isCanceled = rawMessage.state === 'canceled';
+    const isMultiMemberEntry = Boolean(member && group?.id != null && String(member.id) !== String(group.id));
+    const memberAvatarUrl = isMultiMemberEntry
+      ? firstNonEmpty(rawMessage.member_avatar_url, rawMessage.avatar, member?.thumbnail, group.thumbnail)
+      : firstNonEmpty(rawMessage.member_avatar_url, rawMessage.avatar, group.thumbnail, member?.thumbnail);
+    const phoneImageUrl = type === 'audio'
+      ? firstNonEmpty(
+        rawMessage.phone_image_url,
+        rawMessage.phone_image,
+        latestPhoneImage?.source_url,
+        member?.phone_image,
+        group.phone_image,
+      )
+      : null;
+    const phoneImageLocalPath = type === 'audio'
+      && latestPhoneImage?.local_path
+      && latestPhoneImage?.source_url === phoneImageUrl
+      ? latestPhoneImage.local_path
+      : null;
+    const phoneImageSha256 = phoneImageLocalPath ? (latestPhoneImage?.sha256 || null) : null;
 
     return {
       id: String(id),
-      member_id: String(firstNonEmpty(rawMessage.member_id, rawMessage.memberId, group.id)),
+      member_id: memberId,
       member_name: memberName,
-      member_avatar_url: firstNonEmpty(rawMessage.member_avatar_url, rawMessage.avatar, group.thumbnail),
-      phone_image_url: firstNonEmpty(rawMessage.phone_image_url, rawMessage.phone_image, group.phone_image),
+      member_avatar_url: memberAvatarUrl,
+      phone_image_url: phoneImageUrl,
+      ...(phoneImageLocalPath ? { phone_image_local_path: phoneImageLocalPath } : {}),
+      ...(phoneImageSha256 ? { phone_image_sha256: phoneImageSha256 } : {}),
       type,
       text: firstNonEmpty(rawMessage.text, rawMessage.message),
       media_url: firstNonEmpty(rawMessage.file, rawMessage.media_url),
@@ -661,9 +693,48 @@ class NogiBrowserMonitor {
     return payload;
   }
 
+  normalizeMemberProfile(rawMember) {
+    if (!rawMember || rawMember.id == null) return null;
+    return {
+      id: String(rawMember.id),
+      name: String(rawMember.name || '').trim(),
+      thumbnail: rawMember.thumbnail || null,
+      phone_image: rawMember.phone_image || null,
+      updated_at: rawMember.updated_at || null,
+    };
+  }
+
+  isAuthError(error) {
+    if (this.authPaused) return true;
+    const message = String(error?.message || '');
+    return /Nogi API (401|403)\b|Monitor paused/i.test(message);
+  }
+
   async resolveGroups() {
+    const mapGroup = (group) => ({
+      id: Number(group.id),
+      name: String(group.name || '').trim(),
+      phone_image: group.phone_image || null,
+      thumbnail: group.thumbnail || null,
+    });
+
     if (this.groupIds.length > 0) {
-      return this.groupIds.map(id => ({ id, name: '', phone_image: null, thumbnail: null }));
+      let byId = new Map();
+      try {
+        const groups = await this.apiRequest(`/v2/groups?organization_id=${encodeURIComponent(this.organizationId)}`);
+        if (Array.isArray(groups)) {
+          byId = new Map(
+            groups
+              .map(mapGroup)
+              .filter(group => Number.isInteger(group.id))
+              .map(group => [group.id, group]),
+          );
+        }
+      } catch (error) {
+        if (this.isAuthError(error)) throw error;
+        console.warn('获取群组元数据失败，回退至 NOGI_GROUP_IDS:', error.message);
+      }
+      return this.groupIds.map(id => byId.get(id) || { id, name: '', phone_image: null, thumbnail: null });
     }
 
     const groups = await this.apiRequest(`/v2/groups?organization_id=${encodeURIComponent(this.organizationId)}`);
@@ -673,13 +744,90 @@ class NogiBrowserMonitor {
       .filter(group => String(group.organization_id) === String(this.organizationId))
       .filter(group => group.state === 'open')
       .filter(group => group.subscription?.state === 'active')
-      .map(group => ({
-        id: Number(group.id),
-        name: String(group.name || '').trim(),
-        phone_image: group.phone_image || null,
-        thumbnail: group.thumbnail || null,
-      }))
+      .map(mapGroup)
       .filter(group => Number.isInteger(group.id));
+  }
+
+  async fetchGroupMembers(groupId, { force = false } = {}) {
+    const now = Date.now();
+    const cached = this.groupMembersCache.get(groupId);
+    if (!force && cached && (now - cached.fetchedAt) < this.memberSyncIntervalMs) {
+      return { members: cached.members, refreshed: false };
+    }
+
+    try {
+      const payload = await this.apiRequest(`/v2/groups/${encodeURIComponent(groupId)}/members`);
+      const list = Array.isArray(payload) ? payload : (Array.isArray(payload?.members) ? payload.members : []);
+      const members = new Map();
+      for (const rawMember of list) {
+        const member = this.normalizeMemberProfile(rawMember);
+        if (!member) continue;
+        members.set(member.id, member);
+        this.membersCache.set(member.id, { member, fetchedAt: now });
+      }
+      this.groupMembersCache.set(groupId, { members, fetchedAt: now });
+      return { members, refreshed: true };
+    } catch (error) {
+      if (this.isAuthError(error)) throw error;
+      console.warn(`获取群组 ${groupId} 成员信息失败:`, error.message);
+      return { members: cached?.members || new Map(), refreshed: false };
+    }
+  }
+
+  async fetchMember(memberId, { force = false } = {}) {
+    const key = String(memberId ?? '').trim();
+    if (!key) return null;
+
+    const now = Date.now();
+    const cached = this.membersCache.get(key);
+    if (!force && cached && (now - cached.fetchedAt) < this.memberSyncIntervalMs) {
+      return cached.member;
+    }
+
+    try {
+      const payload = await this.apiRequest(`/v2/members/${encodeURIComponent(key)}`);
+      const member = this.normalizeMemberProfile(payload);
+      if (member) {
+        this.membersCache.set(member.id, { member, fetchedAt: now });
+        return member;
+      }
+      return cached?.member || null;
+    } catch (error) {
+      if (this.isAuthError(error)) throw error;
+      console.warn(`获取成员 ${key} 信息失败:`, error.message);
+      return cached?.member || null;
+    }
+  }
+
+  async syncMemberPhoneImages(group, membersMap) {
+    if (!this.phoneImageStore?.recordMemberPhoneImage) return new Map();
+
+    const synced = new Map();
+    if (membersMap.size > 0) {
+      for (const member of membersMap.values()) {
+        const canFallbackToGroup = membersMap.size === 1 || String(member.id) === String(group.id);
+        const sourceUrl = firstNonEmpty(member.phone_image, canFallbackToGroup ? group.phone_image : null);
+        if (!sourceUrl) continue;
+        const result = await this.phoneImageStore.recordMemberPhoneImage({
+          memberId: member.id,
+          memberName: member.name || group.name || null,
+          sourceUrl,
+        });
+        if (result?.record) synced.set(member.id, result.record);
+      }
+      return synced;
+    }
+
+    if (group.phone_image) {
+      const memberId = String(group.id);
+      const result = await this.phoneImageStore.recordMemberPhoneImage({
+        memberId,
+        memberName: group.name || null,
+        sourceUrl: group.phone_image,
+      });
+      if (result?.record) synced.set(memberId, result.record);
+    }
+    return synced;
   }
 
   async fetchTimelinePage(groupId, continuation = null) {
@@ -768,8 +916,25 @@ class NogiBrowserMonitor {
         let fetched = 0;
         let stored = 0;
         let pushed = 0;
+        const refreshedAudioMembers = new Set();
+        const latestPhoneImages = new Map();
 
         for (const group of groups) {
+          const { members: membersMap, refreshed: membersRefreshed } = await this.fetchGroupMembers(group.id);
+          if (!group.name && membersMap.size === 1) {
+            const [onlyMember] = membersMap.values();
+            if (onlyMember?.name) group.name = onlyMember.name;
+          }
+          if (membersRefreshed) {
+            const syncedCovers = await this.syncMemberPhoneImages(group, membersMap);
+            for (const [memberId, record] of syncedCovers.entries()) {
+              latestPhoneImages.set(memberId, record);
+            }
+            for (const memberId of membersMap.keys()) {
+              refreshedAudioMembers.add(memberId);
+            }
+          }
+
           const shouldBackfillHistory = !this.backfilledGroupIds.has(group.id);
           const sendPush = shouldBackfillHistory ? !this.backfillOnStart : true;
           let rawMessages;
@@ -808,7 +973,48 @@ class NogiBrowserMonitor {
           fetched += newMessages.length;
           for (const rawMessage of newMessages.reverse()) {
             const rawId = String(rawMessage.id ?? rawMessage.message_id);
-            const message = this.normalizeMessage(rawMessage, group);
+            const rawType = normalizeType(rawMessage.type || rawMessage.content_type);
+            const memberId = String(firstNonEmpty(rawMessage.member_id, rawMessage.memberId, group.id));
+            let member = membersMap.get(memberId) || this.membersCache.get(memberId)?.member || null;
+            let latestCover = latestPhoneImages.get(memberId) || null;
+
+            if (rawType === 'audio') {
+              if (!refreshedAudioMembers.has(memberId)) {
+                const freshMember = await this.fetchMember(memberId, { force: true });
+                if (freshMember) {
+                  member = freshMember;
+                  membersMap.set(memberId, freshMember);
+                }
+                refreshedAudioMembers.add(memberId);
+              }
+
+              const coverSourceUrl = firstNonEmpty(
+                rawMessage.phone_image_url,
+                rawMessage.phone_image,
+                member?.phone_image,
+                group.phone_image,
+              );
+              if (
+                coverSourceUrl
+                && this.phoneImageStore?.recordMemberPhoneImage
+                && latestCover?.source_url !== coverSourceUrl
+              ) {
+                const archivedCover = await this.phoneImageStore.recordMemberPhoneImage({
+                  memberId,
+                  memberName: firstNonEmpty(rawMessage.member_name, rawMessage.memberName, member?.name, group.name),
+                  sourceUrl: coverSourceUrl,
+                });
+                if (archivedCover?.record) {
+                  latestCover = archivedCover.record;
+                  latestPhoneImages.set(memberId, latestCover);
+                }
+              }
+            } else if (!member && rawMessage.member_id != null) {
+              member = await this.fetchMember(memberId);
+              if (member) membersMap.set(memberId, member);
+            }
+
+            const message = this.normalizeMessage(rawMessage, group, member, latestCover);
             if (!message) {
               previousIds.add(rawId);
               continue;
