@@ -4,6 +4,7 @@ import com.nogirelay.app.ui.UiTestTags
 import androidx.compose.ui.platform.testTag
 import android.os.CancellationSignal
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -121,6 +122,7 @@ import com.nogirelay.app.ui.clearSelectionOnTap
 import com.nogirelay.app.ui.glass.rememberGlassPress
 import com.nogirelay.app.ui.preloadMessagePreview
 import com.nogirelay.app.ui.primeCachedMessageAspectRatios
+import com.nogirelay.app.ui.primeInitialTimelineMedia
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassColors
 import com.nogirelay.app.ui.glass.GlassCircularProgressIndicator
@@ -178,6 +180,10 @@ internal fun MemberTimelineScreen(
     locateUnreadToken: Long = 0L,
     backdropState: RelaySheetBackdropState,
     onBack: () -> Unit,
+    onPredictiveBackStart: () -> Unit = {},
+    onPredictiveBackProgress: (PredictiveBackGesture) -> Unit = {},
+    onPredictiveBackCancel: () -> Unit = {},
+    onPredictiveBackCommit: () -> Unit = onBack,
     onNoUnreadToLocate: () -> Unit = onBack,
     onInitialMessageHandled: (String) -> Unit,
     onViewingLatest: (Boolean) -> Unit,
@@ -282,7 +288,36 @@ internal fun MemberTimelineScreen(
             onBack()
         }
     }
-    BackHandler(enabled = active, onBack = ::back)
+    val latestOnPredictiveBackStart by rememberUpdatedState(onPredictiveBackStart)
+    val latestOnPredictiveBackProgress by rememberUpdatedState(onPredictiveBackProgress)
+    val latestOnPredictiveBackCancel by rememberUpdatedState(onPredictiveBackCancel)
+    val latestOnPredictiveBackCommit by rememberUpdatedState(onPredictiveBackCommit)
+    val canPredictiveCollapse = active && auxiliaryScreen == null && !searchOpen && query.isEmpty() && !showFilter
+    BackHandler(enabled = active && !canPredictiveCollapse, onBack = ::back)
+    PredictiveBackHandler(enabled = canPredictiveCollapse) { progressFlow ->
+        focusManager.clearFocus()
+        textToolbar.hide()
+        var gestureStarted = false
+        try {
+            progressFlow.collect { backEvent ->
+                if (!gestureStarted) {
+                    gestureStarted = true
+                    latestOnPredictiveBackStart()
+                }
+                latestOnPredictiveBackProgress(
+                    PredictiveBackGesture(
+                        progress = backEvent.progress,
+                        swipeEdge = backEvent.swipeEdge,
+                        touchY = backEvent.touchY,
+                    ),
+                )
+            }
+            latestOnPredictiveBackCommit()
+        } catch (cancelled: CancellationException) {
+            if (gestureStarted) latestOnPredictiveBackCancel()
+            throw cancelled
+        }
+    }
     LaunchedEffect(active) {
         if (!active) {
             focusManager.clearFocus()
@@ -390,10 +425,13 @@ internal fun MemberTimelineScreen(
                             onViewingLatest = { onViewingLatest(it && query.isBlank() && !timeFilter.isActive) },
                             onRead = { ids ->
                                 if (unreadHintEnabled) {
-                                    dissolvingUnreadIds = dissolvingUnreadIds + ids
-                                    screenScope.launch {
-                                        delay(MESSAGE_UNREAD_DISSOLVE_CLEANUP_MILLIS)
-                                        dissolvingUnreadIds = dissolvingUnreadIds - ids
+                                    val added = ids - dissolvingUnreadIds
+                                    if (added.isNotEmpty()) {
+                                        dissolvingUnreadIds = dissolvingUnreadIds + added
+                                        screenScope.launch {
+                                            delay(MESSAGE_UNREAD_DISSOLVE_CLEANUP_MILLIS)
+                                            dissolvingUnreadIds = dissolvingUnreadIds - added
+                                        }
                                     }
                                 }
                             },
@@ -1222,6 +1260,7 @@ private fun MemberTimelineHeader(
     ) {
         GlassBackButton(
             onClick = onBack,
+            enabled = active,
             contentDescription = if (searchOpen) "关闭搜索" else "返回成员列表",
         )
         Box(Modifier.weight(1f).height(48.dp)) {
@@ -1446,7 +1485,8 @@ private fun MemberTimelineContent(
 
     LaunchedEffect(window.messages, active, transitionSettled) {
         if (active && transitionSettled && window.messages.isNotEmpty()) {
-            preloadMessageMedia(context, window.messages, targetWidth = 720)
+            primeCachedMessageAspectRatios(context, window.messages)
+            preloadMessageMedia(context, window.messages, targetWidth = 768)
         }
     }
 
@@ -1468,7 +1508,11 @@ private fun MemberTimelineContent(
                     }
                 }
                 if (firstLoad) {
-                    primeCachedMessageAspectRatios(context, loaded.messages)
+                    primeInitialTimelineMedia(
+                        context = context,
+                        messages = loaded.messages,
+                        targetMessageId = initialTargetId,
+                    )
                 }
                 if (!currentActive) return@withLock
                 val keepFollowing = followLatest && atLatest && !listState.isScrollInProgress
@@ -1604,12 +1648,11 @@ private fun MemberTimelineContent(
         val ids = visibleUnreadIds
         // Once a visible batch is marked, deliver its badge update even if navigation closes it.
         withContext(NonCancellable) {
-            val updated = withContext(AppGraph.dispatchers.databaseWrite) {
-                val count = AppGraph.messages.markMessagesReadByIds(ids)
+            onRead(ids)
+            withContext(AppGraph.dispatchers.databaseWrite) {
+                AppGraph.messages.markMessagesReadByIds(ids)
                 IncomingCallNotifier.cancel(context, ids)
-                count
             }
-            if (updated > 0) onRead(ids)
         }
     }
 
@@ -1617,6 +1660,7 @@ private fun MemberTimelineContent(
         LazyColumn(
             state = listState,
             reverseLayout = true,
+            userScrollEnabled = active,
             contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = topContentPadding, bottom = bottomContentPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize().testTag(UiTestTags.MEMBER_TIMELINE),

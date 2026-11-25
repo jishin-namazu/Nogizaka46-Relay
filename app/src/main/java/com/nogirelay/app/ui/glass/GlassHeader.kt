@@ -107,12 +107,14 @@ fun GlassBackButton(
     onClick: () -> Unit,
     contentDescription: String,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     GlassIconButton(
         onClick = onClick,
         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
         contentDescription = contentDescription,
         modifier = modifier,
+        enabled = enabled,
         size = 44.dp,
         iconSize = 21.dp,
     )

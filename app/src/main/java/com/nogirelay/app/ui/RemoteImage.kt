@@ -62,8 +62,12 @@ import java.io.File
 import java.io.FileInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private sealed interface ImageLoadResult {
     data class Static(val bitmap: Bitmap) : ImageLoadResult
@@ -218,6 +222,24 @@ internal suspend fun primeCachedImageAspectRatios(context: Context, urls: List<S
     }
 }
 
+/**
+ * Returns true when an already-cached bitmap for the same URL is sharp enough
+ * for [targetWidth] x [targetHeight], avoiding redundant disk re-decodes during
+ * transitions (e.g. a 52.dp inbox avatar reused in the 38.dp timeline header,
+ * or a primed 768px preview reused in a message card).
+ */
+internal fun bitmapSatisfiesTarget(
+    bitmapWidth: Int,
+    bitmapHeight: Int,
+    targetWidth: Int,
+    targetHeight: Int,
+): Boolean {
+    if (bitmapWidth <= 0 || bitmapHeight <= 0) return false
+    val widthOk = targetWidth <= 0 || bitmapWidth >= (targetWidth * 0.85f).toInt()
+    val heightOk = targetHeight <= 0 || bitmapHeight >= (targetHeight * 0.85f).toInt()
+    return widthOk && heightOk
+}
+
 /** Read local image and video thumbnail headers before publishing a timeline batch so cards lay out at their final height on the first frame. */
 internal suspend fun primeCachedMessageAspectRatios(context: Context, messages: List<RelayMessage>) {
     if (messages.isEmpty()) return
@@ -245,6 +267,63 @@ internal suspend fun primeCachedMessageAspectRatios(context: Context, messages: 
             if (bounds.outWidth > 0 && bounds.outHeight > 0) {
                 ImageAspectRatioCache.put(url, bounds.outWidth.toFloat() / bounds.outHeight)
             }
+        }
+    }
+}
+
+/**
+ * Fast local-only priming before the timeline's first frame: decodes aspect
+ * ratios for the priority slice near the initial target and warms up to
+ * [maxBitmapDecodes] already-cached local thumbnails in parallel within a tight
+ * time budget so visible images render on Frame 1 without mid-flight pop-in.
+ */
+internal suspend fun primeInitialTimelineMedia(
+    context: Context,
+    messages: List<RelayMessage>,
+    targetMessageId: String? = null,
+    targetWidth: Int = 768,
+    maxAspectPrimes: Int = 6,
+    maxBitmapDecodes: Int = 3,
+    budgetMillis: Long = 55L,
+) {
+    if (messages.isEmpty()) return
+    val anchor = targetMessageId?.let { id -> messages.indexOfFirst { it.id == id } }?.takeIf { it >= 0 } ?: 0
+    val start = (anchor - 2).coerceAtLeast(0)
+    val priority = messages.subList(start, minOf(messages.size, start + maxAspectPrimes))
+    withTimeoutOrNull(budgetMillis) {
+        primeCachedMessageAspectRatios(context, priority)
+        val visualTargets = priority.asSequence()
+            .filter { it.type == MessageType.IMAGE || it.type == MessageType.VIDEO }
+            .take(maxBitmapDecodes)
+            .toList()
+        if (visualTargets.isEmpty()) return@withTimeoutOrNull
+        val appContext = context.applicationContext
+        coroutineScope {
+            visualTargets.map { message ->
+                async(AppGraph.dispatchers.imageDecode) {
+                    val url = when (message.type) {
+                        MessageType.IMAGE -> message.mediaUrl ?: message.thumbnailUrl
+                        MessageType.VIDEO -> message.thumbnailUrl ?: message.mediaUrl
+                        else -> null
+                    }?.takeIf { it.isNotBlank() } ?: return@async
+                    val existing = RemoteImageMemoryCache.getForUrl(url)
+                    if (existing != null && bitmapSatisfiesTarget(existing.width, existing.height, targetWidth, 0)) {
+                        return@async
+                    }
+                    val file = when (message.type) {
+                        MessageType.IMAGE -> MediaDownloader.cachedFileForUrl(appContext, url, MessageType.IMAGE)
+                        MessageType.VIDEO -> MediaDownloader.cachedVideoThumbnail(appContext, message)
+                            ?: message.thumbnailUrl?.takeIf { it.isNotBlank() }?.let {
+                                MediaDownloader.cachedFileForUrl(appContext, it, MessageType.IMAGE)
+                            }
+                        else -> null
+                    } ?: return@async
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && looksLikeGif(file)) return@async
+                    val bmp = decodeSampled(file, targetWidth, 0) ?: return@async
+                    RemoteImageMemoryCache.put("prime@$targetWidth@$url", url, bmp)
+                    ImageAspectRatioCache.put(url, bmp.width.toFloat() / bmp.height.toFloat())
+                }
+            }.awaitAll()
         }
     }
 }
@@ -337,7 +416,12 @@ fun RemoteImage(
         val cachedBeforeLoad = revalidateRemote && url != null && withContext(Dispatchers.IO) {
             MediaDownloader.cachedFileForUrl(context, url, messageType) != null
         }
-        val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
+        val exactCached = url?.let {
+            RemoteImageMemoryCache.get(cacheKey)
+                ?: RemoteImageMemoryCache.getForUrl(it)?.takeIf { cached ->
+                    bitmapSatisfiesTarget(cached.width, cached.height, targetWidth, targetHeight)
+                }
+        }
         if (exactCached != null) {
             animated = null
             bitmap = exactCached

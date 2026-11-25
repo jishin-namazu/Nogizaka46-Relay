@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -30,35 +28,21 @@ import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalGraphicsContext
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.nogirelay.app.data.MessageType
@@ -66,43 +50,26 @@ import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.translation.substituteNickname
 import com.nogirelay.app.ui.glass.GlassBadge
 import com.nogirelay.app.ui.glass.GlassColors
-import com.nogirelay.app.ui.glass.GlassDepths
 import com.nogirelay.app.ui.glass.GlassPanel
 import com.nogirelay.app.ui.glass.GlassShapes
 import com.nogirelay.app.ui.glass.GlassType
-import com.nogirelay.app.ui.glass.glassControlCastShadow
+import com.nogirelay.app.ui.glass.LocalGlassReducedMotion
 import com.nogirelay.app.ui.glass.glassPress
 import com.nogirelay.app.ui.glass.rememberGlassPress
 import com.nogirelay.app.ui.RemoteImage
 import com.nogirelay.app.ui.withoutTextPresentationSelector
-import kotlin.math.ceil
-import kotlin.math.floor
-import kotlin.math.roundToInt
-
-/**
- * An opened member card. The card itself grows from its list slot to
- * [viewportInRoot] as [progress] goes 0 -> 1 and hosts [content] (the member
- * timeline) inside its own glass, so there is never a second copy of it.
- * [onReopen] is set while the card is collapsing back into the list.
- */
-class MemberCardExpansion(
-    val threadId: String,
-    val progress: () -> Float,
-    val viewportInRoot: () -> Rect,
-    val content: @Composable () -> Unit,
-    val onReopen: (() -> Unit)? = null,
-)
 
 private val MemberCardSpacing = 10.dp
-private val CardCornerRadius = 28.dp
 
 /**
  * Member inbox, rebuilt as liquid glass: a horizontal constellation of
  * recent-contact droplets on top, then thread rows as floating glass
  * capsules over the shared milky backdrop.
  *
- * While a member page is open ([recedeProgress] non-null) the list is
- * frozen, and the [expansion] card veils everything behind it.
+ * When a conversation overlay is open above the inbox, the entire list recedes
+ * as one unified layer (subtle depth scale + skip draw once fully covered), and
+ * visible cards continuously publish their unclipped coordinates to [slotRegistry]
+ * so the sibling overlay can lift and land without hosting pages inside LazyColumn.
  */
 @Composable
 fun MemberInbox(
@@ -111,117 +78,116 @@ fun MemberInbox(
     onSelect: (MemberThread, fromCard: Boolean) -> Unit,
     state: LazyListState = rememberLazyListState(),
     recedeProgress: (() -> Float)? = null,
-    expansion: MemberCardExpansion? = null,
+    scrollEnabled: Boolean = true,
+    inboxCovered: Boolean = false,
+    hiddenThreadId: (() -> String?)? = null,
+    slotRegistry: MemberCardSlotRegistry? = null,
     header: (@Composable () -> Unit)? = null,
 ) {
-    val latestRecedeProgress = rememberUpdatedState(recedeProgress)
-    val inboxCovered by remember {
-        derivedStateOf { latestRecedeProgress.value?.let { it() >= 1f } == true }
-    }
-    val recede = remember { Modifier.memberInboxRecede { inboxCovered } }
-    LazyColumn(
-        state = state,
-        userScrollEnabled = recedeProgress == null,
-        verticalArrangement = Arrangement.spacedBy(MemberCardSpacing),
-        modifier = Modifier.fillMaxSize().testTag(UiTestTags.MEMBER_INBOX),
-        contentPadding = PaddingValues(bottom = 128.dp),
+    val reducedMotion = LocalGlassReducedMotion.current
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val p = recedeProgress?.invoke()?.coerceIn(0f, 1f) ?: 0f
+                if (p >= CARD_INBOX_COVERED_PROGRESS) {
+                    alpha = 0f
+                    scaleX = 1f
+                    scaleY = 1f
+                } else {
+                    alpha = 1f
+                    val s = if (reducedMotion || p <= 0f) 1f else lerp(1f, 0.965f, p)
+                    scaleX = s
+                    scaleY = s
+                }
+            }
+            // Capture inbox coordinates AFTER the receding graphicsLayer so
+            // localBoundingBoxOf(cardCoords, clipBounds = false) always stays in
+            // the unscaled resting coordinate space.
+            .onGloballyPositioned { slotRegistry?.updateInboxCoordinates(it) }
+            .then(if (inboxCovered) Modifier.clearAndSetSemantics { } else Modifier),
     ) {
-        header?.let { content ->
-            item(key = "member-inbox-header") {
-                Box(recede) { content() }
+        LazyColumn(
+            state = state,
+            userScrollEnabled = scrollEnabled,
+            verticalArrangement = Arrangement.spacedBy(MemberCardSpacing),
+            modifier = Modifier.fillMaxSize().testTag(UiTestTags.MEMBER_INBOX),
+            contentPadding = PaddingValues(bottom = 128.dp),
+        ) {
+            header?.let { content ->
+                item(key = "member-inbox-header") {
+                    content()
+                }
             }
-        }
-        if (threads.isNotEmpty()) {
-            item(key = "member-inbox-recent-title") {
-                Text(
-                    text = "最近消息",
-                    style = GlassType.Headline,
-                    fontWeight = FontWeight.SemiBold,
-                    color = GlassColors.Ink,
-                    modifier = recede
-                        .fillMaxWidth()
-                        .padding(horizontal = 22.dp, vertical = 4.dp),
-                )
-            }
-            item(key = "member-inbox-recent") {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = recede.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 18.dp),
-                ) {
-                    items(threads.take(8), key = { "recent-" + it.id }) { thread ->
-                        RecentContactDroplet(
-                            thread = thread,
-                            onClick = { onSelect(thread, false) },
-                            modifier = Modifier.animateItem(),
-                        )
+            if (threads.isNotEmpty()) {
+                item(key = "member-inbox-recent-title") {
+                    Text(
+                        text = "最近消息",
+                        style = GlassType.Headline,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GlassColors.Ink,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 22.dp, vertical = 4.dp),
+                    )
+                }
+                item(key = "member-inbox-recent") {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 18.dp),
+                    ) {
+                        items(threads.take(8), key = { "recent-" + it.id }) { thread ->
+                            RecentContactDroplet(
+                                thread = thread,
+                                onClick = { onSelect(thread, false) },
+                                modifier = Modifier.animateItem(),
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        item(key = "member-inbox-all-title") {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = recede
-                    .fillMaxWidth()
-                    .padding(horizontal = 22.dp)
-                    .padding(top = 12.dp, bottom = 2.dp),
-            ) {
-                Text(
-                    text = "全部成员",
-                    style = GlassType.Headline,
-                    fontWeight = FontWeight.SemiBold,
-                    color = GlassColors.Ink,
-                )
-                Text(
-                    text = "共 ${threads.size} 位",
-                    style = GlassType.Footnote,
-                    color = GlassColors.InkTertiary,
+            item(key = "member-inbox-all-title") {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 22.dp)
+                        .padding(top = 12.dp, bottom = 2.dp),
+                ) {
+                    Text(
+                        text = "全部成员",
+                        style = GlassType.Headline,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GlassColors.Ink,
+                    )
+                    Text(
+                        text = "共 ${threads.size} 位",
+                        style = GlassType.Footnote,
+                        color = GlassColors.InkTertiary,
+                    )
+                }
+            }
+
+            items(threads, key = { it.id }) { thread ->
+                ThreadCapsule(
+                    thread = thread,
+                    userNickname = userNickname,
+                    onClick = { onSelect(thread, true) },
+                    hidden = { hiddenThreadId?.invoke() == thread.id },
+                    slotRegistry = slotRegistry,
+                    clipShadowBelow = thread.id != threads.last().id,
+                    modifier = Modifier
+                        .animateItem()
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                 )
             }
         }
-
-        items(threads, key = { it.id }) { thread ->
-            val opened = expansion?.takeIf { it.threadId == thread.id }
-            ThreadCapsule(
-                thread = thread,
-                userNickname = userNickname,
-                onClick = { onSelect(thread, true) },
-                expansion = opened,
-                clipShadowBelow = thread.id != threads.last().id,
-                modifier = Modifier
-                    .animateItem()
-                    .then(if (opened != null) Modifier.zIndex(1f) else recede)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-            )
-        }
     }
 }
-
-/**
- * Skips drawing inbox content once the opened page fully covers it. The
- * receding look itself is a single veil drawn by the opened card; per-item
- * effects would show as separate bands at every item's bounds.
- */
-private fun Modifier.memberInboxRecede(covered: () -> Boolean): Modifier =
-    graphicsLayer { alpha = if (covered()) 0f else 1f }
-
-/**
- * One uniform veil over the whole viewport, drawn from the opened card's slot
- * underneath the card itself, so it sits above every other item.
- */
-private fun Modifier.memberInboxVeil(expansion: MemberCardExpansion, slot: () -> Rect): Modifier =
-    drawBehind {
-        val p = expansion.progress().coerceIn(0f, 1f)
-        if (p <= 0f) return@drawBehind
-        val viewport = expansion.viewportInRoot()
-        val topLeft = viewport.topLeft - slot().topLeft
-        drawRect(GlassColors.BackdropMid, topLeft = topLeft, size = viewport.size, alpha = 0.55f * p)
-        drawRect(Color.Black, topLeft = topLeft, size = viewport.size, alpha = 0.08f * p)
-    }
 
 @Composable
 private fun RecentContactDroplet(
@@ -241,12 +207,12 @@ private fun RecentContactDroplet(
             modifier = Modifier
                 .size(64.dp)
                 .glassPress(press).clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                role = Role.Button,
-                onClickLabel = thread.name,
-                onClick = onClick,
-            ),
+                    interactionSource = interactionSource,
+                    indication = null,
+                    role = Role.Button,
+                    onClickLabel = thread.name,
+                    onClick = onClick,
+                ),
         ) {
             RemoteImage(
                 url = thread.avatarUrl,
@@ -281,182 +247,49 @@ private fun ThreadCapsule(
     thread: MemberThread,
     userNickname: String,
     onClick: () -> Unit,
+    hidden: () -> Boolean,
+    slotRegistry: MemberCardSlotRegistry?,
+    clipShadowBelow: Boolean,
     modifier: Modifier = Modifier,
-    expansion: MemberCardExpansion? = null,
-    clipShadowBelow: Boolean = true,
 ) {
-    // One composition for both states, so opening never remounts the card face.
-    var slotInRoot by remember { mutableStateOf(Rect.Zero) }
-    val density = LocalDensity.current
-    val cardRadiusPx = with(density) { CardCornerRadius.toPx() }
+    val interactionSource = remember { MutableInteractionSource() }
+    val press = rememberGlassPress(interactionSource, enabled = true)
+    val lastCoords = remember(thread.id) { arrayOfNulls<LayoutCoordinates>(1) }
+    DisposableEffect(thread.id, slotRegistry) {
+        onDispose {
+            lastCoords[0]?.let { coords -> slotRegistry?.unregisterSlot(thread.id, coords) }
+            lastCoords[0] = null
+        }
+    }
     GlassPanel(
-        onClick = if (expansion == null) onClick else null,
+        onClick = onClick,
         onClickLabel = thread.name,
         shape = GlassShapes.Card,
         staticMaterial = true,
-        // While opened, the shadow is drawn at the slot instead (see below).
-        shadowAlpha = if (expansion == null) 1f else 0f,
-        clipShape = expansion?.let { opened ->
-            {
-                // Corners stay round for most of the way, then square off.
-                val p = opened.progress().coerceIn(0f, 1f)
-                val cornerFraction = ((1f - p) / 0.3f).coerceIn(0f, 1f)
-                when {
-                    cornerFraction >= 1f -> GlassShapes.Card
-                    cornerFraction <= 0f -> RectangleShape
-                    else -> RoundedCornerShape(cardRadiusPx * cornerFraction)
-                }
-            }
-        },
-        // The tap's release spring finishes while the card starts to grow.
-        keepPressFeedback = true,
+        interactionSource = interactionSource,
+        press = press,
         modifier = modifier
             .testTag(UiTestTags.MEMBER_THREAD)
-            .onGloballyPositioned { slotInRoot = it.boundsInRoot() }
-            .then(
-                if (expansion != null) {
-                    // The same shadow the panel casts at rest, pinned to the slot
-                    // so it never grows or shrinks with the card; it only eases out.
-                    Modifier
-                        .memberInboxVeil(expansion, slot = { slotInRoot })
-                        .pinnedSlotShadow(
-                            alpha = {
-                                val fade = (expansion.progress() / 0.35f).coerceIn(0f, 1f)
-                                1f - fade * fade * (3f - 2f * fade)
-                            },
-                            clipBelow = clipShadowBelow,
-                        )
-                        .expandFromSlot(expansion, slot = { slotInRoot })
-                } else {
-                    Modifier
-                },
-            ),
+            .onGloballyPositioned { coords ->
+                lastCoords[0] = coords
+                slotRegistry?.registerSlot(
+                    threadId = thread.id,
+                    coords = coords,
+                    pressProgress = press::progress,
+                    clipShadowBelow = clipShadowBelow,
+                )
+            }
+            .graphicsLayer { alpha = if (hidden()) 0f else 1f },
     ) {
         ThreadCapsuleContent(
             thread = thread,
             userNickname = userNickname,
-            modifier = if (expansion != null) {
-                // Keep the face at card width while the glass grows around it.
-                Modifier
-                    .wrapContentSize(Alignment.TopStart, unbounded = true)
-                    .layout { measurable, _ ->
-                        val width = slotInRoot.width.roundToInt()
-                        val placeable = measurable.measure(Constraints(minWidth = width, maxWidth = width))
-                        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-                    }
-                    .graphicsLayer { alpha = (1f - expansion.progress() / 0.2f).coerceIn(0f, 1f) }
-            } else {
-                Modifier
-            },
         )
-        if (expansion != null) {
-            // The page is laid out at viewport size and scaled to the card's
-            // current width from its top-left; it never sizes the card.
-            Box(
-                Modifier
-                    .layout { measurable, _ ->
-                        val viewport = expansion.viewportInRoot()
-                        val placeable = measurable.measure(
-                            Constraints.fixed(viewport.width.roundToInt(), viewport.height.roundToInt()),
-                        )
-                        layout(0, 0) { placeable.place(0, 0) }
-                    }
-                    .graphicsLayer {
-                        val progress = expansion.progress().coerceIn(0f, 1f)
-                        val viewportWidth = expansion.viewportInRoot().width
-                        val width = lerp(slotInRoot.width, viewportWidth, progress)
-                        val scale = if (viewportWidth > 0f) width / viewportWidth else 1f
-                        transformOrigin = TransformOrigin(0f, 0f)
-                        scaleX = scale
-                        scaleY = scale
-                        alpha = ((progress - 0.06f) / 0.3f).coerceIn(0f, 1f)
-                    }
-                    .drawBehind {
-                        // The page backdrop covers the glass body early on.
-                        drawRect(GlassColors.Backdrop, alpha = (expansion.progress() / 0.25f).coerceIn(0f, 1f))
-                    },
-            ) {
-                expansion.content()
-            }
-            expansion.onReopen?.let { reopen ->
-                // While collapsing, a tap anywhere on the card turns it around;
-                // the half-closed page itself takes no input.
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            role = Role.Button,
-                            onClickLabel = thread.name,
-                            onClick = reopen,
-                        ),
-                )
-            }
-        }
     }
 }
 
-/**
- * The panel's resting cast shadow, pinned to the slot. The opened card is
- * lifted above its neighbours, so the part of the shadow that normally sits
- * under the next card is clipped away; otherwise it would lie on top of that
- * card and vanish the instant the card drops back into the list.
- */
 @Composable
-private fun Modifier.pinnedSlotShadow(alpha: () -> Float, clipBelow: Boolean): Modifier {
-    val shadowContext = LocalGraphicsContext.current.shadowContext
-    val painter = remember(shadowContext, GlassColors.palette) {
-        shadowContext.createDropShadowPainter(GlassShapes.Card, glassControlCastShadow(GlassDepths.Medium))
-    }
-    return drawBehind {
-        val alpha = alpha()
-        if (alpha <= 0f) return@drawBehind
-        // Generous finite bounds; only the bottom edge actually clips.
-        val reach = size.maxDimension
-        val bottom = if (clipBelow) size.height + MemberCardSpacing.toPx() else size.height + reach
-        clipRect(left = -reach, top = -reach, right = size.width + reach, bottom = bottom) {
-            with(painter) { draw(size, alpha = alpha) }
-        }
-    }
-}
-
-/**
- * Lays the card out at its slot size, but measures and places it at the rect
- * interpolated from the slot to the viewport, so the list never reflows.
- */
-private fun Modifier.expandFromSlot(expansion: MemberCardExpansion, slot: () -> Rect): Modifier =
-    layout { measurable, constraints ->
-        val p = expansion.progress().coerceIn(0f, 1f)
-        val slotRect = slot()
-        if (p <= 0f || slotRect.isEmpty) {
-            val placeable = measurable.measure(constraints)
-            return@layout layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-        }
-        val rect = lerp(slotRect, expansion.viewportInRoot(), p)
-        // Layout works in whole pixels; the remainder goes into the layer as a
-        // sub-pixel offset and scale, so the slow end of the spring glides
-        // instead of stepping one pixel at a time.
-        val width = ceil(rect.width).toInt()
-        val height = ceil(rect.height).toInt()
-        val placeable = measurable.measure(Constraints.fixed(width, height))
-        val x = rect.left - slotRect.left
-        val y = rect.top - slotRect.top
-        val baseX = floor(x).toInt()
-        val baseY = floor(y).toInt()
-        layout(slotRect.width.roundToInt(), slotRect.height.roundToInt()) {
-            placeable.placeWithLayer(baseX, baseY) {
-                transformOrigin = TransformOrigin(0f, 0f)
-                translationX = x - baseX
-                translationY = y - baseY
-                scaleX = rect.width / width
-                scaleY = rect.height / height
-            }
-        }
-    }
-
-@Composable
-private fun ThreadCapsuleContent(
+internal fun ThreadCapsuleContent(
     thread: MemberThread,
     userNickname: String,
     modifier: Modifier = Modifier,
@@ -573,4 +406,3 @@ fun threadPreview(message: RelayMessage, userNickname: String): String = when (m
     MessageType.VIDEO -> "视频消息"
 }.let { fallback -> substituteNickname(message.text?.trim()?.takeIf { it.isNotEmpty() }, userNickname) ?: fallback }
     .withoutTextPresentationSelector()
-

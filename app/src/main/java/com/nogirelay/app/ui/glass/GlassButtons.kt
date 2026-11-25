@@ -302,10 +302,10 @@ fun GlassPanel(
     clipShape: (() -> androidx.compose.ui.graphics.Shape)? = null,
     /** Keeps the press spring running after [onClick] is removed mid-release. */
     keepPressFeedback: Boolean = false,
+    interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+    press: GlassPress = rememberGlassPress(interactionSource, enabled = onClick != null),
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val press = rememberGlassPress(interactionSource, enabled = onClick != null)
     val pressed = onClick != null || keepPressFeedback
     val liveBlur = blurEnabled && !staticMaterial && LocalGlassBlurEnabled.current
     Box(
