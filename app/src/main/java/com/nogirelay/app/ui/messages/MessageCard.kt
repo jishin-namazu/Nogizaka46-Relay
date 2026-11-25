@@ -311,12 +311,18 @@ private fun MessageMediaPreview(
     ) {
         RemoteImage(
             url = if (message.type == MessageType.IMAGE) message.mediaUrl ?: message.thumbnailUrl else message.thumbnailUrl ?: message.mediaUrl,
+            fallbackUrl = if (message.type == MessageType.IMAGE) {
+                message.thumbnailUrl?.takeIf { it.isNotBlank() && it != message.mediaUrl }
+            } else {
+                null
+            },
             contentDescription = if (message.type == MessageType.IMAGE) "图片消息" else "视频预览",
             modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 360.dp),
             contentScale = ContentScale.Crop,
             preserveAspectRatio = true,
             messageType = message.type,
             message = message,
+            retryOnClick = message.type != MessageType.VIDEO,
             placeholderColor = Color(0x228E93A6),
         )
         if (message.type == MessageType.VIDEO) {

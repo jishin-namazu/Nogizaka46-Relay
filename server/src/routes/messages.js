@@ -114,18 +114,21 @@ router.get('/:id/media/:kind', authenticateClient, async (req, res) => {
 
     // 本地未落盘时仅回退至未过期的原始远程直链；若签名已过期则返回 404，避免客户端收到 CloudFront 403 而反复重试
     const message = await messageService.getMessage(req.params.id);
-    let remoteUrl = {
-      media: message?.media_url,
-      thumbnail: message?.thumbnail_url,
-      phone_image: message?.phone_image_url,
-    }[req.params.kind];
-
-    if (req.params.kind === 'phone_image' && message?.member_id) {
-      const latestCover = await phoneImageService.getLatestForMember(message.member_id);
-      if (latestCover?.source_url) remoteUrl = latestCover.source_url;
+    const remoteCandidates = [];
+    if (req.params.kind === 'phone_image') {
+      if (message?.member_id) {
+        const latestCover = await phoneImageService.getLatestForMember(message.member_id);
+        if (latestCover?.source_url) remoteCandidates.push(latestCover.source_url);
+      }
+      if (message?.phone_image_url) remoteCandidates.push(message.phone_image_url);
+    } else if (req.params.kind === 'thumbnail') {
+      if (message?.thumbnail_url) remoteCandidates.push(message.thumbnail_url);
+      if (message?.type === 'image' && message?.media_url) remoteCandidates.push(message.media_url);
+    } else if (message?.media_url) {
+      remoteCandidates.push(message.media_url);
     }
 
-    if (remoteUrl) {
+    for (const remoteUrl of remoteCandidates) {
       try {
         const parsed = new URL(remoteUrl);
         const expires = Number.parseInt(parsed.searchParams.get("Expires") || "", 10);
@@ -133,7 +136,7 @@ router.get('/:id/media/:kind', authenticateClient, async (req, res) => {
           return res.redirect(remoteUrl);
         }
       } catch {
-        // ignore invalid URL and fall through to 404
+        // ignore invalid URL and try next candidate
       }
     }
 

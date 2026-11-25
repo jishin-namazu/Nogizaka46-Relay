@@ -28,6 +28,7 @@ import com.nogirelay.app.MainActivity
 import com.nogirelay.app.R
 import com.nogirelay.app.call.IncomingCallNotifier
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.notification.NotificationChannels
 import java.io.File
@@ -188,8 +189,14 @@ class VoicePlaybackService : MediaSessionService() {
             val loaded = runCatching {
                 withContext(Dispatchers.IO) {
                     val message = AppGraph.messages.find(messageId) ?: return@withContext null
-                    if (message.mediaUrl.isNullOrBlank()) return@withContext null
-                    MediaDownloader.enqueueIfNeeded(this@VoicePlaybackService, message)?.let { message to it }
+                    val mediaUrl = message.mediaUrl?.takeIf(String::isNotBlank) ?: return@withContext null
+                    val file = MediaDownloader.downloadUrl(
+                        this@VoicePlaybackService,
+                        mediaUrl,
+                        MessageType.AUDIO,
+                        bypassNotFound = true,
+                    )
+                    message to file
                 }
             }.getOrNull()
             if (!isActive) return@launch

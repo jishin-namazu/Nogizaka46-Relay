@@ -39,18 +39,27 @@ object MediaDownloader {
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 90_000
     private const val REMOTE_REVALIDATE_INTERVAL_MS = 60_000L
+    internal const val NOT_FOUND_TTL_MS = 6L * 60L * 60L * 1000L
     private val locks = ConcurrentHashMap<String, Any>()
-    private val notFoundUrls = ConcurrentHashMap.newKeySet<String>()
+    private val notFoundUrls = ConcurrentHashMap<String, Long>()
     private val remoteRevalidatedAt = ConcurrentHashMap<String, Long>()
 
     fun isNotFound(context: Context?, url: String?): Boolean {
         if (url.isNullOrBlank()) return false
-        if (notFoundUrls.contains(url)) return true
+        val now = System.currentTimeMillis()
+        notFoundUrls[url]?.let { markedAt ->
+            if (now - markedAt < NOT_FOUND_TTL_MS) return true
+            notFoundUrls.remove(url, markedAt)
+        }
         if (context != null) {
             val marker = notFoundMarkerFile(context.applicationContext, url)
             if (marker.exists()) {
-                notFoundUrls.add(url)
-                return true
+                val markedAt = marker.lastModified()
+                if (markedAt > 0L && now - markedAt < NOT_FOUND_TTL_MS) {
+                    notFoundUrls[url] = markedAt
+                    return true
+                }
+                runCatching { marker.delete() }
             }
         }
         return false
@@ -58,13 +67,15 @@ object MediaDownloader {
 
     fun markNotFound(context: Context?, url: String?) {
         if (url.isNullOrBlank()) return
-        notFoundUrls.add(url)
+        val now = System.currentTimeMillis()
+        notFoundUrls[url] = now
         if (context != null) {
             runCatching {
                 val marker = notFoundMarkerFile(context.applicationContext, url)
                 val parent = marker.parentFile
                 if (parent != null && !parent.exists()) parent.mkdirs()
                 if (!marker.exists()) marker.createNewFile()
+                marker.setLastModified(now)
             }
         }
     }
@@ -82,10 +93,14 @@ object MediaDownloader {
 
     data class SavedDownload(val uri: Uri, val displayName: String)
 
-    fun enqueueIfNeeded(context: Context, message: RelayMessage): File? {
+    fun enqueueIfNeeded(
+        context: Context,
+        message: RelayMessage,
+        bypassNotFound: Boolean = false,
+    ): File? {
         val appContext = context.applicationContext
         val mediaUrl = mediaUrlFor(message)
-        val file = mediaUrl?.let { downloadUrl(appContext, it, message.type) }
+        val file = mediaUrl?.let { downloadUrl(appContext, it, message.type, bypassNotFound = bypassNotFound) }
 
         if (message.type == MessageType.VIDEO) {
             generateVideoThumbnail(appContext, message)
@@ -106,7 +121,7 @@ object MediaDownloader {
         if (needsLegacyWritePermission(context)) error("请先允许存储权限")
 
         val mediaUrl = mediaUrlFor(message) ?: error("消息没有可保存的媒体")
-        val source = downloadUrl(context.applicationContext, mediaUrl, message.type)
+        val source = downloadUrl(context.applicationContext, mediaUrl, message.type, bypassNotFound = true)
         val extension = extensionFor(mediaUrl, message.type)
         val displayName = buildDisplayName(message, extension)
         val mimeType = mimeTypeFor(extension, message.type)
@@ -120,7 +135,7 @@ object MediaDownloader {
 
     fun saveImageUrlToDownloads(context: Context, url: String, baseName: String): SavedDownload {
         if (needsLegacyWritePermission(context)) error("请先允许存储权限")
-        val source = downloadUrl(context.applicationContext, url, MessageType.IMAGE)
+        val source = downloadUrl(context.applicationContext, url, MessageType.IMAGE, bypassNotFound = true)
         val extension = extensionFor(url, MessageType.IMAGE)
         val safeBaseName = baseName
             .replace(Regex("[\\\\/:*?\"<>|\\p{Cc}]"), "_")
@@ -185,23 +200,38 @@ object MediaDownloader {
         }.getOrNull()
     }
 
-    fun downloadUrl(context: Context, url: String, type: MessageType): File {
+    fun downloadUrl(
+        context: Context,
+        url: String,
+        type: MessageType,
+        bypassNotFound: Boolean = false,
+    ): File {
         require(url.isNotBlank()) { "媒体地址为空" }
         val appContext = context.applicationContext
-        if (isNotFound(appContext, url)) {
-            throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $url", url)
-        }
         val uri = url.toUri()
         val target = cacheFile(appContext, url, type)
-        target.takeIf { it.isFile && it.length() > 0L }?.let { return it }
+        target.takeIf { it.isFile && it.length() > 0L }?.let {
+            clearNotFound(appContext, url)
+            return it
+        }
+        if (bypassNotFound) {
+            clearNotFound(appContext, url)
+        } else if (isNotFound(appContext, url)) {
+            throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $url", url)
+        }
 
         val lock = locks.computeIfAbsent(url) { Any() }
         return try {
             synchronized(lock) {
-                if (isNotFound(appContext, url)) {
+                target.takeIf { it.isFile && it.length() > 0L }?.let {
+                    clearNotFound(appContext, url)
+                    return@synchronized it
+                }
+                if (bypassNotFound) {
+                    clearNotFound(appContext, url)
+                } else if (isNotFound(appContext, url)) {
                     throw HttpNotFoundException("媒体文件不存在 (HTTP 404): $url", url)
                 }
-                target.takeIf { it.isFile && it.length() > 0L }?.let { return@synchronized it }
                 when (uri.scheme?.lowercase()) {
                     "android.resource", "content", "file" -> copyLocalUri(appContext, uri, target)
                     "https" -> downloadHttps(appContext, uri, target, type, url)
@@ -626,6 +656,7 @@ object MediaDownloader {
                             output.fd.sync()
                         }
                         replaceAtomically(temp, thumbnailFile)
+                        notifyCacheChanged(context, mediaUrl)
                         thumbnailFile
                     } finally {
                         if (temp.exists()) temp.delete()

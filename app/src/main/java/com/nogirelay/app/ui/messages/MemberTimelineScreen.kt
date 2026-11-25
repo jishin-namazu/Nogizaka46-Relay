@@ -119,7 +119,7 @@ import com.nogirelay.app.ui.TimeFilterDialog
 import com.nogirelay.app.ui.RelaySheetBackdropState
 import com.nogirelay.app.ui.clearSelectionOnTap
 import com.nogirelay.app.ui.glass.rememberGlassPress
-import com.nogirelay.app.ui.preloadRemoteImage
+import com.nogirelay.app.ui.preloadMessagePreview
 import com.nogirelay.app.ui.primeCachedMessageAspectRatios
 import com.nogirelay.app.ui.glass.GlassBackButton
 import com.nogirelay.app.ui.glass.GlassColors
@@ -489,7 +489,8 @@ private fun FilterDrawerEntry(
 }
 
 private const val AUXILIARY_PAGE_SIZE = 200
-private val mediaPreloadSlots = Semaphore(3)
+private const val AUXILIARY_PRELOAD_LIMIT = 24
+private val mediaPreloadSlots = Semaphore(2)
 
 private enum class MemberTimelineAuxiliary { MEDIA, FAVORITES }
 
@@ -581,10 +582,11 @@ private suspend fun loadAuxiliaryPage(
     offset: Int,
     searchQuery: String,
     nickname: String,
+    limit: Int = AUXILIARY_PAGE_SIZE,
 ): List<RelayMessage> = when (screen) {
     MemberTimelineAuxiliary.FAVORITES -> AppGraph.messages.favoriteMessagesForMember(
         memberKey,
-        limit = AUXILIARY_PAGE_SIZE,
+        limit = limit,
         offset = offset,
         searchQuery = searchQuery,
         nickname = nickname,
@@ -592,7 +594,7 @@ private suspend fun loadAuxiliaryPage(
     MemberTimelineAuxiliary.MEDIA -> AppGraph.messages.mediaMessagesForMember(
         memberKey,
         mediaCategory.type,
-        limit = AUXILIARY_PAGE_SIZE,
+        limit = limit,
         offset = offset,
     )
 }
@@ -601,36 +603,42 @@ private suspend fun preloadMessageMedia(
     context: android.content.Context,
     messages: List<RelayMessage>,
     targetWidth: Int,
+    maxVisualPreload: Int = AUXILIARY_PRELOAD_LIMIT,
+    maxVoicePreload: Int = 12,
 ) {
-    val previewUrls = messages.mapNotNull { message ->
-        when (message.type) {
-            MessageType.IMAGE -> message.mediaUrl?.takeIf(String::isNotBlank)
-                ?: message.thumbnailUrl?.takeIf(String::isNotBlank)
-            MessageType.VIDEO -> message.thumbnailUrl?.takeIf(String::isNotBlank)
-            else -> null
-        }
-    }.distinct()
+    val visualMessages = messages.asSequence()
+        .filter { it.type == MessageType.IMAGE || it.type == MessageType.VIDEO }
+        .distinctBy { it.id }
+        .take(maxVisualPreload)
+        .toList()
     val voiceUrls = messages.asSequence()
         .filter { it.type == MessageType.AUDIO }
         .mapNotNull { it.mediaUrl?.takeIf(String::isNotBlank) }
         .distinct()
-        .take(12)
+        .take(maxVoicePreload)
         .toList()
 
     coroutineScope {
-        previewUrls.map { url ->
+        visualMessages.map { message ->
             async(Dispatchers.IO) {
                 mediaPreloadSlots.withPermit {
-                    preloadRemoteImage(context, url, targetWidth = targetWidth)
+                    preloadMessagePreview(context, message, targetWidth = targetWidth)
                 }
             }
         }.toList().awaitAll()
         voiceUrls.map { url ->
             async(Dispatchers.IO) {
+                if (MediaDownloader.cachedFileForUrl(context, url, MessageType.AUDIO) != null ||
+                    MediaDownloader.isNotFound(context, url)
+                ) {
+                    return@async
+                }
                 mediaPreloadSlots.withPermit {
                     runCatching {
-                        if (MediaDownloader.cachedFileForUrl(context, url, MessageType.AUDIO) == null) {
-                            MediaDownloader.downloadUrl(context, url, MessageType.AUDIO)
+                        withContext(AppGraph.dispatchers.network) {
+                            if (MediaDownloader.cachedFileForUrl(context, url, MessageType.AUDIO) == null) {
+                                MediaDownloader.downloadUrl(context, url, MessageType.AUDIO)
+                            }
                         }
                     }
                 }
@@ -661,7 +669,8 @@ private fun MemberTimelineAuxiliaryScreen(
     val effectiveQuery = rememberSearchQuery(query, active)
     val request = remember(memberKey, screen, mediaCategory, effectiveQuery, userNickname) { Any() }
     val latestRequest by rememberUpdatedState(request)
-    val latestVersion by rememberUpdatedState(messageChanges.version)
+    var reloadGeneration by remember(request) { mutableIntStateOf(0) }
+    val latestReloadGeneration by rememberUpdatedState(reloadGeneration)
     var messages by remember(request) { mutableStateOf<List<RelayMessage>>(emptyList()) }
     val gridRows = remember(messages) { memberMediaGridRows(messages) }
     var loading by remember(request) { mutableStateOf(true) }
@@ -682,9 +691,15 @@ private fun MemberTimelineAuxiliaryScreen(
     }
     BackHandler(enabled = active && query.isNotEmpty(), onBack = ::back)
 
-    LaunchedEffect(messages, active, screen, mediaCategory) {
-        if (active && messages.isNotEmpty()) {
-            preloadMessageMedia(context, messages, targetWidth = 720)
+    val preloadHead = remember(messages) { messages.take(AUXILIARY_PRELOAD_LIMIT) }
+    val preloadTargetWidth = if (screen == MemberTimelineAuxiliary.MEDIA && mediaCategory != MemberMediaCategory.VOICE) {
+        320
+    } else {
+        720
+    }
+    LaunchedEffect(preloadHead, active, screen, mediaCategory) {
+        if (active && preloadHead.isNotEmpty()) {
+            preloadMessageMedia(context, preloadHead, targetWidth = preloadTargetWidth)
         }
     }
 
@@ -693,13 +708,13 @@ private fun MemberTimelineAuxiliaryScreen(
         loadingMore = true
         val offset = messages.size
         val pageRequest = request
-        val pageVersion = messageChanges.version
+        val pageGeneration = reloadGeneration
         moreJob = scope.launch {
             try {
                 val next = withContext(AppGraph.dispatchers.databaseRead) {
                     loadAuxiliaryPage(memberKey, screen, mediaCategory, offset, effectiveQuery, userNickname)
                 }
-                if (latestRequest !== pageRequest || latestVersion != pageVersion) return@launch
+                if (latestRequest !== pageRequest || latestReloadGeneration != pageGeneration) return@launch
                 val known = messages.mapTo(mutableSetOf()) { it.id }
                 messages = messages + next.filter { known.add(it.id) }
                 exhausted = next.size < AUXILIARY_PAGE_SIZE
@@ -710,20 +725,52 @@ private fun MemberTimelineAuxiliaryScreen(
     }
 
     LaunchedEffect(request, messageChanges.version, active) {
+        if (!active) return@LaunchedEffect
+        if (loadedVersion == messageChanges.version) return@LaunchedEffect
+        val changedIds = if (loadedVersion >= 0L && messages.isNotEmpty() && screen == MemberTimelineAuxiliary.MEDIA) {
+            messageChanges.changedSince(loadedVersion)
+        } else {
+            null
+        }
+        if (changedIds != null) {
+            val existingIds = messages.mapTo(mutableSetOf()) { it.id }
+            val matchingIds = existingIds.intersect(changedIds)
+            if (matchingIds.isNotEmpty()) {
+                val updates = withContext(AppGraph.dispatchers.databaseRead) {
+                    AppGraph.messages.memberMessagesByIds(memberKey, matchingIds)
+                }.associateBy { it.id }
+                if (updates.size == matchingIds.size) {
+                    messages = messages.map { updates[it.id] ?: it }
+                    loadedVersion = messageChanges.version
+                    return@LaunchedEffect
+                }
+            } else {
+                loadedVersion = messageChanges.version
+                return@LaunchedEffect
+            }
+        }
         moreJob?.cancel()
         moreJob = null
         loadingMore = false
-        if (!active) return@LaunchedEffect
-        if (loadedVersion == messageChanges.version) return@LaunchedEffect
+        reloadGeneration++
         loading = messages.isEmpty()
         // Keep the last known pagination state until the refreshed page arrives.
         // Resetting it here inserts a load-more row on markPlayed updates and
         // shifts a short reverse-layout voice list for a single frame.
+        val reloadLimit = maxOf(AUXILIARY_PAGE_SIZE, messages.size).coerceAtMost(1000)
         val loaded = withContext(AppGraph.dispatchers.databaseRead) {
-            loadAuxiliaryPage(memberKey, screen, mediaCategory, 0, effectiveQuery, userNickname)
+            loadAuxiliaryPage(
+                memberKey,
+                screen,
+                mediaCategory,
+                0,
+                effectiveQuery,
+                userNickname,
+                limit = reloadLimit,
+            )
         }
         messages = loaded
-        exhausted = loaded.size < AUXILIARY_PAGE_SIZE
+        exhausted = loaded.size < reloadLimit
         loadedVersion = messageChanges.version
         loading = false
     }
@@ -974,11 +1021,44 @@ private fun AuxiliaryLoadFooter(pageKey: Int, onLoadMore: () -> Unit) {
     LaunchedEffect(pageKey) { onLoadMore() }
 }
 
+internal data class MediaCellPreview(
+    val url: String?,
+    val fallbackUrl: String?,
+    val messageType: MessageType,
+    val message: RelayMessage?,
+)
+
+internal fun resolveMediaCellPreview(message: RelayMessage): MediaCellPreview {
+    val mediaUrl = message.mediaUrl?.takeIf(String::isNotBlank)
+    val thumbnailUrl = message.thumbnailUrl?.takeIf(String::isNotBlank)
+    return when (message.type) {
+        MessageType.IMAGE -> {
+            val primaryUrl = mediaUrl ?: thumbnailUrl
+            MediaCellPreview(
+                url = primaryUrl,
+                fallbackUrl = thumbnailUrl?.takeIf { it != primaryUrl },
+                messageType = MessageType.IMAGE,
+                message = null,
+            )
+        }
+        MessageType.VIDEO -> MediaCellPreview(
+            url = thumbnailUrl ?: mediaUrl,
+            fallbackUrl = null,
+            messageType = MessageType.VIDEO,
+            message = message,
+        )
+        else -> MediaCellPreview(
+            url = thumbnailUrl ?: mediaUrl,
+            fallbackUrl = null,
+            messageType = message.type,
+            message = null,
+        )
+    }
+}
+
 @Composable
 private fun MediaMessageCell(message: RelayMessage, onClick: () -> Unit) {
-    val thumbnailUrl = message.thumbnailUrl?.takeIf(String::isNotBlank)
-    val previewUrl = thumbnailUrl ?: message.mediaUrl?.takeIf(String::isNotBlank)
-    val previewType = if (thumbnailUrl != null) MessageType.IMAGE else message.type
+    val preview = resolveMediaCellPreview(message)
 
     val videoHasAudioTrack by rememberVideoHasAudioTrack(message)
     val cellShape = GlassShapes.CardSmall
@@ -988,20 +1068,22 @@ private fun MediaMessageCell(message: RelayMessage, onClick: () -> Unit) {
             .clip(cellShape)
             .glassMediaSource(
                 key = mediaSourceKey(LocalMediaSourceScope.current, message.id),
-                url = previewUrl,
+                url = preview.url,
                 cornerRadiusPx = with(LocalDensity.current) { 20.dp.toPx() },
             )
             .background(Color(0x2B8E93A6))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (previewUrl != null) {
+        if (preview.url != null) {
             RemoteImage(
-                url = previewUrl,
+                url = preview.url,
+                fallbackUrl = preview.fallbackUrl,
                 contentDescription = message.text?.takeIf(String::isNotBlank) ?: "媒体消息",
                 loadCachedImmediately = true,
-                messageType = previewType,
-                message = message.takeIf { previewType == MessageType.VIDEO },
+                messageType = preview.messageType,
+                message = preview.message,
+                retryOnClick = message.type != MessageType.VIDEO,
                 contentScale = ContentScale.Crop,
                 placeholderColor = Color.Transparent,
                 modifier = Modifier.fillMaxSize(),

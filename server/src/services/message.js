@@ -8,23 +8,29 @@ const NON_TEST_MESSAGE = "id !~ '^test[-_]'";
  * 消息存储服务
  */
 class MessageService {
+  constructor({ database = db, archive = mediaArchive, phoneImages = phoneImageService } = {}) {
+    this.db = database;
+    this.mediaArchive = archive;
+    this.phoneImageService = phoneImages;
+  }
+
   async resolveAudioPhoneImage(message) {
     if (message.type !== 'audio' || !message.incoming_call_from || !message.phone_image_url) {
       return { localPath: null, sha256: null, sourceUrl: message.phone_image_url || null };
     }
 
-    const preArchivedPath = await mediaArchive.storedFile(message.phone_image_local_path);
+    const preArchivedPath = await this.mediaArchive.storedFile(message.phone_image_local_path);
     if (preArchivedPath) {
       let sha256 = message.phone_image_sha256 || null;
       if (!sha256 && message.member_id) {
-        const latest = await phoneImageService.getLatestForMember(message.member_id);
+        const latest = await this.phoneImageService.getLatestForMember(message.member_id);
         if (latest?.local_path === preArchivedPath) sha256 = latest.sha256 || null;
       }
       return { localPath: preArchivedPath, sha256, sourceUrl: message.phone_image_url };
     }
 
     if (message.member_id) {
-      const archived = await phoneImageService.recordMemberPhoneImage({
+      const archived = await this.phoneImageService.recordMemberPhoneImage({
         memberId: message.member_id,
         memberName: message.member_name || null,
         sourceUrl: message.phone_image_url,
@@ -46,7 +52,7 @@ class MessageService {
    */
   async saveMessage(message) {
     // 检查消息是否已存在
-    const existing = await db.queryOne(
+    const existing = await this.db.queryOne(
       'SELECT * FROM messages WHERE id = $1',
       [message.id]
     );
@@ -54,9 +60,9 @@ class MessageService {
     if (existing) {
       // 为在本地媒体存储启用之前创建或迁移后本地文件缺失的行重试媒体归档，
       // 并在成员来电封面更新后同步最新封面引用。
-      const existingMedia = await mediaArchive.storedFile(existing.media_local_path);
-      const existingThumb = await mediaArchive.storedFile(existing.thumbnail_local_path);
-      const existingPhone = await mediaArchive.storedFile(existing.phone_image_local_path);
+      const existingMedia = await this.mediaArchive.storedFile(existing.media_local_path);
+      const existingThumb = await this.mediaArchive.storedFile(existing.thumbnail_local_path);
+      const existingPhone = await this.mediaArchive.storedFile(existing.phone_image_local_path);
       const resolvedPhone = await this.resolveAudioPhoneImage(message);
       const targetPhoneUrl = resolvedPhone.sourceUrl || message.phone_image_url || null;
       const needsPhoneImage = message.type === 'audio'
@@ -79,10 +85,10 @@ class MessageService {
             ? (resolvedPhone.localPath || message.phone_image_local_path || null)
             : null,
         };
-        const archived = await mediaArchive.archiveMessage(messageForArchive);
+        const archived = await this.mediaArchive.archiveMessage(messageForArchive);
         const nextPhoneLocalPath = resolvedPhone.localPath || archived.phoneImageLocalPath;
         if (archived.mediaLocalPath || archived.thumbnailLocalPath || nextPhoneLocalPath || needsPhoneImage) {
-          const updated = await db.queryOne(
+          const updated = await this.db.queryOne(
             `UPDATE messages
              SET media_local_path = COALESCE($1, media_local_path),
                  thumbnail_local_path = COALESCE($2, thumbnail_local_path),
@@ -119,7 +125,7 @@ class MessageService {
 
     const resolvedPhone = await this.resolveAudioPhoneImage(message);
     const targetPhoneUrl = resolvedPhone.sourceUrl || message.phone_image_url || null;
-    const archived = await mediaArchive.archiveMessage({
+    const archived = await this.mediaArchive.archiveMessage({
       ...message,
       phone_image_url: targetPhoneUrl,
       phone_image_local_path: resolvedPhone.localPath || message.phone_image_local_path || null,
@@ -129,7 +135,7 @@ class MessageService {
     const sourceAccountsJson = JSON.stringify(sourceAccount);
 
     // 插入新消息或更新来源账号列表
-    const result = await db.queryOne(
+    const result = await this.db.queryOne(
       `INSERT INTO messages (
         id, member_id, member_name, member_avatar_url, phone_image_url,
         type, text, media_url, thumbnail_url, duration_seconds,
@@ -173,7 +179,7 @@ class MessageService {
       return { message: result, isNew };
     }
 
-    const racedMessage = await db.queryOne(
+    const racedMessage = await this.db.queryOne(
       'SELECT * FROM messages WHERE id = $1',
       [message.id],
     );
@@ -188,7 +194,7 @@ class MessageService {
 
     if (kind === 'phone_image') {
       if (message.member_id) {
-        const latest = await phoneImageService.getLatestStoredFileForMember(message.member_id);
+        const latest = await this.phoneImageService.getLatestStoredFileForMember(message.member_id);
         if (latest?.filePath) {
           return {
             filePath: latest.filePath,
@@ -197,7 +203,7 @@ class MessageService {
           };
         }
       }
-      const fallbackPath = await mediaArchive.storedFile(message.phone_image_local_path);
+      const fallbackPath = await this.mediaArchive.storedFile(message.phone_image_local_path);
       if (!fallbackPath) return null;
       return {
         filePath: fallbackPath,
@@ -210,13 +216,25 @@ class MessageService {
       media: message.media_local_path,
       thumbnail: message.thumbnail_local_path,
     }[kind];
-    const storedPath = await mediaArchive.storedFile(localPath);
-    if (!storedPath) return null;
-    return {
-      filePath: storedPath,
-      sha256: null,
-      sourceUrl: kind === 'media' ? message.media_url : message.thumbnail_url,
-    };
+    const storedPath = await this.mediaArchive.storedFile(localPath);
+    if (storedPath) {
+      return {
+        filePath: storedPath,
+        sha256: null,
+        sourceUrl: kind === 'media' ? message.media_url : message.thumbnail_url,
+      };
+    }
+    if (kind === 'thumbnail' && message.type === 'image') {
+      const fallbackMediaPath = await this.mediaArchive.storedFile(message.media_local_path);
+      if (fallbackMediaPath) {
+        return {
+          filePath: fallbackMediaPath,
+          sha256: null,
+          sourceUrl: message.media_url,
+        };
+      }
+    }
+    return null;
   }
 
   async getStoredMediaPath(messageId, kind) {
@@ -228,7 +246,7 @@ class MessageService {
    * 获取消息详情
    */
   async getMessage(messageId) {
-    return await db.queryOne(
+    return await this.db.queryOne(
       `SELECT * FROM messages WHERE id = $1 AND ${NON_TEST_MESSAGE}`,
       [messageId]
     );
@@ -263,14 +281,14 @@ class MessageService {
     query += ` ORDER BY sent_at DESC, id DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
     params.push(limit, offset);
 
-    return await db.queryAll(query, params);
+    return await this.db.queryAll(query, params);
   }
 
   /**
    * 更新消息播放状态
    */
   async markAsPlayed(messageId) {
-    const result = await db.queryOne(
+    const result = await this.db.queryOne(
       'UPDATE messages SET is_played = true WHERE id = $1 RETURNING *',
       [messageId]
     );
@@ -281,7 +299,7 @@ class MessageService {
    * 获取消息统计
    */
   async getStatistics() {
-    const stats = await db.queryOne(
+    const stats = await this.db.queryOne(
       `SELECT
         COUNT(*) as total,
         COUNT(CASE WHEN type = 'text' THEN 1 END) as text_count,
@@ -300,25 +318,29 @@ class MessageService {
    */
   async hasMessage(id) {
     if (!id) return false;
-    const row = await db.queryOne(
-      'SELECT id, type, member_id, media_url, media_local_path, phone_image_url, phone_image_local_path FROM messages WHERE id = $1',
+    const row = await this.db.queryOne(
+      'SELECT id, type, member_id, media_url, media_local_path, thumbnail_url, thumbnail_local_path, phone_image_url, phone_image_local_path FROM messages WHERE id = $1',
       [id],
     );
     if (!row) return false;
     if (row.type !== 'text' && row.media_url) {
-      const stored = await mediaArchive.storedFile(row.media_local_path);
+      const stored = await this.mediaArchive.storedFile(row.media_local_path);
       if (!stored) return false;
     }
+    if (row.type !== 'text' && row.thumbnail_url) {
+      const storedThumb = await this.mediaArchive.storedFile(row.thumbnail_local_path);
+      if (!storedThumb) return false;
+    }
     if (row.type === 'audio') {
-      const latest = row.member_id ? await phoneImageService.getLatestForMember(row.member_id) : null;
+      const latest = row.member_id ? await this.phoneImageService.getLatestForMember(row.member_id) : null;
       if (latest) {
-        const latestStored = await mediaArchive.storedFile(latest.local_path);
+        const latestStored = await this.mediaArchive.storedFile(latest.local_path);
         if (!latestStored) return false;
         if (row.phone_image_url !== latest.source_url || row.phone_image_local_path !== latest.local_path) {
           return false;
         }
       } else if (row.phone_image_url) {
-        const storedPhone = await mediaArchive.storedFile(row.phone_image_local_path);
+        const storedPhone = await this.mediaArchive.storedFile(row.phone_image_local_path);
         if (!storedPhone) return false;
       }
     }
@@ -332,7 +354,7 @@ class MessageService {
     if (!id || !accountId) return;
     try {
       const accJson = JSON.stringify([String(accountId)]);
-      await db.query(
+      await this.db.query(
         `UPDATE messages
          SET source_accounts = CASE
            WHEN source_accounts @> $1::jsonb THEN source_accounts
@@ -347,4 +369,5 @@ class MessageService {
   }
 }
 
+export { MessageService };
 export default new MessageService();

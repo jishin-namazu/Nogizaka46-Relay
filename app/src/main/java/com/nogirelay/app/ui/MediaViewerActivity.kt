@@ -683,8 +683,9 @@ private fun ZoomableImage(
     }
 
     RemoteImage(
-        url = message.mediaUrl,
+        url = message.mediaUrl ?: message.thumbnailUrl,
         previewUrl = message.thumbnailUrl,
+        fallbackUrl = message.thumbnailUrl?.takeIf { it.isNotBlank() && it != message.mediaUrl },
         contentDescription = message.text,
         onAspectRatio = onAspectRatio,
         placeholderColor = Color.Black,
@@ -868,7 +869,7 @@ private fun VideoPlayer(
     LaunchedEffect(message.id, message.mediaUrl) {
         val path = withContext(Dispatchers.IO) {
             runCatching {
-                MediaDownloader.enqueueIfNeeded(context, message)?.absolutePath
+                MediaDownloader.enqueueIfNeeded(context, message, bypassNotFound = true)?.absolutePath
             }.getOrNull()
         }
         videoPath = path
@@ -1025,6 +1026,7 @@ private fun VideoPlayer(
                     contentScale = ContentScale.Fit,
                     messageType = MessageType.VIDEO,
                     message = message,
+                    retryOnClick = false,
                     placeholderColor = Color.Black,
                 )
             }

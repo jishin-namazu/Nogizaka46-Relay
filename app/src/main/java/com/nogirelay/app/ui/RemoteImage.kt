@@ -45,9 +45,11 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.nogirelay.app.data.AppGraph
+import com.nogirelay.app.data.MediaRefKind
 import com.nogirelay.app.data.MessageType
 import com.nogirelay.app.data.RelayMessage
 import com.nogirelay.app.media.HttpNotFoundException
+import com.nogirelay.app.media.MediaCacheRevision
 import com.nogirelay.app.media.MediaDownloader
 import com.nogirelay.app.performance.ImageMemoryStore
 import com.nogirelay.app.performance.LocalRelayPageActive
@@ -59,6 +61,8 @@ import com.nogirelay.app.ui.glass.GlassColors
 import java.io.File
 import java.io.FileInputStream
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
 
 private sealed interface ImageLoadResult {
@@ -126,10 +130,14 @@ internal suspend fun preloadRemoteImage(
     if (url.isBlank() || RemoteImageMemoryCache.getForUrl(url) != null) return true
     return try {
         val appContext = context.applicationContext
-        if (MediaDownloader.isNotFound(appContext, url)) return false
-        val file = withContext(AppGraph.dispatchers.network) {
+        val cached = withContext(Dispatchers.IO) {
             MediaDownloader.cachedFileForUrl(appContext, url, messageType)
-                ?: MediaDownloader.downloadUrl(appContext, url, messageType)
+        }
+        val file = cached ?: run {
+            if (withContext(Dispatchers.IO) { MediaDownloader.isNotFound(appContext, url) }) return false
+            withContext(AppGraph.dispatchers.network) {
+                MediaDownloader.downloadUrl(appContext, url, messageType)
+            }
         }
         val bitmap = withContext(AppGraph.dispatchers.imageDecode) {
             decodeSampled(file, targetWidth, targetWidth)
@@ -141,6 +149,53 @@ internal suspend fun preloadRemoteImage(
         throw cancelled
     } catch (_: Throwable) {
         false
+    }
+}
+
+/** Preloads a message's visual preview using the same priority order as [RemoteImage]. */
+internal suspend fun preloadMessagePreview(
+    context: Context,
+    message: RelayMessage,
+    targetWidth: Int = FALLBACK_DECODE_DIMENSION,
+): Boolean {
+    val appContext = context.applicationContext
+    return when (message.type) {
+        MessageType.IMAGE -> {
+            val primary = message.mediaUrl?.takeIf(String::isNotBlank)
+                ?: message.thumbnailUrl?.takeIf(String::isNotBlank)
+                ?: return false
+            val fallback = message.thumbnailUrl?.takeIf { it.isNotBlank() && it != primary }
+            preloadRemoteImage(appContext, primary, MessageType.IMAGE, targetWidth) ||
+                (fallback != null && preloadRemoteImage(appContext, fallback, MessageType.IMAGE, targetWidth))
+        }
+        MessageType.VIDEO -> {
+            val previewUrl = message.thumbnailUrl?.takeIf(String::isNotBlank)
+                ?: message.mediaUrl?.takeIf(String::isNotBlank)
+                ?: return false
+            if (RemoteImageMemoryCache.getForUrl(previewUrl) != null) return true
+            val localBitmap = try {
+                withContext(AppGraph.dispatchers.imageDecode) {
+                    val thumbFile = MediaDownloader.cachedVideoThumbnail(appContext, message)
+                        ?: MediaDownloader.generateVideoThumbnail(appContext, message)
+                    thumbFile?.takeIf { it.exists() && it.length() > 0L }?.let {
+                        decodeSampled(it, targetWidth, targetWidth)
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+            if (localBitmap != null) {
+                RemoteImageMemoryCache.put("preload@$targetWidth@$previewUrl", previewUrl, localBitmap)
+                ImageAspectRatioCache.put(previewUrl, localBitmap.width.toFloat() / localBitmap.height.toFloat())
+                true
+            } else {
+                val explicitThumb = message.thumbnailUrl?.takeIf(String::isNotBlank) ?: return false
+                preloadRemoteImage(appContext, explicitThumb, MessageType.IMAGE, targetWidth)
+            }
+        }
+        else -> false
     }
 }
 
@@ -215,6 +270,8 @@ fun RemoteImage(
     placeholderColor: Color = GlassColors.Placeholder,
     onAspectRatio: ((Float) -> Unit)? = null,
     previewUrl: String? = null,
+    fallbackUrl: String? = null,
+    retryOnClick: Boolean = true,
     crossfadeDurationMillis: Int = 0,
     placeholderAspectRatio: Float? = null,
     animateAspectRatioChanges: Boolean = false,
@@ -222,6 +279,9 @@ fun RemoteImage(
     val context = LocalContext.current
     val active = LocalRelayPageActive.current && isRelayUiStarted() &&
         !LocalRelayPageWorkPaused.current
+    val normalizedFallback = fallbackUrl?.takeIf { it.isNotBlank() && it != url }
+    val canShortCircuitNotFound = (messageType != MessageType.VIDEO || message == null) &&
+        normalizedFallback == null
     var measuredSize by remember(url) { mutableStateOf(IntSize.Zero) }
     fun bucket(value: Int) = if (value <= 0) 0 else ((value + SIZE_BUCKET_PX - 1) / SIZE_BUCKET_PX) * SIZE_BUCKET_PX
     val targetWidth = bucket(measuredSize.width)
@@ -230,23 +290,42 @@ fun RemoteImage(
 
     var retryCount by remember(url) { mutableIntStateOf(0) }
     var refreshVersion by remember(url) { mutableIntStateOf(0) }
-    var isNotFound by remember(url) { mutableStateOf(MediaDownloader.isNotFound(null, url)) }
+    var isNotFound by remember(url, normalizedFallback, messageType, message?.id) {
+        mutableStateOf(canShortCircuitNotFound && MediaDownloader.isNotFound(null, url))
+    }
     var isError by remember(cacheKey) { mutableStateOf(false) }
 
     var knownAspectRatio by remember(url) {
-        mutableStateOf(ImageAspectRatioCache.get(url) ?: ImageAspectRatioCache.get(previewUrl))
+        mutableStateOf(
+            ImageAspectRatioCache.get(url)
+                ?: ImageAspectRatioCache.get(previewUrl)
+                ?: ImageAspectRatioCache.get(normalizedFallback),
+        )
     }
     var bitmap by remember(cacheKey) {
         mutableStateOf(
             url?.let { RemoteImageMemoryCache.get(cacheKey) ?: RemoteImageMemoryCache.getForUrl(it) }
-                ?: previewUrl?.let(RemoteImageMemoryCache::getForUrl),
+                ?: previewUrl?.let(RemoteImageMemoryCache::getForUrl)
+                ?: normalizedFallback?.let(RemoteImageMemoryCache::getForUrl),
         )
     }
     var animated by remember(cacheKey) { mutableStateOf<ImageLoadResult.Animated?>(null) }
 
-    LaunchedEffect(cacheKey, active, retryCount, refreshVersion) {
+    if (messageType == MessageType.VIDEO && message != null && bitmap == null && animated == null) {
+        LaunchedEffect(cacheKey, active) {
+            if (!active) return@LaunchedEffect
+            MediaCacheRevision.changesFor(MediaRefKind.MESSAGES).drop(1).collect {
+                refreshVersion++
+            }
+        }
+    }
+
+    LaunchedEffect(cacheKey, normalizedFallback, active, retryCount, refreshVersion) {
         if (!active || targetWidth <= 0) return@LaunchedEffect
-        if (url != null && (isNotFound || MediaDownloader.isNotFound(null, url))) {
+        val bypassNotFound = retryCount > 0
+        if (!bypassNotFound && canShortCircuitNotFound && url != null &&
+            (isNotFound || MediaDownloader.isNotFound(null, url))
+        ) {
             bitmap = null
             animated = null
             isNotFound = true
@@ -255,7 +334,7 @@ fun RemoteImage(
         }
 
         if (animated != null) return@LaunchedEffect
-        val cachedBeforeLoad = revalidateRemote && url != null && withContext(AppGraph.dispatchers.network) {
+        val cachedBeforeLoad = revalidateRemote && url != null && withContext(Dispatchers.IO) {
             MediaDownloader.cachedFileForUrl(context, url, messageType) != null
         }
         val exactCached = url?.let { RemoteImageMemoryCache.get(cacheKey) }
@@ -270,7 +349,18 @@ fun RemoteImage(
         } else {
             url?.let { value ->
                 isError = false
-                when (val result = loadImage(context, value, messageType, message, targetWidth, targetHeight)) {
+                when (
+                    val result = loadImage(
+                        context = context,
+                        url = value,
+                        messageType = messageType,
+                        message = message,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight,
+                        fallbackUrl = normalizedFallback,
+                        bypassNotFound = bypassNotFound,
+                    )
+                ) {
                     is ImageLoadResult.Static -> {
                         val loaded = result.bitmap
                         animated = null
@@ -377,7 +467,7 @@ fun RemoteImage(
         modifier
     }
 
-    val finalModifier = if (!hasContent && isError && !isNotFound) {
+    val finalModifier = if (retryOnClick && !hasContent && isError && !isNotFound) {
         boxModifier
             .clickable { retryCount++ }
             .background(placeholderColor)
@@ -404,7 +494,14 @@ fun RemoteImage(
                 modifier = Modifier.fillMaxSize(),
                 label = "remote-image-crossfade",
             ) { visibleFrame ->
-                RemoteImageFrame(visibleFrame, contentDescription, contentScale, active, placeholderResId)
+                RemoteImageFrame(
+                    visibleFrame,
+                    contentDescription,
+                    contentScale,
+                    active,
+                    placeholderResId,
+                    showErrorIcon = retryOnClick,
+                )
             }
         } else {
             RemoteImageFrame(
@@ -413,6 +510,7 @@ fun RemoteImage(
                 contentScale = contentScale,
                 active = active,
                 placeholderResId = placeholderResId,
+                showErrorIcon = retryOnClick,
                 imageModifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer { alpha = contentAlpha.value },
@@ -428,6 +526,7 @@ private fun RemoteImageFrame(
     contentScale: ContentScale,
     active: Boolean,
     placeholderResId: Int?,
+    showErrorIcon: Boolean = true,
     imageModifier: Modifier = Modifier.fillMaxSize(),
 ) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -452,7 +551,7 @@ private fun RemoteImageFrame(
                     contentScale = contentScale,
                     modifier = Modifier.fillMaxSize(),
                 )
-                frame == ImageLoadResult.Error -> Icon(
+                showErrorIcon && frame == ImageLoadResult.Error -> Icon(
                     imageVector = Icons.Rounded.Refresh,
                     contentDescription = "加载失败，点击重试",
                     tint = Color(0xFF888888),
@@ -511,40 +610,83 @@ private suspend fun loadImage(
     message: RelayMessage? = null,
     targetWidth: Int = FALLBACK_DECODE_DIMENSION,
     targetHeight: Int = FALLBACK_DECODE_DIMENSION,
-): ImageLoadResult = withContext(AppGraph.dispatchers.network) {
-    if (MediaDownloader.isNotFound(context, url)) {
-        return@withContext ImageLoadResult.NotFound
-    }
-    try {
+    fallbackUrl: String? = null,
+    bypassNotFound: Boolean = false,
+): ImageLoadResult {
+    return try {
         if (messageType == MessageType.VIDEO && message != null) {
-            val thumbFile = MediaDownloader.cachedVideoThumbnail(context, message)
-                ?: MediaDownloader.generateVideoThumbnail(context, message)
-            if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0L) {
-                val bmp = withContext(AppGraph.dispatchers.imageDecode) {
-                    decodeSampled(thumbFile, targetWidth, targetHeight)
+            val localBmp = withContext(AppGraph.dispatchers.imageDecode) {
+                val thumbFile = MediaDownloader.cachedVideoThumbnail(context, message)
+                    ?: MediaDownloader.generateVideoThumbnail(context, message)
+                thumbFile?.takeIf { it.exists() && it.length() > 0L }?.let {
+                    decodeSampled(it, targetWidth, targetHeight)
                 }
-                return@withContext if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
+            }
+            if (localBmp != null) {
+                return ImageLoadResult.Static(localBmp)
             }
             val explicitThumb = message.thumbnailUrl?.takeIf { it.isNotBlank() }
             if (explicitThumb != null) {
-                if (MediaDownloader.isNotFound(context, explicitThumb)) {
-                    return@withContext ImageLoadResult.NotFound
-                }
-                val cached = MediaDownloader.cachedFileForUrl(context, explicitThumb, MessageType.IMAGE)
-                val file = cached ?: MediaDownloader.downloadUrl(context, explicitThumb, MessageType.IMAGE)
-                val bmp = withContext(AppGraph.dispatchers.imageDecode) {
-                    decodeSampled(file, targetWidth, targetHeight)
-                }
-                return@withContext if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
+                return loadSingleUrl(
+                    context = context,
+                    url = explicitThumb,
+                    messageType = MessageType.IMAGE,
+                    targetWidth = targetWidth,
+                    targetHeight = targetHeight,
+                    bypassNotFound = bypassNotFound,
+                )
             }
-            return@withContext ImageLoadResult.Error
+            return ImageLoadResult.Error
         }
 
+        val primary = loadSingleUrl(
+            context = context,
+            url = url,
+            messageType = messageType,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            bypassNotFound = bypassNotFound,
+        )
+        if (primary is ImageLoadResult.Static || primary is ImageLoadResult.Animated) {
+            return primary
+        }
+        val secondary = fallbackUrl?.takeIf { it.isNotBlank() && it != url } ?: return primary
+        val fallback = loadSingleUrl(
+            context = context,
+            url = secondary,
+            messageType = messageType,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            bypassNotFound = bypassNotFound,
+        )
+        if (fallback is ImageLoadResult.Static || fallback is ImageLoadResult.Animated) {
+            fallback
+        } else {
+            primary
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: HttpNotFoundException) {
+        ImageLoadResult.NotFound
+    } catch (e: Throwable) {
+        ImageLoadResult.Error
+    }
+}
+
+private suspend fun loadSingleUrl(
+    context: Context,
+    url: String,
+    messageType: MessageType,
+    targetWidth: Int,
+    targetHeight: Int,
+    bypassNotFound: Boolean,
+): ImageLoadResult {
+    return try {
         val uri = url.toUri()
         if (uri.scheme in setOf("android.resource", "content", "file")) {
             if (uri.scheme == "file") {
                 val file = uri.path?.takeIf { it.isNotBlank() }?.let(::File)
-                if (file != null && file.exists()) return@withContext decodeFileResult(file, targetWidth, targetHeight)
+                if (file != null && file.exists()) return decodeFileResult(file, targetWidth, targetHeight)
             }
             val bmp = withContext(AppGraph.dispatchers.imageDecode) {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -563,8 +705,18 @@ private suspend fun loadImage(
             }
             if (bmp != null) ImageLoadResult.Static(bmp) else ImageLoadResult.Error
         } else if (uri.scheme?.lowercase() in setOf("https", "http")) {
-            val cached = MediaDownloader.cachedFileForUrl(context, url, messageType)
-            val file = cached ?: MediaDownloader.downloadUrl(context, url, messageType)
+            val cached = withContext(Dispatchers.IO) {
+                MediaDownloader.cachedFileForUrl(context, url, messageType)
+            }
+            if (cached != null) {
+                return decodeFileResult(cached, targetWidth, targetHeight)
+            }
+            if (!bypassNotFound && withContext(Dispatchers.IO) { MediaDownloader.isNotFound(context, url) }) {
+                return ImageLoadResult.NotFound
+            }
+            val file = withContext(AppGraph.dispatchers.network) {
+                MediaDownloader.downloadUrl(context, url, messageType, bypassNotFound = bypassNotFound)
+            }
             decodeFileResult(file, targetWidth, targetHeight)
         } else {
             ImageLoadResult.Error
